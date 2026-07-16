@@ -1,0 +1,293 @@
+/**
+ * Interview API Service
+ * 
+ * Handles all API calls to the backend interview endpoints
+ */
+
+import axios, { AxiosInstance } from 'axios';
+
+// ============================================================================
+// TypeScript Interfaces
+// ============================================================================
+
+// Generic topic interface - can be ANY field or domain
+export interface InterviewTopic {
+  value: string;
+  label: string;
+}
+
+export interface StartInterviewRequest {
+  topic: string; // Can be any field: "Banking", "Sales", "Node.js", "Marketing", etc.
+  difficulty: string;
+  experienceYears: number;
+  totalQuestions?: number;
+  interviewStyle?: string;
+  experienceLevel?: string;
+}
+
+export interface StartInterviewResponse {
+  success: boolean;
+  message: string;
+  data: {
+    interview: {
+      id: string;
+      topic: string;
+      difficulty: string;
+      status: string;
+      currentQuestion: {
+        questionText: string;
+        questionNumber: number;
+      };
+      totalQuestions: number;
+      createdAt: string;
+    };
+  };
+}
+
+export interface SubmitAnswerRequest {
+  interviewId: string;
+  answer: string;
+  duration: number;
+}
+
+export interface EvaluationDimension {
+  name: string;
+  label: string;
+  score: number;
+  description: string;
+}
+
+export interface EvaluationResult {
+  // New dynamic format
+  dimensions?: EvaluationDimension[];
+  
+  // Old fixed format (backward compatibility)
+  technicalScore?: number;
+  communicationScore?: number;
+  leadershipScore?: number;
+  problemSolvingScore?: number;
+  confidenceScore?: number;
+  
+  overallScore: number;
+  strengths: string[];
+  weaknesses: string[];
+  suggestions: string[];
+  missingPoints: string[];
+}
+
+export interface SubmitAnswerResponse {
+  success: boolean;
+  message: string;
+  data: {
+    interview: {
+      id: string;
+      currentQuestion: number;
+      totalQuestions: number;
+      status: string;
+      isCompleted: boolean;
+    };
+    evaluation: EvaluationResult;
+    nextQuestion?: {
+      question: string;
+      expectedPoints: string[];
+      followUpTopics: string[];
+    };
+  };
+}
+
+export interface InterviewReport {
+  interview: {
+    id: string;
+    topic: string;
+    difficulty: string;
+    experienceYears: number;
+    status: string;
+    createdAt: string;
+    completedAt?: string;
+    totalQuestions: number;
+    answeredQuestions: number;
+  };
+  questions: Array<{
+    questionText: string;
+    expectedPoints?: string[];
+    modelAnswer?: string; // Complete ideal answer for learning
+    answerText?: string;
+    answeredAt?: string;
+    duration?: number;
+    evaluation?: EvaluationResult;
+  }>;
+  finalReport?: {
+    overallScore: number;
+    summary: string;
+    recommendations: string[];
+    strengthsOverview: string[];
+    weaknessesOverview: string[];
+    nextSteps: string[];
+    generatedAt: string;
+  };
+  statistics: {
+    averageScore: number;
+    completionRate: number;
+    totalDuration: number;
+    strengthsCount: number;
+    weaknessesCount: number;
+  };
+}
+
+export interface GetReportResponse {
+  success: boolean;
+  message: string;
+  data: {
+    report: InterviewReport;
+  };
+}
+
+// ============================================================================
+// API Configuration
+// ============================================================================
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+
+class InterviewApiService {
+  private api: AxiosInstance;
+
+  constructor() {
+    this.api = axios.create({
+      baseURL: API_BASE_URL,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 60000, // 60 seconds
+    });
+
+    // Add auth token to requests
+    this.api.interceptors.request.use(
+      (config) => {
+        const token = localStorage.getItem('authToken');
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+      },
+      (error) => {
+        return Promise.reject(error);
+      }
+    );
+
+    // Handle response errors
+    this.api.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response) {
+          // Server responded with error
+          const message = error.response.data?.message || 'An error occurred';
+          throw new Error(message);
+        } else if (error.request) {
+          // No response received
+          throw new Error('No response from server. Please check your connection.');
+        } else {
+          // Request setup error
+          throw new Error(error.message || 'Failed to make request');
+        }
+      }
+    );
+  }
+
+  /**
+   * Start a new interview
+   */
+  async startInterview(data: StartInterviewRequest): Promise<StartInterviewResponse> {
+    try {
+      const response = await this.api.post<StartInterviewResponse>('/interview/start', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to start interview');
+    }
+  }
+
+  /**
+   * Submit answer for current question
+   */
+  async submitAnswer(data: SubmitAnswerRequest): Promise<SubmitAnswerResponse> {
+    try {
+      const response = await this.api.post<SubmitAnswerResponse>('/interview/answer', data);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to submit answer');
+    }
+  }
+
+  /**
+   * Get interview report
+   */
+  async getReport(interviewId: string): Promise<GetReportResponse> {
+    try {
+      const response = await this.api.get<GetReportResponse>(`/interview/report/${interviewId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to get interview report');
+    }
+  }
+
+  /**
+   * Delete interview
+   */
+  async deleteInterview(interviewId: string): Promise<void> {
+    try {
+      await this.api.delete(`/interview/${interviewId}`);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to delete interview');
+    }
+  }
+}
+
+// ============================================================================
+// Export Singleton Instance
+// ============================================================================
+
+export const interviewApi = new InterviewApiService();
+export default interviewApi;
+
+// ============================================================================
+// Popular Topics (Top 10 + Other option)
+// ============================================================================
+
+export const POPULAR_TOPICS: InterviewTopic[] = [
+  { value: 'Node.js', label: 'Node.js' },
+  { value: 'React', label: 'React' },
+  { value: 'Python', label: 'Python' },
+  { value: 'Java', label: 'Java' },
+  { value: 'System Design', label: 'System Design' },
+  { value: 'Manual Testing', label: 'Manual Testing' },
+  { value: 'Banking', label: 'Banking & Finance' },
+  { value: 'Sales', label: 'Sales & Business Development' },
+  { value: 'Digital Marketing', label: 'Digital Marketing' },
+  { value: 'HR Interview', label: 'HR / Behavioral Interview' },
+  { value: 'Other', label: 'Other (Enter Custom Topic)' },
+];
+
+// Full list of suggested topics for reference
+export const ALL_TOPICS_EXAMPLES = [
+  'Node.js', 'React', 'Angular', 'Python', 'Java', 'TypeScript', 'MongoDB', 'SQL',
+  'System Design', 'DevOps', 'Cloud Computing', 'Manual Testing', 'Automation Testing',
+  'QA Engineering', 'Team Lead', 'Engineering Manager', 'Project Management', 
+  'Product Management', 'Banking', 'Accounting', 'Financial Analysis', 'Investment Banking',
+  'Sales', 'Digital Marketing', 'Content Marketing', 'SEO', 'HR Interview', 'Recruitment',
+  'Customer Support', 'Data Analysis', 'Business Analysis', 'UX Design', 'Healthcare', 'Legal'
+];
+
+export const DIFFICULTY_LEVELS = [
+  { value: 'beginner', label: 'Beginner' },
+  { value: 'intermediate', label: 'Intermediate' },
+  { value: 'advanced', label: 'Advanced' },
+  { value: 'expert', label: 'Expert' },
+];
+
+export const INTERVIEW_STYLES = [
+  { value: 'general', label: 'General Interview' },
+  { value: 'technical', label: 'Technical Interview' },
+  { value: 'behavioral', label: 'Behavioral Interview (STAR)' },
+  { value: 'hr', label: 'HR / Culture Fit' },
+  { value: 'leadership', label: 'Leadership / Management' },
+  { value: 'situational', label: 'Situational Questions' },
+];

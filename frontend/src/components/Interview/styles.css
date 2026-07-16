@@ -1,0 +1,459 @@
+/**
+ * Voice Recorder Custom Styles
+ * 
+ * Additional styles for voice recording components
+ * Complements Tailwind CSS classes
+ */
+
+/* ============================================================================
+   Custom Scrollbar
+   ============================================================================ */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* ============================================================================
+   Recording Animation
+   ============================================================================ */
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+
+.recording-pulse {
+  position: relative;
+}
+
+.recording-pulse::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* ============================================================================
+   Transcript Animations
+   ============================================================================ */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.transcript-word {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* ============================================================================
+   Button Ripple Effect
+   ============================================================================ */
+
+.btn-ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-ripple::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.btn-ripple:active::after {
+  width: 300px;
+  height: 300px;
+}
+
+/* ============================================================================
+   Status Indicators
+   ============================================================================ */
+
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.status-indicator--listening {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.status-indicator--paused {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.status-indicator--stopped {
+  background-color: #f3f4f6;
+  color: #4b5563;
+}
+
+.status-indicator--error {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+/* ============================================================================
+   Confidence Meter
+   ============================================================================ */
+
+.confidence-meter {
+  position: relative;
+  height: 4px;
+  background: #e5e7eb;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.confidence-meter__fill {
+  height: 100%;
+  transition: width 0.3s ease-out, background-color 0.3s ease-out;
+  border-radius: 9999px;
+}
+
+.confidence-meter__fill--high {
+  background: linear-gradient(90deg, #10b981, #059669);
+}
+
+.confidence-meter__fill--medium {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.confidence-meter__fill--low {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+/* ============================================================================
+   Waveform Visualization
+   ============================================================================ */
+
+@keyframes wave {
+  0%, 100% {
+    transform: scaleY(0.5);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.waveform {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 40px;
+}
+
+.waveform__bar {
+  width: 3px;
+  height: 20px;
+  background: currentColor;
+  border-radius: 2px;
+  animation: wave 1s ease-in-out infinite;
+}
+
+.waveform__bar:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.waveform__bar:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.waveform__bar:nth-child(3) {
+  animation-delay: 0.2s;
+}
+
+.waveform__bar:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+.waveform__bar:nth-child(5) {
+  animation-delay: 0.4s;
+}
+
+/* ============================================================================
+   Card Hover Effects
+   ============================================================================ */
+
+.card-hover {
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+/* ============================================================================
+   Timer Display
+   ============================================================================ */
+
+.timer-display {
+  font-family: 'Courier New', monospace;
+  font-size: 2rem;
+  font-weight: bold;
+  color: #1f2937;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.timer-display--warning {
+  color: #f59e0b;
+  animation: timer-pulse 1s ease-in-out infinite;
+}
+
+.timer-display--danger {
+  color: #ef4444;
+  animation: timer-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes timer-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* ============================================================================
+   Progress Bar
+   ============================================================================ */
+
+.progress-bar {
+  position: relative;
+  height: 8px;
+  background: #e5e7eb;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.progress-bar__fill {
+  height: 100%;
+  transition: width 1s linear, background-color 0.3s ease-out;
+  border-radius: 9999px;
+}
+
+.progress-bar__fill--normal {
+  background: linear-gradient(90deg, #10b981, #059669);
+}
+
+.progress-bar__fill--warning {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.progress-bar__fill--danger {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+/* ============================================================================
+   Microphone Icon Animation
+   ============================================================================ */
+
+@keyframes mic-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.mic-icon--active {
+  animation: mic-pulse 1.5s ease-in-out infinite;
+  color: #10b981;
+}
+
+/* ============================================================================
+   Toast Notifications
+   ============================================================================ */
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-out-right {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.toast {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+.toast--exit {
+  animation: slide-out-right 0.3s ease-out;
+}
+
+/* ============================================================================
+   Skeleton Loaders
+   ============================================================================ */
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  border-radius: 0.375rem;
+}
+
+/* ============================================================================
+   Responsive Utilities
+   ============================================================================ */
+
+@media (max-width: 640px) {
+  .timer-display {
+    font-size: 1.5rem;
+  }
+
+  .btn-group {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .btn-group button {
+    width: 100%;
+  }
+}
+
+/* ============================================================================
+   Print Styles
+   ============================================================================ */
+
+@media print {
+  .speech-controls,
+  .recording-indicators,
+  .action-buttons {
+    display: none !important;
+  }
+
+  .transcript-viewer {
+    border: 1px solid #000;
+    page-break-inside: avoid;
+  }
+}
+
+/* ============================================================================
+   Dark Mode Support
+   ============================================================================ */
+
+@media (prefers-color-scheme: dark) {
+  .voice-recorder {
+    background-color: #1f2937;
+    color: #f9fafb;
+  }
+
+  .transcript-viewer {
+    background-color: #111827;
+    border-color: #374151;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #374151;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #6b7280;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+  }
+}
+
+/* ============================================================================
+   Accessibility
+   ============================================================================ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.focus-visible:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
