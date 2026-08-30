@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import axios from 'axios';
+import { API_BASE_URL } from '../config/api.config';
 import {
   BarChart,
   Bar,
@@ -14,8 +15,6 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
 
 interface DashboardStats {
   totalUsers: number;

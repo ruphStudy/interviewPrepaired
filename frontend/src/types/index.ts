@@ -18,6 +18,12 @@ export interface Question {
   isFollowUp: boolean;
   parentQuestionId?: string;
   createdAt: string;
+  expectedPoints?: string[];
+  modelAnswer?: string;
+  answerText?: string;
+  answeredAt?: Date;
+  duration?: number;
+  questionType?: string;
 }
 
 export interface Answer {
@@ -27,19 +33,42 @@ export interface Answer {
   createdAt: string;
 }
 
+export interface EvaluationDimension {
+  name: string;
+  label: string;
+  score: number;
+  description: string;
+  evidence?: string[];
+  missingEvidence?: string[];
+}
+
+export interface PointComparison {
+  expectedPoint: string;
+  status: 'covered' | 'partial' | 'missing' | 'not-covered';
+  candidateEvidence?: string;
+  evaluatorReason?: string;
+  improvementPoint: string;
+}
+
 export interface Evaluation {
-  id: string;
-  answerId: string;
-  technical: number;
-  communication: number;
-  leadership: number;
-  problemSolving: number;
-  confidence: number;
+  id?: string;
+  answerId?: string;
+  // New dynamic format
+  dimensions?: EvaluationDimension[];
+  overallScore: number;
+  pointComparison?: PointComparison[];
+  // Old format (backward compatibility)
+  technical?: number;
+  communication?: number;
+  leadership?: number;
+  problemSolving?: number;
+  confidence?: number;
   strengths: string[];
   weaknesses: string[];
-  missingPoints: string[];
-  improvements: string[];
-  createdAt: string;
+  missingPoints?: string[];
+  suggestions?: string[];
+  improvements?: string[];
+  createdAt?: string;
 }
 
 export interface QuestionWithDetails extends Question {

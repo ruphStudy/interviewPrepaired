@@ -19,6 +19,18 @@ import {
 } from 'recharts';
 import Header from '../components/Header';
 import { interviewApi, InterviewReport } from '../api/interviewApi';
+import { API_BASE_URL } from '../config/api.config';
+
+/** Never render the literal text "undefined"/"null"/placeholder or an empty value as an expected answer. */
+function hasValidModelAnswer(modelAnswer: unknown): modelAnswer is string {
+  return (
+    typeof modelAnswer === 'string' &&
+    modelAnswer.trim().length > 0 &&
+    modelAnswer !== 'undefined' &&
+    modelAnswer !== 'null' &&
+    modelAnswer !== 'Model answer generation unavailable.'
+  );
+}
 
 // Types
 interface InterviewHistoryItem {
@@ -130,11 +142,11 @@ const ReportDashboard: React.FC = () => {
       const evaluations = report.questions.filter(q => q.evaluation);
       const count = evaluations.length || 1;
       
-      const avgTechnical = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).technicalScore || 0), 0) / count;
-      const avgCommunication = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).communicationScore || 0), 0) / count;
-      const avgLeadership = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).leadershipScore || 0), 0) / count;
-      const avgProblemSolving = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).problemSolvingScore || 0), 0) / count;
-      const avgConfidence = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).confidenceScore || 0), 0) / count;
+      const avgTechnical = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).technicalScore ?? 0), 0) / count;
+      const avgCommunication = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).communicationScore ?? 0), 0) / count;
+      const avgLeadership = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).leadershipScore ?? 0), 0) / count;
+      const avgProblemSolving = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).problemSolvingScore ?? 0), 0) / count;
+      const avgConfidence = evaluations.reduce((sum, q) => sum + ((q.evaluation as any).confidenceScore ?? 0), 0) / count;
       
       return [
         { subject: 'Technical', score: avgTechnical, fullMark: 10 },
@@ -156,7 +168,7 @@ const ReportDashboard: React.FC = () => {
     return report.questions.map((q, index) => {
       const chartData: any = {
         question: `Q${index + 1}`,
-        overall: q.evaluation?.overallScore || 0,
+        overall: q.evaluation?.overallScore ?? 0,
       };
 
       // Check if we have dynamic dimensions (new format)
@@ -166,11 +178,11 @@ const ReportDashboard: React.FC = () => {
         });
       } else {
         // Fallback to old fixed format
-        chartData.technical = q.evaluation?.technicalScore || 0;
-        chartData.communication = q.evaluation?.communicationScore || 0;
-        chartData.leadership = q.evaluation?.leadershipScore || 0;
-        chartData.problemSolving = q.evaluation?.problemSolvingScore || 0;
-        chartData.confidence = q.evaluation?.confidenceScore || 0;
+        chartData.technical = q.evaluation?.technicalScore ?? 0;
+        chartData.communication = q.evaluation?.communicationScore ?? 0;
+        chartData.leadership = q.evaluation?.leadershipScore ?? 0;
+        chartData.problemSolving = q.evaluation?.problemSolvingScore ?? 0;
+        chartData.confidence = q.evaluation?.confidenceScore ?? 0;
       }
 
       return chartData;
@@ -194,7 +206,7 @@ const ReportDashboard: React.FC = () => {
 
       // Call backend API to generate PDF
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1'}/interview/report/${interviewId}/pdf`,
+        `${API_BASE_URL}/interview/report/${interviewId}/pdf`,
         {
           method: 'GET',
           headers: {
@@ -267,20 +279,20 @@ const ReportDashboard: React.FC = () => {
         if (q.evaluation?.dimensions) {
           // New format
           q.evaluation.dimensions.forEach((dim: any) => {
-            row.push(dim.score || 0);
+            row.push(dim.score ?? 0);
           });
         } else {
           // Old format
           row.push(
-            q.evaluation?.technicalScore || 0,
-            q.evaluation?.communicationScore || 0,
-            q.evaluation?.leadershipScore || 0,
-            q.evaluation?.problemSolvingScore || 0,
-            q.evaluation?.confidenceScore || 0
+            q.evaluation?.technicalScore ?? 0,
+            q.evaluation?.communicationScore ?? 0,
+            q.evaluation?.leadershipScore ?? 0,
+            q.evaluation?.problemSolvingScore ?? 0,
+            q.evaluation?.confidenceScore ?? 0
           );
         }
 
-        row.push(q.evaluation?.overallScore || 0);
+        row.push(q.evaluation?.overallScore ?? 0);
         return row;
       });
 
@@ -414,6 +426,11 @@ const ReportDashboard: React.FC = () => {
   const barData = getBarChartData();
   const historyData = getHistoryChartData();
   const finalReport = report.finalReport;
+  // 0 is a valid score, so this must be a nullish check, not `||`.
+  const overallScore =
+    typeof report.finalReport?.overallScore === 'number'
+      ? report.finalReport.overallScore
+      : report.statistics?.averageScore ?? 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -576,13 +593,13 @@ const ReportDashboard: React.FC = () => {
                 <div className="text-center">
                   <h2 className="text-lg font-semibold mb-2 opacity-90">Overall Score</h2>
                   <div className="text-7xl font-bold mb-2">
-                    {finalReport?.overallScore?.toFixed(1) || '0.0'}
+                    {overallScore.toFixed(1)}
                   </div>
                   <div className="text-2xl opacity-90">out of 10.0</div>
                   <div className="mt-4 inline-block px-6 py-2 bg-white bg-opacity-20 rounded-full text-sm font-semibold">
-                    {finalReport?.overallScore && finalReport.overallScore >= 8
+                    {overallScore >= 8
                       ? 'Excellent Performance'
-                      : finalReport?.overallScore && finalReport.overallScore >= 6
+                      : overallScore >= 6
                       ? 'Good Performance'
                       : 'Needs Improvement'}
                   </div>
@@ -835,43 +852,41 @@ const ReportDashboard: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Model/Expected Answer - Show complete ideal answer */}
-                    {question.modelAnswer && (
+                    {/* Expected Interview Answer - Company Standard */}
+                    {hasValidModelAnswer(question.modelAnswer) && (
                       <div className="mb-4">
                         <p className="font-semibold text-gray-700 mb-2 flex items-center">
                           <svg className="w-5 h-5 mr-2 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
                             <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
                             <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
                           </svg>
-                          Expected Answer (Model Response):
+                          Expected Interview Answer
                         </p>
                         <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg">
-                          <p className="text-sm text-blue-800 mb-2 font-semibold italic">
-                            📚 This is what an ideal answer would look like:
+                          <p className="text-sm text-blue-800 mb-3 font-semibold italic">
+                            📚 Company-standard answer a strong candidate should provide:
                           </p>
-                          <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                          <div className="text-gray-700 leading-relaxed whitespace-pre-wrap">
                             {question.modelAnswer}
-                          </p>
+                          </div>
                         </div>
                       </div>
                     )}
 
+                    {/* Key Points Expected */}
                     {question.expectedPoints && question.expectedPoints.length > 0 && (
                       <div className="mb-4">
                         <p className="font-semibold text-gray-700 mb-2 flex items-center">
-                          <svg className="w-5 h-5 mr-1 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                          <svg className="w-5 h-5 mr-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
                             <path
                               fillRule="evenodd"
                               d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
                               clipRule="evenodd"
                             />
                           </svg>
-                          Key Points to Cover:
+                          Key Points Expected
                         </p>
                         <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
-                          <p className="text-sm text-green-800 mb-2 italic">
-                            These are the important points a strong answer should include:
-                          </p>
                           <ul className="space-y-2">
                             {question.expectedPoints.map((point, i) => (
                               <li key={i} className="flex items-start text-gray-700">
@@ -894,6 +909,45 @@ const ReportDashboard: React.FC = () => {
                       </div>
                     )}
 
+                    {question.evaluation?.pointComparison && question.evaluation.pointComparison.length > 0 && (
+                      <div className="mb-4">
+                        <p className="font-semibold text-gray-700 mb-3">How You Performed on Key Points:</p>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full border border-gray-300 rounded-lg">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 border-b">Expected Point</th>
+                                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 border-b">Status</th>
+                                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 border-b">Your Evidence</th>
+                                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 border-b">How to Improve</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {question.evaluation.pointComparison.map((point, i) => (
+                                <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                  <td className="px-4 py-3 text-sm text-gray-800 border-b">{point.expectedPoint}</td>
+                                  <td className="px-4 py-3 text-sm border-b">
+                                    <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
+                                      point.status === 'covered' ? 'bg-green-100 text-green-800' :
+                                      point.status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                                      point.status === 'missing' ? 'bg-gray-100 text-gray-800' :
+                                      'bg-red-100 text-red-800'
+                                    }`}>
+                                      {point.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-gray-700 border-b">
+                                    {point.candidateEvidence || <span className="italic text-gray-400">No evidence found</span>}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-gray-600 border-b">{point.improvementPoint}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
                     {question.evaluation && (
                       <>
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
@@ -912,31 +966,31 @@ const ReportDashboard: React.FC = () => {
                             <>
                               <div className="text-center">
                                 <div className="text-2xl font-bold text-gray-900">
-                                  {(question.evaluation.technicalScore || 0).toFixed(1)}
+                                  {(question.evaluation.technicalScore ?? 0).toFixed(1)}
                                 </div>
                                 <div className="text-xs text-gray-600">Technical</div>
                               </div>
                               <div className="text-center">
                                 <div className="text-2xl font-bold text-gray-900">
-                                  {(question.evaluation.communicationScore || 0).toFixed(1)}
+                                  {(question.evaluation.communicationScore ?? 0).toFixed(1)}
                                 </div>
                                 <div className="text-xs text-gray-600">Communication</div>
                               </div>
                               <div className="text-center">
                                 <div className="text-2xl font-bold text-gray-900">
-                                  {(question.evaluation.leadershipScore || 0).toFixed(1)}
+                                  {(question.evaluation.leadershipScore ?? 0).toFixed(1)}
                                 </div>
                                 <div className="text-xs text-gray-600">Leadership</div>
                               </div>
                               <div className="text-center">
                                 <div className="text-2xl font-bold text-gray-900">
-                                  {(question.evaluation.problemSolvingScore || 0).toFixed(1)}
+                                  {(question.evaluation.problemSolvingScore ?? 0).toFixed(1)}
                                 </div>
                                 <div className="text-xs text-gray-600">Problem Solving</div>
                               </div>
                               <div className="text-center">
                                 <div className="text-2xl font-bold text-gray-900">
-                                  {(question.evaluation.confidenceScore || 0).toFixed(1)}
+                                  {(question.evaluation.confidenceScore ?? 0).toFixed(1)}
                                 </div>
                                 <div className="text-xs text-gray-600">Confidence</div>
                               </div>

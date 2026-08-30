@@ -19,6 +19,14 @@ export interface IEvaluationDimension {
   missingEvidence?: string[]; // NEW: What evidence is missing for a higher score
 }
 
+export interface IPointComparison {
+  expectedPoint: string;
+  status: 'covered' | 'partial' | 'missing' | 'incorrect';
+  candidateEvidence: string;
+  evaluatorReason: string;
+  improvementPoint: string;
+}
+
 export interface IEvaluation {
   // New dynamic format
   dimensions?: IEvaluationDimension[];
@@ -35,6 +43,7 @@ export interface IEvaluation {
   weaknesses: string[];
   suggestions: string[];
   missingPoints?: string[];
+  pointComparison?: IPointComparison[];
   
   // STAR Framework Analysis (for behavioral interviews)
   starAnalysis?: ISTARAnalysis;
@@ -43,6 +52,7 @@ export interface IEvaluation {
 export interface IQuestion {
   _id?: any;
   questionText: string;
+  questionType?: string; // Type of question: fundamentals, coding, system-design, etc.
   expectedPoints?: string[]; // Key points that should be covered in the answer
   modelAnswer?: string; // Complete ideal answer for reference (generated after evaluation)
   answerText?: string;
@@ -104,6 +114,7 @@ export interface IInterview extends Document {
   
   createdAt: Date;
   updatedAt: Date;
+  completedAt?: Date; // When interview was completed
 
   // Virtual fields
   completedQuestions: number;
@@ -111,10 +122,17 @@ export interface IInterview extends Document {
   progressPercentage: number;
 
   // Instance methods
-  addQuestion(questionText: string, expectedPoints?: string[]): Promise<IInterview>;
+  addQuestion(questionText: string, expectedPoints?: string[], questionType?: string): Promise<IInterview>;
   submitAnswer(questionIndex: number, answerText: string, duration?: number): Promise<IInterview>;
   evaluateQuestion(questionIndex: number, evaluation: IEvaluation): Promise<IInterview>;
-  generateFinalReport(summary: string, recommendations: string[]): Promise<IInterview>;
+  generateFinalReport(reportData: {
+    summary: string;
+    recommendations: string[];
+    overallScore?: number;
+    strengthsOverview?: string[];
+    weaknessesOverview?: string[];
+    nextSteps?: string[];
+  }): Promise<IInterview>;
   canTransitionTo(newStatus: string): boolean;
 }
 
@@ -246,6 +264,10 @@ const questionSchema = new Schema<IQuestion>(
       minlength: [10, 'Question must be at least 10 characters'],
       maxlength: [1000, 'Question cannot exceed 1000 characters'],
     },
+    questionType: {
+      type: String,
+      required: false,
+    },
     expectedPoints: {
       type: [String],
       default: [],
@@ -255,6 +277,10 @@ const questionSchema = new Schema<IQuestion>(
         },
         message: 'Cannot have more than 20 expected points',
       },
+    },
+    modelAnswer: {
+      type: String,
+      trim: true,
     },
     answerText: {
       type: String,
@@ -476,6 +502,10 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       type: contradictionTrackingSchema,
       default: initializeContradictionTracking,
     },
+    completedAt: {
+      type: Date,
+      required: false,
+    },
   },
   {
     timestamps: true,
@@ -530,7 +560,8 @@ interviewSchema.virtual('progressPercentage').get(function (this: IInterview) {
 interviewSchema.methods.addQuestion = async function (
   this: IInterview,
   questionText: string,
-  expectedPoints?: string[]
+  expectedPoints?: string[],
+  questionType?: string
 ): Promise<IInterview> {
   if (this.questions.length >= this.totalQuestions) {
     throw new Error('Maximum number of questions reached');
@@ -538,6 +569,7 @@ interviewSchema.methods.addQuestion = async function (
 
   this.questions.push({ 
     questionText,
+    questionType,
     expectedPoints: expectedPoints || []
   } as IQuestion);
   return await this.save();
@@ -585,8 +617,14 @@ interviewSchema.methods.evaluateQuestion = async function (
 
 interviewSchema.methods.generateFinalReport = async function (
   this: IInterview,
-  summary: string,
-  recommendations: string[]
+  reportData: {
+    summary: string;
+    recommendations: string[];
+    overallScore?: number;
+    strengthsOverview?: string[];
+    weaknessesOverview?: string[];
+    nextSteps?: string[];
+  }
 ): Promise<IInterview> {
   const evaluatedQuestions = this.questions.filter((q) => q.evaluation);
 
@@ -636,7 +674,7 @@ interviewSchema.methods.generateFinalReport = async function (
     averageConfidenceScore = confDim ? parseFloat((confDim.sum / confDim.count).toFixed(2)) : 0;
 
     // Calculate overall average from all evaluations
-    const totalOverall = evaluatedQuestions.reduce((sum, q) => sum + (q.evaluation?.overallScore || 0), 0);
+    const totalOverall = evaluatedQuestions.reduce((sum, q) => sum + (q.evaluation?.overallScore ?? 0), 0);
     averageOverallScore = parseFloat((totalOverall / evaluatedQuestions.length).toFixed(2));
   } else {
     // Old format: Calculate averages from fixed scores
@@ -644,12 +682,12 @@ interviewSchema.methods.generateFinalReport = async function (
       (acc, q) => {
         const evaluation = q.evaluation!;
         return {
-          technical: acc.technical + (evaluation.technicalScore || 0),
-          communication: acc.communication + (evaluation.communicationScore || 0),
-          leadership: acc.leadership + (evaluation.leadershipScore || 0),
-          problemSolving: acc.problemSolving + (evaluation.problemSolvingScore || 0),
-          confidence: acc.confidence + (evaluation.confidenceScore || 0),
-          overall: acc.overall + (evaluation.overallScore || 0),
+          technical: acc.technical + (evaluation.technicalScore ?? 0),
+          communication: acc.communication + (evaluation.communicationScore ?? 0),
+          leadership: acc.leadership + (evaluation.leadershipScore ?? 0),
+          problemSolving: acc.problemSolving + (evaluation.problemSolvingScore ?? 0),
+          confidence: acc.confidence + (evaluation.confidenceScore ?? 0),
+          overall: acc.overall + (evaluation.overallScore ?? 0),
         };
       },
       { technical: 0, communication: 0, leadership: 0, problemSolving: 0, confidence: 0, overall: 0 }
@@ -664,9 +702,10 @@ interviewSchema.methods.generateFinalReport = async function (
     averageOverallScore = parseFloat((totalScores.overall / count).toFixed(2));
   }
 
-  const overallScore = averageOverallScore; // Legacy field
+  // Use provided overallScore or calculated average
+  const overallScore = reportData.overallScore ?? averageOverallScore;
 
-  // Extract unique strengths and weaknesses
+  // Extract unique strengths and weaknesses from questions if not provided
   const allStrengths = evaluatedQuestions.flatMap(q => q.evaluation?.strengths || []);
   const allWeaknesses = evaluatedQuestions.flatMap(q => q.evaluation?.weaknesses || []);
   const uniqueStrengths = Array.from(new Set(allStrengths));
@@ -680,11 +719,11 @@ interviewSchema.methods.generateFinalReport = async function (
     averageProblemSolvingScore,
     averageConfidenceScore,
     averageOverallScore,
-    summary,
-    recommendations,
-    strengthsOverview: uniqueStrengths.slice(0, 5), // Top 5 strengths
-    weaknessesOverview: uniqueWeaknesses.slice(0, 5), // Top 5 weaknesses
-    nextSteps: recommendations.slice(0, 3), // Top 3 next steps
+    summary: reportData.summary,
+    recommendations: reportData.recommendations || [],
+    strengthsOverview: reportData.strengthsOverview || uniqueStrengths.slice(0, 5),
+    weaknessesOverview: reportData.weaknessesOverview || uniqueWeaknesses.slice(0, 5),
+    nextSteps: reportData.nextSteps || reportData.recommendations.slice(0, 3),
     generatedAt: new Date(),
   };
 

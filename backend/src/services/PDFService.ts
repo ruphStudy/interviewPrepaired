@@ -1,5 +1,16 @@
 import puppeteer from 'puppeteer';
 
+/** Same validity rule used by the report API/frontend — the PDF must never print the literal text "undefined"/"null" or an empty value. */
+function isValidModelAnswer(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value !== 'undefined' &&
+    value !== 'null' &&
+    value !== 'Model answer generation unavailable.'
+  );
+}
+
 export class PDFService {
   /**
    * Generate PDF from interview report
@@ -187,6 +198,38 @@ export class PDFService {
             margin-bottom: 15px;
             border-left: 3px solid #4F46E5;
           }
+          .expected-answer-section {
+            background: #EFF6FF;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border-left: 4px solid #3B82F6;
+          }
+          .expected-answer-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1E40AF;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+          }
+          .expected-answer-title:before {
+            content: '📚';
+            margin-right: 8px;
+            font-size: 16px;
+          }
+          .expected-answer-label {
+            font-size: 12px;
+            font-style: italic;
+            color: #3B82F6;
+            margin-bottom: 8px;
+          }
+          .expected-answer-text {
+            font-size: 14px;
+            color: #1E3A8A;
+            line-height: 1.6;
+            white-space: pre-wrap;
+          }
           .feedback-section {
             margin-top: 15px;
           }
@@ -269,7 +312,7 @@ export class PDFService {
         <!-- Overall Score -->
         ${finalReport ? `
           <div class="score-card">
-            <h2>${finalReport.averageOverallScore?.toFixed(1) || '0.0'}</h2>
+            <h2>${finalReport.overallScore?.toFixed(1) || '0.0'}</h2>
             <p>Overall Score (out of 10.0)</p>
           </div>
 
@@ -318,6 +361,14 @@ export class PDFService {
               ${q.answerText ? `
                 <div class="answer-text">${q.answerText}</div>
               ` : '<div class="answer-text" style="color: #9CA3AF;">No answer provided</div>'}
+              
+              ${isValidModelAnswer(q.modelAnswer) ? `
+                <div class="expected-answer-section">
+                  <div class="expected-answer-title">Expected Interview Answer</div>
+                  <div class="expected-answer-label">Company-standard answer a strong candidate should provide:</div>
+                  <div class="expected-answer-text">${q.modelAnswer}</div>
+                </div>
+              ` : ''}
               
               ${q.evaluation ? `
                 <div class="feedback-section">

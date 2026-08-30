@@ -18,6 +18,18 @@ import { difficultyManagerService } from './DifficultyManagerService';
 import { initializeDifficultyTracking, mapLevelToDifficulty } from '../models/DifficultyTracking.model';import { claimVerificationService } from './ClaimVerificationService';
 import { contradictionDetectorService } from './ContradictionDetectorService';
 import { starAnalysisService } from './STARAnalysisService';
+
+/** Same validity rule the frontend/report/PDF must all agree on — never treat a stringified "undefined"/"null"/placeholder/empty value as a real expected answer. */
+function isValidModelAnswer(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value !== 'undefined' &&
+    value !== 'null' &&
+    value !== 'Model answer generation unavailable.'
+  );
+}
+
 interface StartInterviewParams {
   userId: string;
   topic: InterviewTopic;
@@ -63,6 +75,7 @@ interface InterviewReport {
   questions: Array<{
     questionText: string;
     expectedPoints?: string[];
+    modelAnswer?: string;
     answerText?: string;
     answeredAt?: Date;
     duration?: number;
@@ -194,7 +207,7 @@ export class InterviewService {
 
       console.log('🟢 [InterviewService] Question generated:', questionResponse);
       // Add question to interview with expected points
-      await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints);
+      await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType);
 
       // Save interview
       console.log('🟢 [InterviewService] Saving interview...');
@@ -268,6 +281,7 @@ export class InterviewService {
         sessionConfig,
         question: currentQuestion.questionText,
         answer,
+        expectedPoints: currentQuestion.expectedPoints,
       });
       
       // Perform STAR analysis for behavioral interviews
@@ -308,16 +322,32 @@ export class InterviewService {
           difficulty: interview.difficulty,
           experienceLevel: interview.experienceLevel || 'professional',
           expectedPoints: currentQuestion.expectedPoints,
+          questionType: currentQuestion.questionType as any,
         });
         
-        // Store model answer in the question
+        // Store model answer in the question. Set it on the in-memory
+        // document (so later code/response in this request already sees it)
+        // AND persist it immediately with a targeted $set — the last-question
+        // path below reloads the interview from MongoDB before building the
+        // final report, so relying only on a later `interview.save()` (many
+        // async steps downstream) risks the reload missing it.
         if (interview.questions[currentQuestionIndex]) {
           interview.questions[currentQuestionIndex].modelAnswer = modelAnswer;
-          console.log('[InterviewService] Model answer generated successfully');
+          interview.markModified(`questions.${currentQuestionIndex}.modelAnswer`);
+
+          await Interview.updateOne(
+            { _id: interview._id },
+            { $set: { [`questions.${currentQuestionIndex}.modelAnswer`]: modelAnswer } }
+          );
+
+          console.log(`[ModelAnswer] Q${currentQuestionIndex + 1}`, {
+            generated: !!modelAnswer,
+            length: modelAnswer?.length,
+          });
         }
       } catch (modelAnswerError) {
         console.error('[InterviewService] Model answer generation failed (non-critical):', modelAnswerError);
-        // Don't fail the interview if model answer generation fails
+        // Don't fail the interview if model answer generation fails — modelAnswer stays unset for this question.
       }
 
       // =====================================================================
@@ -449,8 +479,9 @@ export class InterviewService {
 
       if (isCompleted) {
         console.log('[InterviewService] Interview completed! Generating final report...');
-        // Mark as completed and SAVE
+        // Mark as completed and set completion timestamp
         interview.status = 'completed';
+        interview.completedAt = new Date();
         await interview.save();
         console.log('[InterviewService] Interview saved with status: completed');
         
@@ -535,7 +566,7 @@ export class InterviewService {
         });
 
         // Add next question with expected points
-        await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints);
+        await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints, nextQuestion.questionType);
         
         // Increment current question counter
         interview.currentQuestion += 1;
@@ -604,10 +635,25 @@ export class InterviewService {
       console.log('[InterviewService] Final report received from OpenAI');
       console.log('[InterviewService] Saving final report to interview...');
 
-      await interview.generateFinalReport(
-        finalReport.summary,
-        finalReport.recommendations
-      );
+      // Overall numeric score must be a deterministic average of the
+      // per-question evaluation scores, never OpenAI's own arithmetic —
+      // OpenAI can still write the summary/recommendations/overview text.
+      const evaluatedScores = interview.questions
+        .filter((q) => q.evaluation?.overallScore !== undefined)
+        .map((q) => q.evaluation!.overallScore);
+      const deterministicOverallScore =
+        evaluatedScores.length > 0
+          ? Math.round((evaluatedScores.reduce((sum, score) => sum + score, 0) / evaluatedScores.length) * 10) / 10
+          : 0;
+
+      await interview.generateFinalReport({
+        summary: finalReport.summary,
+        recommendations: finalReport.recommendations,
+        overallScore: deterministicOverallScore,
+        strengthsOverview: finalReport.strengthsOverview,
+        weaknessesOverview: finalReport.weaknessesOverview,
+        nextSteps: finalReport.nextSteps,
+      });
 
       // Don't set status here - it will be set by generateFinalReport method
       console.log('[InterviewService] Final report saved, status should be evaluated');
@@ -634,20 +680,84 @@ export class InterviewService {
     // Calculate statistics
     const answeredQuestions = interview.questions.filter((q) => q.answerText).length;
     const completionRate = (answeredQuestions / interview.totalQuestions) * 100;
-    const totalDuration = interview.questions.reduce((sum, q) => sum + (q.duration || 0), 0);
+    const totalDuration = interview.questions.reduce((sum, q) => sum + (q.duration ?? 0), 0);
     
     const evaluatedQuestions = interview.questions.filter((q) => q.evaluation);
     const averageScore = evaluatedQuestions.length > 0
-      ? evaluatedQuestions.reduce((sum, q) => sum + (q.evaluation?.overallScore || 0), 0) / evaluatedQuestions.length
+      ? evaluatedQuestions.reduce((sum, q) => sum + (q.evaluation?.overallScore ?? 0), 0) / evaluatedQuestions.length
       : 0;
 
+    // Report overall score must always be the deterministic average of the
+    // actual question evaluation scores — never trust a stored finalReport
+    // value that may predate this fix (it could still hold an OpenAI-derived
+    // number that disagrees with the Detailed Analysis scores).
+    const calculatedOverallScore = Math.round(averageScore * 10) / 10;
+
+    console.log('[ReportScore]', {
+      questionScores: evaluatedQuestions.map((q) => q.evaluation?.overallScore),
+      calculatedOverallScore,
+      storedFinalReportScore: interview.finalReport?.overallScore,
+    });
+
+    if (interview.finalReport && interview.finalReport.overallScore !== calculatedOverallScore) {
+      await Interview.updateOne(
+        { _id: interview._id },
+        { $set: { 'finalReport.overallScore': calculatedOverallScore } }
+      );
+      interview.finalReport.overallScore = calculatedOverallScore;
+    }
+
     const strengthsCount = interview.questions.reduce(
-      (sum, q) => sum + (q.evaluation?.strengths.length || 0),
+      (sum, q) => sum + (q.evaluation?.strengths.length ?? 0),
       0
     );
     const weaknessesCount = interview.questions.reduce(
-      (sum, q) => sum + (q.evaluation?.weaknesses.length || 0),
+      (sum, q) => sum + (q.evaluation?.weaknesses.length ?? 0),
       0
+    );
+
+    // Backfill: old/evaluated questions may predate reliable modelAnswer
+    // persistence. Generate it (once, real OpenAI call) only when genuinely
+    // missing/invalid, so we never waste tokens re-generating an existing
+    // answer and never insert a fake/template one.
+    for (let i = 0; i < interview.questions.length; i++) {
+      const q = interview.questions[i];
+      const isValid = isValidModelAnswer(q.modelAnswer);
+
+      if (!q.evaluation || isValid) {
+        continue;
+      }
+
+      try {
+        const experienceLevel = interview.experienceLevel || mapExperienceYearsToLevel(interview.experienceYears);
+        const generated = await this.openAIService.generateModelAnswer({
+          question: q.questionText,
+          topic: interview.topic,
+          difficulty: interview.difficulty,
+          experienceLevel: experienceLevel || 'professional',
+          expectedPoints: q.expectedPoints,
+          questionType: q.questionType as any,
+        });
+
+        q.modelAnswer = generated;
+        await Interview.updateOne(
+          { _id: interview._id },
+          { $set: { [`questions.${i}.modelAnswer`]: generated } }
+        );
+        console.log(`[ModelAnswer] Backfilled Q${i + 1}`, { generated: true, length: generated.length });
+      } catch (backfillError) {
+        console.error(`[ModelAnswer] Backfill failed for Q${i + 1} (non-critical):`, backfillError);
+        // Leave modelAnswer unset — report will simply omit it for this question.
+      }
+    }
+
+    console.log(
+      '[Report] model answers:',
+      interview.questions.map((q, i) => ({
+        question: i + 1,
+        hasModelAnswer: isValidModelAnswer(q.modelAnswer),
+        length: q.modelAnswer?.length || 0,
+      }))
     );
 
     return {
@@ -658,14 +768,14 @@ export class InterviewService {
         experienceYears: interview.experienceYears,
         status: interview.status,
         createdAt: interview.createdAt,
-        completedAt: interview.updatedAt,
+        completedAt: interview.completedAt ?? interview.updatedAt,
         totalQuestions: interview.totalQuestions,
         answeredQuestions,
       },
       questions: interview.questions.map((q) => ({
         questionText: q.questionText,
         expectedPoints: q.expectedPoints,
-        modelAnswer: q.modelAnswer,
+        modelAnswer: isValidModelAnswer(q.modelAnswer) ? q.modelAnswer : undefined,
         answerText: q.answerText,
         answeredAt: q.answeredAt,
         duration: q.duration,
@@ -673,7 +783,7 @@ export class InterviewService {
       })),
       finalReport: interview.finalReport
         ? {
-            overallScore: interview.finalReport.overallScore,
+            overallScore: calculatedOverallScore,
             summary: interview.finalReport.summary,
             recommendations: interview.finalReport.recommendations,
             strengthsOverview: interview.finalReport.strengthsOverview || [],
@@ -683,7 +793,7 @@ export class InterviewService {
           }
         : undefined,
       statistics: {
-        averageScore: Math.round(averageScore * 10) / 10,
+        averageScore: calculatedOverallScore,
         completionRate: Math.round(completionRate),
         totalDuration,
         strengthsCount,
@@ -750,7 +860,7 @@ export class InterviewService {
         answeredQuestions: interview.questions.filter((q) => q.answerText).length,
         createdAt: interview.createdAt,
         completedAt: interview.status === 'completed' || interview.status === 'evaluated'
-          ? interview.updatedAt
+          ? interview.completedAt ?? interview.updatedAt
           : undefined,
       })),
       pagination: {
@@ -759,6 +869,53 @@ export class InterviewService {
         total,
         pages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  /**
+   * Get user's interview statistics
+   */
+  async getUserStats(userId: string): Promise<{
+    totalInterviews: number;
+    completedInterviews: number;
+    averageScore: number;
+    highestScore: number;
+    lastInterviewScore: number;
+  }> {
+    const interviews = await Interview.find({
+      userId: new Types.ObjectId(userId),
+    }).sort({ createdAt: -1 }).lean();
+
+    const completedInterviews = interviews.filter(
+      (i) => i.status === 'completed' || i.status === 'evaluated'
+    );
+
+    const evaluatedInterviews = interviews.filter(
+      (i) => i.status === 'evaluated' && i.finalReport?.overallScore !== undefined
+    );
+
+    // Calculate scores only from evaluated interviews with valid scores
+    const validScores = evaluatedInterviews
+      .map((i) => i.finalReport?.overallScore)
+      .filter((score): score is number => typeof score === 'number' && Number.isFinite(score));
+
+    const averageScore = validScores.length > 0
+      ? validScores.reduce((sum, score) => sum + score, 0) / validScores.length
+      : 0;
+
+    const highestScore = validScores.length > 0
+      ? Math.max(...validScores)
+      : 0;
+
+    const lastInterview = evaluatedInterviews[0];
+    const lastInterviewScore = lastInterview?.finalReport?.overallScore ?? 0;
+
+    return {
+      totalInterviews: interviews.length,
+      completedInterviews: completedInterviews.length,
+      averageScore: Number(averageScore.toFixed(2)),
+      highestScore: Number(highestScore.toFixed(2)),
+      lastInterviewScore: Number(lastInterviewScore.toFixed(2)),
     };
   }
 

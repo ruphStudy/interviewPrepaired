@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { normalizeScore, normalizeEvaluationDimensions } from '../utils/scoreNormalization';
 
 // ============================================================================
 // Enums & Types
@@ -40,6 +41,20 @@ export enum InterviewState {
   COMPLETED = 'COMPLETED',
 }
 
+export enum QuestionType {
+  FUNDAMENTALS = 'fundamentals',
+  TECHNICAL_CONCEPT = 'technical-concept',
+  PRACTICAL_USAGE = 'practical-usage',
+  COMPARISON = 'comparison',
+  CODING = 'coding',
+  DEBUGGING = 'debugging',
+  SCENARIO = 'scenario',
+  SYSTEM_DESIGN = 'system-design',
+  BEHAVIORAL = 'behavioral',
+  LEADERSHIP = 'leadership',
+  ARCHITECTURE = 'architecture',
+}
+
 // ============================================================================
 // Interfaces
 // ============================================================================
@@ -75,7 +90,16 @@ export interface DynamicEvaluationResponse {
   weaknesses: string[];
   suggestions: string[];
   missingPoints: string[];
+  pointComparison?: PointComparison[];
   speechMetrics?: SpeechMetrics;
+}
+
+export interface PointComparison {
+  expectedPoint: string;
+  status: 'covered' | 'partial' | 'missing' | 'incorrect';
+  candidateEvidence: string;
+  evaluatorReason: string;
+  improvementPoint: string;
 }
 
 export interface QuestionRequest {
@@ -90,6 +114,7 @@ export interface QuestionRequest {
 
 export interface QuestionResponse {
   question: string;
+  questionType?: QuestionType;
   expectedPoints: string[];
   followUpTopics: string[];
   suggestedTimeLimit?: number;
@@ -111,6 +136,7 @@ export interface EvaluationRequest {
   sessionConfig: InterviewSessionConfig;
   question: string;
   answer: string;
+  expectedPoints?: string[];
   speechMetrics?: SpeechMetrics;
 }
 
@@ -411,8 +437,76 @@ Return ONLY valid JSON in this exact format:
   // Core Interview Methods
   // ==========================================================================
 
+  /**
+   * Get appropriate question types for experience level
+   */
+  private getAppropriateQuestionTypes(experienceLevel: ExperienceLevel, interviewStyle: InterviewStyle): QuestionType[] {
+    const types: QuestionType[] = [];
+
+    // Fresher / Beginner (student, entry)
+    if (experienceLevel === ExperienceLevel.STUDENT || experienceLevel === ExperienceLevel.ENTRY) {
+      types.push(
+        QuestionType.FUNDAMENTALS,
+        QuestionType.TECHNICAL_CONCEPT,
+        QuestionType.PRACTICAL_USAGE,
+        QuestionType.COMPARISON,
+        QuestionType.CODING,
+        QuestionType.DEBUGGING,
+        QuestionType.BEHAVIORAL
+      );
+    }
+    // Junior / Mid-level (professional)
+    else if (experienceLevel === ExperienceLevel.PROFESSIONAL) {
+      types.push(
+        QuestionType.TECHNICAL_CONCEPT,
+        QuestionType.PRACTICAL_USAGE,
+        QuestionType.COMPARISON,
+        QuestionType.CODING,
+        QuestionType.DEBUGGING,
+        QuestionType.SCENARIO,
+        QuestionType.BEHAVIORAL
+      );
+    }
+    // Senior
+    else if (experienceLevel === ExperienceLevel.SENIOR) {
+      types.push(
+        QuestionType.SCENARIO,
+        QuestionType.SYSTEM_DESIGN,
+        QuestionType.CODING,
+        QuestionType.DEBUGGING,
+        QuestionType.COMPARISON,
+        QuestionType.BEHAVIORAL,
+        QuestionType.LEADERSHIP
+      );
+    }
+    // Tech Lead / Expert
+    else if (experienceLevel === ExperienceLevel.EXPERT) {
+      types.push(
+        QuestionType.ARCHITECTURE,
+        QuestionType.SYSTEM_DESIGN,
+        QuestionType.SCENARIO,
+        QuestionType.LEADERSHIP,
+        QuestionType.BEHAVIORAL
+      );
+    }
+
+    // Style-specific additions
+    if (interviewStyle === InterviewStyle.LEADERSHIP) {
+      if (experienceLevel !== ExperienceLevel.STUDENT && experienceLevel !== ExperienceLevel.ENTRY) {
+        types.push(QuestionType.LEADERSHIP);
+      }
+    }
+
+    return types;
+  }
+
   async generateQuestion(request: QuestionRequest): Promise<QuestionResponse> {
-    const systemPrompt = this.getQuestionSystemPrompt(request.sessionConfig);
+    const appropriateTypes = this.getAppropriateQuestionTypes(
+      request.sessionConfig.experienceLevel,
+      request.sessionConfig.interviewStyle
+    );
+    
+    const systemPrompt = this.getQuestionSystemPrompt(request.sessionConfig, appropriateTypes);
     const userPrompt = this.getQuestionUserPrompt(request);
 
     const response = await this.callOpenAI(
@@ -423,6 +517,7 @@ Return ONLY valid JSON in this exact format:
 
     return {
       question: response.question,
+      questionType: response.questionType as QuestionType,
       expectedPoints: response.expectedPoints || [],
       followUpTopics: response.followUpTopics || [],
       suggestedTimeLimit: response.suggestedTimeLimit,
@@ -459,8 +554,23 @@ Return JSON with: question, reason, challengeType (assumption/depth/experience/a
     const dimensions = this.getEvaluationDimensions(request.sessionConfig);
     const systemPrompt = this.getEvaluationSystemPrompt(request.sessionConfig, dimensions);
     
+    const expectedPointsSection = request.expectedPoints && request.expectedPoints.length > 0
+      ? `
+
+Expected Points to Cover:
+${request.expectedPoints.map((pt, i) => `${i + 1}. ${pt}`).join('\n')}
+
+For EACH expected point, compare against the candidate answer:
+- status: "covered" (clearly explained), "partial" (mentioned but incomplete), "missing" (not addressed), "incorrect" (technically wrong)
+- candidateEvidence: exact quote or paraphrase from answer (empty string if missing)
+- evaluatorReason: brief explanation of the status
+- improvementPoint: specific suggestion to improve this point
+
+RETURN pointComparison array with each expected point.`
+      : '';
+    
     const userPrompt = `Question: "${request.question}"
-Answer: "${request.answer}"
+Answer: "${request.answer}"${expectedPointsSection}
 
 Evaluate based on:
 ${dimensions.map(d => `- ${d.label}: ${d.description}`).join('\n')}
@@ -479,6 +589,13 @@ Return JSON with:
     evidence: ["specific quote 1", "specific behavior 2"],
     missingEvidence: ["what's missing 1", "what's missing 2"]
   }]
+- pointComparison: [{
+    expectedPoint: string,
+    status: "covered" | "partial" | "missing" | "incorrect",
+    candidateEvidence: string,
+    evaluatorReason: string,
+    improvementPoint: string
+  }] (only if expected points provided)
 - overallScore: weighted average
 - strengths: [2-4 specific strengths with evidence]
 - weaknesses: [2-4 areas for improvement]
@@ -496,8 +613,17 @@ EXAMPLE:
       "evidence": ["Mentioned leading team of 5", "Described delegation strategy"],
       "missingEvidence": ["No conflict resolution examples", "Lacked metrics on team performance"]
     }
+  ],
+  "pointComparison": [
+    {
+      "expectedPoint": "Explain delegation strategy",
+      "status": "covered",
+      "candidateEvidence": "I assign tasks based on team strengths",
+      "evaluatorReason": "Clearly described delegation approach",
+      "improvementPoint": "Could add specific example"
+    }
   ]
-}`;
+}`
 
     const response = await this.callOpenAI(
       `${systemPrompt}\n\n${userPrompt}`,
@@ -505,13 +631,21 @@ EXAMPLE:
       1500
     );
 
+    // Normalize dimensions and scores
+    const normalizedDimensions = response.dimensions 
+      ? normalizeEvaluationDimensions(response.dimensions)
+      : dimensions.map(d => ({ ...d, score: 5 }));
+    
+    const normalizedOverallScore = normalizeScore(response.overallScore, 5, 0, 10);
+
     return {
-      dimensions: response.dimensions || dimensions.map(d => ({ ...d, score: 5 })),
-      overallScore: response.overallScore || 5,
+      dimensions: normalizedDimensions,
+      overallScore: normalizedOverallScore,
       strengths: response.strengths || [],
       weaknesses: response.weaknesses || [],
       suggestions: response.suggestions || [],
       missingPoints: response.missingPoints || [],
+      pointComparison: response.pointComparison || [],
       speechMetrics: request.speechMetrics,
     };
   }
@@ -527,10 +661,19 @@ EXAMPLE:
     );
 
     const avgScore = this.calculateAverageScore(request.evaluations);
+    
+    // Normalize scores - use ?? instead of || to preserve valid 0 scores
+    const normalizedOverallScore = normalizeScore(avgScore, 0, 0, 10);
+    const normalizedReadinessScore = normalizeScore(
+      response.interviewReadinessScore ?? avgScore,
+      avgScore,
+      0,
+      10
+    );
 
     return {
-      overallScore: avgScore,
-      interviewReadinessScore: response.interviewReadinessScore || avgScore,
+      overallScore: normalizedOverallScore,
+      interviewReadinessScore: normalizedReadinessScore,
       summary: response.summary || 'Interview performance summary unavailable.',
       recommendations: response.recommendations || [],
       strengthsOverview: response.strengthsOverview || [],
@@ -634,6 +777,11 @@ EXAMPLE:
 
   /**
    * Generate an ideal model answer for a question (for learning purposes)
+   *
+   * This is the spoken-form ideal candidate answer, NOT the bullet-point
+   * `keyPointsExpected` list — the prompt must stay paragraph-form and must
+   * never echo evaluation criteria/skill names as bullets (that's what
+   * `keyPointsExpected` is for).
    */
   async generateModelAnswer(params: {
     question: string;
@@ -641,49 +789,59 @@ EXAMPLE:
     difficulty: string;
     experienceLevel: string;
     expectedPoints?: string[];
+    questionType?: QuestionType;
   }): Promise<string> {
-    const systemPrompt = `You are an expert ${params.topic} professional writing a model answer for educational purposes.
+    const prompt = `You are generating the ideal answer a strong candidate would give verbally in a real ${params.topic} technical interview.
 
-Create a comprehensive, well-structured answer that demonstrates:
-- Deep understanding of the topic
-- Practical experience and real-world application
-- Clear communication and technical accuracy
-- Appropriate detail for ${params.difficulty} ${params.experienceLevel} level
+Question: "${params.question}"
+Topic: ${params.topic}
+Experience level: ${params.experienceLevel}
+Difficulty: ${params.difficulty}
 
-Keep it conversational but professional, as if answering in an interview.`;
+Return a complete, natural interview response in paragraph form.
 
-    const expectedPointsSection = params.expectedPoints && params.expectedPoints.length > 0
-      ? `\n\nKey Points to Cover:\n${params.expectedPoints.map(p => `- ${p}`).join('\n')}`
-      : '';
+Do NOT return:
+- bullet points
+- numbered lists
+- evaluation criteria
+- skill names
+- phrases like "Understanding of", "Ability to", "Candidate should know", "Key points include"
+- headings
+- keywords only
 
-    const userPrompt = `Question: "${params.question}"
+Answer the interview question directly as if you are the candidate. Use full sentences and natural, professional spoken English. Include explanation, comparison, and concrete examples where useful.
 
-Write an ideal answer (2-3 paragraphs, 150-250 words) that:
-- Directly addresses the question
-- Demonstrates strong understanding
-- Includes specific examples or scenarios
-- Shows practical experience
-- Is appropriate for ${params.difficulty} level${expectedPointsSection}
+The answer should be concise but complete, generally around 100–250 words depending on complexity. Adapt the depth to the topic, experience level, and difficulty. For senior/leadership questions, include trade-offs and practical context where appropriate.
 
-Provide ONLY the answer text, no preamble.`;
+Return strict JSON:
+{
+  "answer": "complete paragraph-form ideal candidate answer"
+}`;
 
     try {
-      const response = await this.callOpenAI(
-        `${systemPrompt}\n\n${userPrompt}`,
-        0.7,
-        600
-      );
+      const response = await this.callOpenAI(prompt, 0.7, 500);
 
-      // If response is a JSON object, extract the answer field
-      if (typeof response === 'object' && response.answer) {
-        return response.answer;
+      // Validate the expected { "answer": "..." } shape — a falsy-but-present
+      // empty string, a non-string `answer`, or a missing field must never
+      // fall through to a stringified-object/placeholder "answer".
+      const candidate = response && typeof response === 'object' ? (response as { answer?: unknown }).answer : undefined;
+
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate.trim();
       }
 
-      // Otherwise return as string
-      return typeof response === 'string' ? response : JSON.stringify(response);
+      console.error('[OpenAIService] generateModelAnswer: invalid response shape', {
+        hasResponse: !!response,
+        responseType: typeof response,
+        hasAnswerField: !!(response && typeof response === 'object' && 'answer' in response),
+      });
+      throw new Error('generateModelAnswer: OpenAI response did not contain a valid non-empty "answer" string');
     } catch (error) {
+      // Never mask a failure with a fake placeholder answer — propagate so
+      // the caller's existing non-critical try/catch logs it and leaves
+      // modelAnswer genuinely unset instead of storing garbage.
       console.error('[OpenAIService] Failed to generate model answer:', error);
-      return 'Model answer generation unavailable.';
+      throw error;
     }
   }
 
@@ -691,7 +849,9 @@ Provide ONLY the answer text, no preamble.`;
   // System Prompts
   // ==========================================================================
 
-  private getQuestionSystemPrompt(config: InterviewSessionConfig): string {
+  private getQuestionSystemPrompt(config: InterviewSessionConfig, appropriateTypes: QuestionType[]): string {
+    const typesList = appropriateTypes.join(', ');
+    
     return `You are a PROFESSIONAL INTERVIEWER conducting a ${config.interviewStyle} interview for: ${config.topic}
 
 Interview Context:
@@ -699,14 +859,26 @@ Interview Context:
 - Experience Level: ${config.experienceLevel}
 - Style: ${config.interviewStyle}
 
+QUESTION TYPE CONSTRAINTS:
+For ${config.experienceLevel} level, use ONLY these question types:
+${appropriateTypes.map(t => `- ${t}`).join('\n')}
+
+DO NOT generate:
+${config.experienceLevel === ExperienceLevel.STUDENT || config.experienceLevel === ExperienceLevel.ENTRY 
+  ? '- Leadership questions\n- Advanced system-design questions\n- Architecture questions' 
+  : config.experienceLevel === ExperienceLevel.PROFESSIONAL
+  ? '- Advanced architecture questions\n- Executive leadership questions'
+  : ''}
+
 Generate ONE realistic, practical question that:
 - Matches ${config.difficulty} difficulty
 - Suitable for ${config.experienceLevel} candidates
 - Follows ${config.interviewStyle} interview style
+- Uses one of these types: ${typesList}
 - Tests real competencies in ${config.topic}
 - Is clear, specific, and professionally appropriate
 
-Return JSON: { "question", "expectedPoints": [], "followUpTopics": [], "suggestedTimeLimit": seconds }`;
+Return JSON: { "question", "questionType": "${typesList.split(',')[0]}", "expectedPoints": [], "followUpTopics": [], "suggestedTimeLimit": seconds }`;
   }
 
   private getFollowUpSystemPrompt(config: InterviewSessionConfig): string {
@@ -860,10 +1032,37 @@ Performance by Question:\n`;
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error('No response from OpenAI');
 
-      return JSON.parse(content);
+      return this.safeParseJSON(content);
     } catch (error: any) {
       console.error('[OpenAIService] Error:', error.message);
       throw new Error(`OpenAI API error: ${error.message}`);
+    }
+  }
+
+  /**
+   * Safely parse JSON with fallback handling for common AI response issues
+   */
+  private safeParseJSON(content: string): any {
+    try {
+      // Try direct parse first
+      return JSON.parse(content);
+    } catch (error) {
+      console.warn('[OpenAIService] Direct JSON parse failed, attempting cleanup...');
+      
+      // Remove markdown code fences if present
+      let cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+      
+      // Remove leading/trailing whitespace
+      cleaned = cleaned.trim();
+      
+      // Try parsing cleaned content
+      try {
+        return JSON.parse(cleaned);
+      } catch (cleanError) {
+        console.error('[OpenAIService] JSON parse failed even after cleanup');
+        console.error('[OpenAIService] Content:', content.substring(0, 200));
+        throw new Error('Failed to parse AI response as JSON');
+      }
     }
   }
 

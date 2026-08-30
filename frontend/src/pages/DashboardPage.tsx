@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
 import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/v1';
+import { API_BASE_URL } from '../config/api.config';
 
 interface RecentInterview {
   id: string;
@@ -17,27 +16,42 @@ interface RecentInterview {
   createdAt: string;
 }
 
+interface UserStats {
+  totalInterviews: number;
+  completedInterviews: number;
+  averageScore: number;
+  highestScore: number;
+  lastInterviewScore: number;
+}
+
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, token } = useAuth();
   const [recentInterviews, setRecentInterviews] = useState<RecentInterview[]>([]);
+  const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchRecentInterviews();
+    fetchDashboardData();
   }, []);
 
-  const fetchRecentInterviews = async () => {
+  const fetchDashboardData = async () => {
     try {
-      const response = await axios.get(
-        `${API_BASE_URL}/interview/history?page=1&limit=5`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      setRecentInterviews(response.data.data.interviews);
+      const [interviewsResponse, statsResponse] = await Promise.all([
+        axios.get(
+          `${API_BASE_URL}/interview/history?page=1&limit=5`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        ),
+        axios.get(
+          `${API_BASE_URL}/interview/stats`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        ),
+      ]);
+      
+      setRecentInterviews(interviewsResponse.data.data.interviews);
+      setStats(statsResponse.data.data.stats);
     } catch (error) {
-      console.error('Failed to fetch recent interviews:', error);
+      console.error('Failed to fetch dashboard data:', error);
     } finally {
       setLoading(false);
     }
@@ -85,7 +99,7 @@ const DashboardPage: React.FC = () => {
               <div>
                 <p className="text-sm text-gray-600 mb-1">Total Interviews</p>
                 <p className="text-3xl font-bold text-gray-900">
-                  {user?.stats?.totalInterviews || 0}
+                  {stats?.totalInterviews ?? 0}
                 </p>
               </div>
               <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center">
@@ -99,7 +113,7 @@ const DashboardPage: React.FC = () => {
               <div>
                 <p className="text-sm text-gray-600 mb-1">Completed</p>
                 <p className="text-3xl font-bold text-gray-900">
-                  {user?.stats?.completedInterviews || 0}
+                  {stats?.completedInterviews ?? 0}
                 </p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
@@ -113,7 +127,7 @@ const DashboardPage: React.FC = () => {
               <div>
                 <p className="text-sm text-gray-600 mb-1">Average Score</p>
                 <p className="text-3xl font-bold text-gray-900">
-                  {user?.stats?.averageScore ? user.stats.averageScore.toFixed(1) : '0.0'}
+                  {stats?.averageScore ? stats.averageScore.toFixed(1) : '0.0'}
                 </p>
               </div>
               <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center">

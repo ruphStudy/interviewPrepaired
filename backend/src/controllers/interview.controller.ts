@@ -1,3 +1,14 @@
+/**
+ * @deprecated This file is no longer in use.
+ * Active implementation: InterviewController.ts (capital I)
+ * 
+ * This file can be safely deleted after verifying no external imports.
+ * The active interview controller is located at:
+ * backend/src/controllers/InterviewController.ts
+ * 
+ * Do not use this file for new development.
+ */
+
 import { Response } from 'express';
 import { InterviewService } from '../services/interview.service';
 import { successResponse, createdResponse } from '../utils/ApiResponse';

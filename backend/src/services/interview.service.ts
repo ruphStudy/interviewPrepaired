@@ -1,3 +1,14 @@
+/**
+ * @deprecated This file is no longer in use.
+ * Active implementation: InterviewService.ts (capital I)
+ * 
+ * This file can be safely deleted after verifying no external imports.
+ * The active interview service is located at:
+ * backend/src/services/InterviewService.ts
+ * 
+ * Do not use this file for new development.
+ */
+
 import { Interview, IInterview, IQuestion, IEvaluation } from '../models/interview.model';
 import { ApiError } from '../utils/ApiError';
 import { OpenAIService } from './openai.service';

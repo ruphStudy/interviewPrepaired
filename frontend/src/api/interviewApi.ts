@@ -5,6 +5,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
+import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -57,6 +58,14 @@ export interface EvaluationDimension {
   description: string;
 }
 
+export interface PointComparison {
+  expectedPoint: string;
+  status: 'covered' | 'partial' | 'missing' | 'incorrect';
+  candidateEvidence: string;
+  evaluatorReason: string;
+  improvementPoint: string;
+}
+
 export interface EvaluationResult {
   // New dynamic format
   dimensions?: EvaluationDimension[];
@@ -73,6 +82,7 @@ export interface EvaluationResult {
   weaknesses: string[];
   suggestions: string[];
   missingPoints: string[];
+  pointComparison?: PointComparison[];
 }
 
 export interface SubmitAnswerResponse {
@@ -146,8 +156,6 @@ export interface GetReportResponse {
 // API Configuration
 // ============================================================================
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
-
 class InterviewApiService {
   private api: AxiosInstance;
 
@@ -157,7 +165,7 @@ class InterviewApiService {
       headers: {
         'Content-Type': 'application/json',
       },
-      timeout: 60000, // 60 seconds
+      timeout: API_TIMEOUT,
     });
 
     // Add auth token to requests

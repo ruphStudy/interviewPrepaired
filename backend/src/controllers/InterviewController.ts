@@ -244,6 +244,23 @@ export class InterviewController {
     // Send PDF
     res.send(pdfBuffer);
   });
+
+  /**
+   * GET /api/interview/stats
+   * Get user's interview statistics
+   */
+  public getStats = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new ApiError(401, 'Authentication required');
+    }
+
+    const stats = await this.interviewService.getUserStats(userId);
+
+    res.status(200).json(
+      successResponse('Statistics retrieved successfully', { stats })
+    );
+  });
 }
 
 export default new InterviewController();

@@ -1,3 +1,11 @@
+/**
+ * @deprecated This file is no longer in use.
+ * Active implementation: OpenAIService.ts
+ * 
+ * This file can be safely deleted after verifying no external imports.
+ * Do not use this file for new development.
+ */
+
 import OpenAI from 'openai';
 import { env } from '../config/environment';
 import { IQuestion, IEvaluation } from '../models/interview.model';

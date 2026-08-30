@@ -1,3 +1,14 @@
+/**
+ * @deprecated This file is no longer in use.
+ * Active implementation: OpenAIService.ts (capital letters)
+ * 
+ * This file can be safely deleted after verifying no external imports.
+ * The active OpenAI service is located at:
+ * backend/src/services/OpenAIService.ts
+ * 
+ * Do not use this file for new development.
+ */
+
 import OpenAI from 'openai';
 import { EvaluationResponse } from '../types';
 

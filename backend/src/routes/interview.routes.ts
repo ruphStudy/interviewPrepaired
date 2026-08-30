@@ -156,6 +156,16 @@ router.get(
 );
 
 /**
+ * GET /api/interview/stats
+ * Get user's interview statistics
+ */
+router.get(
+  '/stats',
+  protect,
+  interviewController.getStats
+);
+
+/**
  * DELETE /api/interview/:id
  * Delete an interview
  */
