@@ -9,6 +9,9 @@ import {
   getAllInterviews,
   deleteInterview,
   getAnalytics,
+  getInterviewAIUsage,
+  getUserAIUsage,
+  getGlobalAIUsage,
 } from '../controllers/admin.controller';
 import { protect, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validation';
@@ -23,6 +26,28 @@ router.get('/dashboard', getDashboardStats);
 
 // Analytics
 router.get('/analytics', getAnalytics);
+
+// AI Usage / Cost Tracking
+const usageDateRangeValidation = [
+  query('from').optional().isISO8601().withMessage('from must be a valid ISO 8601 date'),
+  query('to').optional().isISO8601().withMessage('to must be a valid ISO 8601 date'),
+];
+
+router.get(
+  '/usage/interview/:interviewId',
+  [param('interviewId').isMongoId().withMessage('Invalid interview ID')],
+  validate,
+  getInterviewAIUsage
+);
+
+router.get(
+  '/usage/user/:userId',
+  [param('userId').isMongoId().withMessage('Invalid user ID'), ...usageDateRangeValidation],
+  validate,
+  getUserAIUsage
+);
+
+router.get('/usage', usageDateRangeValidation, validate, getGlobalAIUsage);
 
 // User Management
 router.get(

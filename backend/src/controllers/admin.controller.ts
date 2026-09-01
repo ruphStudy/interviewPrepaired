@@ -5,6 +5,28 @@ import { ApiError } from '../utils/ApiError';
 import { successResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
 import { AuthRequest } from '../middleware/auth';
+import {
+  getInterviewUsage,
+  getUserUsage,
+  getGlobalUsage,
+  UsageDateRange,
+} from '../services/AIUsageService';
+
+/** Shared by the three usage endpoints — malformed from/to must fail clearly rather than silently produce a wrong range. */
+function parseUsageDateRange(query: Record<string, unknown>): UsageDateRange {
+  const range: UsageDateRange = {};
+  if (query.from !== undefined) {
+    const from = new Date(String(query.from));
+    if (isNaN(from.getTime())) throw new ApiError(400, 'Invalid "from" date');
+    range.from = from;
+  }
+  if (query.to !== undefined) {
+    const to = new Date(String(query.to));
+    if (isNaN(to.getTime())) throw new ApiError(400, 'Invalid "to" date');
+    range.to = to;
+  }
+  return range;
+}
 
 /**
  * Admin Dashboard Statistics
@@ -342,4 +364,41 @@ export const getAnalytics = catchAsync(async (_req: AuthRequest, res: Response) 
       scoresByDifficulty,
     })
   );
+});
+
+/**
+ * Get AI usage/cost for one interview
+ * GET /api/admin/usage/interview/:interviewId
+ */
+export const getInterviewAIUsage = catchAsync(async (req: AuthRequest, res: Response) => {
+  const { interviewId } = req.params;
+  const usage = await getInterviewUsage(interviewId);
+  if (!usage) {
+    throw new ApiError(404, 'Interview not found');
+  }
+  res.status(200).json(successResponse('Interview AI usage retrieved successfully', usage));
+});
+
+/**
+ * Get AI usage/cost aggregated across one user's interviews
+ * GET /api/admin/usage/user/:userId?from=&to=
+ */
+export const getUserAIUsage = catchAsync(async (req: AuthRequest, res: Response) => {
+  const { userId } = req.params;
+  const range = parseUsageDateRange(req.query as Record<string, unknown>);
+  const usage = await getUserUsage(userId, range);
+  if (!usage) {
+    throw new ApiError(400, 'Invalid user ID');
+  }
+  res.status(200).json(successResponse('User AI usage retrieved successfully', usage));
+});
+
+/**
+ * Get AI usage/cost aggregated across all interviews
+ * GET /api/admin/usage?from=&to=
+ */
+export const getGlobalAIUsage = catchAsync(async (req: AuthRequest, res: Response) => {
+  const range = parseUsageDateRange(req.query as Record<string, unknown>);
+  const usage = await getGlobalUsage(range);
+  res.status(200).json(successResponse('Global AI usage retrieved successfully', usage));
 });

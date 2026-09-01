@@ -1,18 +1,23 @@
 /**
  * OpenAI per-model token pricing (USD per 1,000,000 tokens).
  *
- * Source: OpenAI's published API pricing for gpt-3.5-turbo-1106 — $1.00 / 1M
- * input tokens, $2.00 / 1M output tokens. This is the only model this project
- * calls (OPENAI_MODEL in .env). These figures come from training-data
- * knowledge of OpenAI's historical pricing page, not a live pricing API —
- * verify against https://openai.com/api/pricing/ before relying on this for
- * real billing/pricing decisions, and update this file if OpenAI changes it.
+ * These are CONFIGURATION VALUES, not derived automatically — whoever adds a
+ * model here must verify the current rate at https://openai.com/api/pricing/
+ * and keep this file updated if OpenAI changes it. Nothing in this codebase
+ * fetches pricing live.
  *
- * gpt-3.5-turbo-1106 does not support prompt caching (introduced later for
- * GPT-4o/o-series models), so it has no cachedInputPerMillionUsd tier.
+ * - gpt-3.5-turbo-1106: $1.00 / 1M input, $2.00 / 1M output. No prompt-caching
+ *   tier (introduced later for GPT-4o/o-series models).
+ * - gpt-4o-mini: $0.15 / 1M input, $0.075 / 1M cached input, $0.60 / 1M
+ *   output (OpenAI's published launch pricing). This is OpenAIService's
+ *   code-level default model (`OPENAI_MODEL || 'gpt-4o-mini'`), so it must
+ *   stay priced here even when .env pins a different model — otherwise any
+ *   environment that doesn't set OPENAI_MODEL silently tracks $0 cost.
  *
  * Add a new entry here ONLY for a model this project actually calls — do not
- * pre-populate a broad catalog of unused models.
+ * pre-populate a broad catalog of unused models. An unconfigured model is
+ * handled safely elsewhere (AIUsageService): tokens are still logged, cost
+ * stays 0 with pricingStatus='unknown' — never guessed, never thrown.
  */
 
 export interface ModelPricing {
@@ -25,6 +30,11 @@ export const OPENAI_MODEL_PRICING: Record<string, ModelPricing> = {
   'gpt-3.5-turbo-1106': {
     inputPerMillionUsd: 1.0,
     outputPerMillionUsd: 2.0,
+  },
+  'gpt-4o-mini': {
+    inputPerMillionUsd: 0.15,
+    cachedInputPerMillionUsd: 0.075,
+    outputPerMillionUsd: 0.6,
   },
 };
 

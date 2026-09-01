@@ -9,6 +9,7 @@ interface Environment {
   jwtSecret: string;
   jwtExpire: string;
   openaiApiKey: string;
+  openaiModel: string;
   corsOrigin: string;
   rateLimitWindowMs: number;
   rateLimitMaxRequests: number;
@@ -26,6 +27,10 @@ export const env: Environment = {
   jwtSecret: process.env.JWT_SECRET || 'your-secret-key',
   jwtExpire: process.env.JWT_EXPIRE || '7d',
   openaiApiKey: process.env.OPENAI_API_KEY || '',
+  // Matches OpenAIService.ts's own fallback exactly — that file still reads
+  // process.env.OPENAI_MODEL directly (unmigrated); this is only for the new
+  // ai/config.ts foundation to reference the same effective value centrally.
+  openaiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
   rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
