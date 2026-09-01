@@ -9,6 +9,7 @@ interface AnalyzeSTARParams {
   question: string;
   answer: string;
   interviewStyle: string;
+  interviewId?: string;
 }
 
 // ============================================================================
@@ -20,15 +21,15 @@ class STARAnalysisService {
    * Analyze answer using STAR framework
    */
   async analyzeSTAR(params: AnalyzeSTARParams): Promise<ISTARAnalysis | null> {
-    const { question, answer, interviewStyle } = params;
-    
+    const { question, answer, interviewStyle, interviewId } = params;
+
     // Only analyze for behavioral/leadership/situational interviews
     if (!shouldAnalyzeSTAR(interviewStyle)) {
       return null;
     }
-    
+
     try {
-      const analysis = await this.performSTARAnalysis({ question, answer });
+      const analysis = await this.performSTARAnalysis({ question, answer, interviewId });
       
       console.log(`[STARAnalysis] Completed. Overall score: ${analysis.overallSTARScore.toFixed(1)}/10, Complete: ${analysis.hasCompleteSTAR}`);
       
@@ -46,8 +47,9 @@ class STARAnalysisService {
   private async performSTARAnalysis(params: {
     question: string;
     answer: string;
+    interviewId?: string;
   }): Promise<ISTARAnalysis> {
-    const { question, answer } = params;
+    const { question, answer, interviewId } = params;
     
     const systemPrompt = `You are an expert in behavioral interview coaching and STAR framework analysis.
 
@@ -96,8 +98,8 @@ Analyze this answer using the STAR framework.`;
     try {
       const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.3, 800);
-      
+      const response = await openAIService.callOpenAI(prompt, 0.3, 800, { interviewId, operation: 'star-analysis' });
+
       return this.validateSTARAnalysis(response);
       
     } catch (error) {

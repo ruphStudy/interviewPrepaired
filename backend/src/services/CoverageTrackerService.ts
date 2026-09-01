@@ -12,6 +12,7 @@ interface AnalyzeCoverageParams {
   questionNumber: number;
   competencies: ICompetency[];
   currentCoverage: ICompetencyCoverage;
+  interviewId?: string;
 }
 
 interface CoverageAnalysisResult {
@@ -31,14 +32,15 @@ class CoverageTrackerService {
    * Analyze answer and update competency coverage
    */
   async updateCoverage(params: AnalyzeCoverageParams): Promise<ICompetencyCoverage> {
-    const { question, answer, questionNumber, competencies, currentCoverage } = params;
-    
+    const { question, answer, questionNumber, competencies, currentCoverage, interviewId } = params;
+
     try {
       // Call AI to analyze which competencies were demonstrated
       const analysis = await this.analyzeCompetencyDemonstration({
         question,
         answer,
-        competencies
+        competencies,
+        interviewId,
       });
       
       // Update coverage based on analysis
@@ -69,8 +71,9 @@ class CoverageTrackerService {
     question: string;
     answer: string;
     competencies: ICompetency[];
+    interviewId?: string;
   }): Promise<CoverageAnalysisResult> {
-    const { question, answer, competencies } = params;
+    const { question, answer, competencies, interviewId } = params;
     
     const systemPrompt = `You are an expert interviewer analyzing candidate answers to track competency coverage.
 
@@ -109,7 +112,7 @@ Analyze which competencies were demonstrated and provide evidence.`;
     try {
       const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.3, 800);
+      const response = await openAIService.callOpenAI(prompt, 0.3, 800, { interviewId, operation: 'coverage-tracking' });
       
       const result = JSON.parse(response);
       return this.validateCoverageAnalysis(result);

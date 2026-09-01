@@ -57,7 +57,13 @@ export class VoiceService {
     }
   }
 
-  private selectBestVoice(): SpeechSynthesisVoice | null {
+  /**
+   * Picks a voice for the given language: exact lang match, then base-language
+   * prefix match (e.g. "hi" matches "hi-IN"), then the previous Indian/UK/US
+   * English fallback chain (used as-is for English, and as a last resort for
+   * languages with no matching installed voice at all).
+   */
+  private selectBestVoice(targetLang: string = 'en-IN'): SpeechSynthesisVoice | null {
     // Ensure voices are loaded
     if (this.voices.length === 0) {
       this.voices = this.synthesis.getVoices();
@@ -71,6 +77,23 @@ export class VoiceService {
       return null;
     }
 
+    const baseLang = targetLang.split('-')[0].toLowerCase();
+
+    if (baseLang !== 'en') {
+      // Exact match, then same base language (e.g. any "hi-*" for "hi-IN").
+      const voice =
+        this.voices.find((v) => v.lang.toLowerCase() === targetLang.toLowerCase()) ||
+        this.voices.find((v) => v.lang.toLowerCase().startsWith(baseLang));
+
+      if (voice) {
+        console.log(`🎯 Selected: ${targetLang} -`, voice.name, '(' + voice.lang + ')');
+        return voice;
+      }
+
+      console.warn(`⚠️ No ${targetLang} voice installed — falling back to English voice (text will still be ${targetLang}).`);
+    }
+
+    // English (or fallback when no voice exists for the selected language)
     // Priority 1: Indian English voices
     let voice = this.voices.find(v => v.lang === 'en-IN') ||
                 this.voices.find(v => v.lang === 'en_IN') ||
@@ -78,7 +101,7 @@ export class VoiceService {
                 this.voices.find(v => v.name.toLowerCase().includes('lekha')) ||
                 this.voices.find(v => v.name.toLowerCase().includes('neerja')) ||
                 this.voices.find(v => v.name.toLowerCase().includes('india'));
-    
+
     if (voice) {
       console.log('🎯 Selected: 🇮🇳 Indian English -', voice.name, '(' + voice.lang + ')');
       return voice;
@@ -87,7 +110,7 @@ export class VoiceService {
     // Priority 2: UK English (closer to Indian accent)
     voice = this.voices.find(v => v.lang === 'en-GB' && v.name.includes('Google')) ||
             this.voices.find(v => v.lang === 'en-GB');
-    
+
     if (voice) {
       console.log('🎯 Selected: 🇬🇧 UK English (fallback) -', voice.name, '(' + voice.lang + ')');
       return voice;
@@ -95,7 +118,7 @@ export class VoiceService {
 
     // Priority 3: Any Google English voice
     voice = this.voices.find(v => v.lang.startsWith('en') && v.name.includes('Google'));
-    
+
     if (voice) {
       console.log('🎯 Selected: 🌐 Google English -', voice.name, '(' + voice.lang + ')');
       return voice;
@@ -103,7 +126,7 @@ export class VoiceService {
 
     // Priority 4: Any English voice
     voice = this.voices.find(v => v.lang.startsWith('en'));
-    
+
     if (voice) {
       console.log('🎯 Selected: 🗣️ Default English -', voice.name, '(' + voice.lang + ')');
       return voice;
@@ -114,18 +137,19 @@ export class VoiceService {
   }
 
   // Text to Speech
-  speak(text: string, onEnd?: () => void): void {
+  speak(text: string, onEnd?: () => void, lang: string = 'en-IN'): void {
     // Cancel any ongoing speech
     this.synthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    
+    utterance.lang = lang;
+
     // Log current state
-    console.log(`🔊 Speaking (${this.voices.length} voices available)`);
-    
-    // Select best available voice
-    const selectedVoice = this.selectBestVoice();
-    
+    console.log(`🔊 Speaking in ${lang} (${this.voices.length} voices available)`);
+
+    // Select best available voice for the selected language
+    const selectedVoice = this.selectBestVoice(lang);
+
     if (selectedVoice) {
       utterance.voice = selectedVoice;
     } else {

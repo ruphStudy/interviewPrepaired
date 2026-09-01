@@ -16,6 +16,7 @@ interface DetectContradictionsParams {
   currentQuestionNumber: number;
   interviewMemory: IInterviewMemory;
   currentTracking: IContradictionTracking;
+  interviewId?: string;
 }
 
 interface ContradictionDetectionResult {
@@ -31,19 +32,20 @@ class ContradictionDetectorService {
    * Detect contradictions in current answer vs previous statements
    */
   async detectContradictions(params: DetectContradictionsParams): Promise<IContradictionTracking> {
-    const { currentAnswer, currentQuestionNumber, interviewMemory, currentTracking } = params;
-    
+    const { currentAnswer, currentQuestionNumber, interviewMemory, currentTracking, interviewId } = params;
+
     // Need at least some memory to detect contradictions
     if (interviewMemory.totalFacts < 2) {
       return currentTracking;
     }
-    
+
     try {
       // Call AI to detect contradictions
       const detection = await this.analyzeForContradictions({
         currentAnswer,
         currentQuestionNumber,
         previousStatements: this.formatPreviousStatements(interviewMemory),
+        interviewId,
       });
       
       // Add new contradictions
@@ -76,8 +78,9 @@ class ContradictionDetectorService {
     currentAnswer: string;
     currentQuestionNumber: number;
     previousStatements: string;
+    interviewId?: string;
   }): Promise<ContradictionDetectionResult> {
-    const { currentAnswer, currentQuestionNumber, previousStatements } = params;
+    const { currentAnswer, currentQuestionNumber, previousStatements, interviewId } = params;
     
     const systemPrompt = `You are an expert at detecting logical contradictions and inconsistencies in interview answers.
 
@@ -131,7 +134,7 @@ Analyze the current answer for contradictions with previous statements.`;
     try {
       const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.2, 1000);
+      const response = await openAIService.callOpenAI(prompt, 0.2, 1000, { interviewId, operation: 'contradiction-detection' });
       
       const contradictions = this.validateContradictionDetection(
         response,

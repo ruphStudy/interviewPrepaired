@@ -24,6 +24,29 @@ export interface StartInterviewRequest {
   totalQuestions?: number;
   interviewStyle?: string;
   experienceLevel?: string;
+  interviewMode?: 'ai-generated' | 'uploaded';
+  questions?: Array<{ questionText: string; referenceAnswer?: string }>; // Required when interviewMode is 'uploaded'
+  shuffleQuestions?: boolean;
+  interviewLanguage?: string;
+}
+
+export interface ParsedUploadedQuestion {
+  questionText: string;
+  referenceAnswer?: string;
+  hasAnswer: boolean;
+}
+
+export interface ParseQuestionFileResponse {
+  success: boolean;
+  message: string;
+  data: {
+    questions: ParsedUploadedQuestion[];
+    summary: {
+      totalQuestions: number;
+      questionsWithAnswers: number;
+      questionsWithoutAnswers: number;
+    };
+  };
 }
 
 export interface StartInterviewResponse {
@@ -41,6 +64,7 @@ export interface StartInterviewResponse {
       };
       totalQuestions: number;
       createdAt: string;
+      interviewLanguage?: string;
     };
   };
 }
@@ -116,6 +140,7 @@ export interface InterviewReport {
     completedAt?: string;
     totalQuestions: number;
     answeredQuestions: number;
+    interviewLanguage?: string;
   };
   questions: Array<{
     questionText: string;
@@ -142,6 +167,30 @@ export interface InterviewReport {
     strengthsCount: number;
     weaknessesCount: number;
   };
+  // null for interviews that predate AI usage tracking — never a fabricated/estimated cost.
+  aiCost: AICostReport | null;
+}
+
+export interface AICostBreakdownEntry {
+  operation: string;
+  callCount: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export interface AICostReport {
+  tracked: boolean;
+  currency: 'USD';
+  totalCostUsd: number;
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  callCount: number;
+  pricingComplete: boolean;
+  breakdown: AICostBreakdownEntry[];
 }
 
 export interface GetReportResponse {
@@ -222,6 +271,25 @@ class InterviewApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to submit answer');
+    }
+  }
+
+  /**
+   * Parse an uploaded question file (TXT/CSV/DOCX/PDF) into a preview list.
+   * Preview only — does not create an interview.
+   */
+  async parseQuestionFile(file: File): Promise<ParseQuestionFileResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await this.api.post<ParseQuestionFileResponse>(
+        '/interview/parse-question-file',
+        formData,
+        { headers: { 'Content-Type': undefined } } // let the browser set the multipart boundary
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to parse question file');
     }
   }
 

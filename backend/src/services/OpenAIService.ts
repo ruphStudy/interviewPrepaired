@@ -1,5 +1,14 @@
 import OpenAI from 'openai';
 import { normalizeScore, normalizeEvaluationDimensions } from '../utils/scoreNormalization';
+import { recordAIUsage } from './AIUsageService';
+import { getLanguageInstruction, getMaxTokensForLanguage } from '../config/languages';
+
+/** Optional per-call context for AI cost attribution — omit for calls with no specific interview (e.g. connectivity checks). */
+export interface AIUsageContext {
+  interviewId?: string;
+  operation: string;
+  questionIndex?: number;
+}
 
 // ============================================================================
 // Enums & Types
@@ -110,6 +119,8 @@ export interface QuestionRequest {
   coverageContext?: string; // NEW: Competency coverage tracking
   priorityCompetency?: string; // NEW: Competency to prioritize (least covered)
   difficultyContext?: string; // NEW: Adaptive difficulty information
+  interviewId?: string; // For AI cost attribution
+  interviewLanguage?: string;
 }
 
 export interface QuestionResponse {
@@ -137,7 +148,11 @@ export interface EvaluationRequest {
   question: string;
   answer: string;
   expectedPoints?: string[];
+  referenceAnswer?: string; // Uploaded reference answer — evaluate semantic correctness against this, not exact wording
   speechMetrics?: SpeechMetrics;
+  interviewId?: string; // For AI cost attribution
+  questionIndex?: number;
+  interviewLanguage?: string;
 }
 
 export interface FinalReportRequest {
@@ -147,6 +162,8 @@ export interface FinalReportRequest {
     answer: string;
     evaluation: DynamicEvaluationResponse;
   }>;
+  interviewId?: string; // For AI cost attribution
+  interviewLanguage?: string;
 }
 
 export interface FinalReportResponse {
@@ -506,13 +523,14 @@ Return ONLY valid JSON in this exact format:
       request.sessionConfig.interviewStyle
     );
     
-    const systemPrompt = this.getQuestionSystemPrompt(request.sessionConfig, appropriateTypes);
+    const systemPrompt = `${this.getQuestionSystemPrompt(request.sessionConfig, appropriateTypes)}\n\n${getLanguageInstruction(request.interviewLanguage)}`;
     const userPrompt = this.getQuestionUserPrompt(request);
 
     const response = await this.callOpenAI(
       `${systemPrompt}\n\n${userPrompt}`,
       0.8,
-      800
+      getMaxTokensForLanguage(800, request.interviewLanguage),
+      { interviewId: request.interviewId, operation: 'question-generation' }
     );
 
     return {
@@ -552,7 +570,10 @@ Return JSON with: question, reason, challengeType (assumption/depth/experience/a
 
   async evaluateAnswer(request: EvaluationRequest): Promise<DynamicEvaluationResponse> {
     const dimensions = this.getEvaluationDimensions(request.sessionConfig);
-    const systemPrompt = this.getEvaluationSystemPrompt(request.sessionConfig, dimensions);
+    const systemPrompt = `${this.getEvaluationSystemPrompt(request.sessionConfig, dimensions)}
+
+${getLanguageInstruction(request.interviewLanguage)}
+The candidate's answer may be in this language, English, or a natural code-mix of both — understand it regardless of which. Write all descriptive text fields (dimension "label" and "description", "evidence", "missingEvidence", "strengths", "weaknesses", "suggestions", "missingPoints", and pointComparison text fields) in the selected language. Keep dimension "name" values and the "status" enum values (covered/partial/missing/incorrect) exactly as specified in English — they are internal identifiers, not display text. Numeric scores are unaffected by language.`;
     
     const expectedPointsSection = request.expectedPoints && request.expectedPoints.length > 0
       ? `
@@ -568,9 +589,16 @@ For EACH expected point, compare against the candidate answer:
 
 RETURN pointComparison array with each expected point.`
       : '';
-    
+
+    const referenceAnswerSection = request.referenceAnswer
+      ? `
+
+Reference Answer: "${request.referenceAnswer}"
+This reference answer represents the expected content. Evaluate semantic correctness, not exact wording. The candidate may give an equally correct answer using different terminology/examples. Do NOT give a perfect score just because the candidate reuses matching words, and do NOT penalize different wording when it is technically correct.`
+      : '';
+
     const userPrompt = `Question: "${request.question}"
-Answer: "${request.answer}"${expectedPointsSection}
+Answer: "${request.answer}"${expectedPointsSection}${referenceAnswerSection}
 
 Evaluate based on:
 ${dimensions.map(d => `- ${d.label}: ${d.description}`).join('\n')}
@@ -628,7 +656,8 @@ EXAMPLE:
     const response = await this.callOpenAI(
       `${systemPrompt}\n\n${userPrompt}`,
       0.3,
-      1500
+      getMaxTokensForLanguage(1500, request.interviewLanguage),
+      { interviewId: request.interviewId, operation: 'answer-evaluation', questionIndex: request.questionIndex }
     );
 
     // Normalize dimensions and scores
@@ -651,13 +680,17 @@ EXAMPLE:
   }
 
   async generateFinalReport(request: FinalReportRequest): Promise<FinalReportResponse> {
-    const systemPrompt = this.getFinalReportSystemPrompt(request.sessionConfig);
+    const systemPrompt = `${this.getFinalReportSystemPrompt(request.sessionConfig)}
+
+${getLanguageInstruction(request.interviewLanguage)}
+Write "summary", "recommendations", "strengthsOverview", "weaknessesOverview", and "nextSteps" in the selected language. Numeric scores are unaffected by language. Do not translate technical product/model names.`;
     const userPrompt = this.getFinalReportUserPrompt(request);
 
     const response = await this.callOpenAI(
       `${systemPrompt}\n\n${userPrompt}`,
       0.4,
-      2000
+      getMaxTokensForLanguage(2000, request.interviewLanguage),
+      { interviewId: request.interviewId, operation: 'final-report-generation' }
     );
 
     const avgScore = this.calculateAverageScore(request.evaluations);
@@ -790,8 +823,13 @@ EXAMPLE:
     experienceLevel: string;
     expectedPoints?: string[];
     questionType?: QuestionType;
+    interviewId?: string;
+    questionIndex?: number;
+    interviewLanguage?: string;
   }): Promise<string> {
     const prompt = `You are generating the ideal answer a strong candidate would give verbally in a real ${params.topic} technical interview.
+
+${getLanguageInstruction(params.interviewLanguage)}
 
 Question: "${params.question}"
 Topic: ${params.topic}
@@ -809,7 +847,7 @@ Do NOT return:
 - headings
 - keywords only
 
-Answer the interview question directly as if you are the candidate. Use full sentences and natural, professional spoken English. Include explanation, comparison, and concrete examples where useful.
+Answer the interview question directly as if you are the candidate. Use full sentences and natural, professional spoken language in the selected language. Include explanation, comparison, and concrete examples where useful.
 
 The answer should be concise but complete, generally around 100–250 words depending on complexity. Adapt the depth to the topic, experience level, and difficulty. For senior/leadership questions, include trade-offs and practical context where appropriate.
 
@@ -819,7 +857,11 @@ Return strict JSON:
 }`;
 
     try {
-      const response = await this.callOpenAI(prompt, 0.7, 500);
+      const response = await this.callOpenAI(prompt, 0.7, getMaxTokensForLanguage(500, params.interviewLanguage), {
+        interviewId: params.interviewId,
+        operation: 'model-answer-generation',
+        questionIndex: params.questionIndex,
+      });
 
       // Validate the expected { "answer": "..." } shape — a falsy-but-present
       // empty string, a non-string `answer`, or a missing field must never
@@ -1019,7 +1061,7 @@ Performance by Question:\n`;
    * Call OpenAI API with JSON response format
    * Made public for use by other services (e.g., InterviewMemoryService)
    */
-  async callOpenAI(prompt: string, temperature: number, maxTokens: number): Promise<any> {
+  async callOpenAI(prompt: string, temperature: number, maxTokens: number, usageContext?: AIUsageContext): Promise<any> {
     try {
       const response = await this.client.chat.completions.create({
         model: this.config.model,
@@ -1031,6 +1073,22 @@ Performance by Question:\n`;
 
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error('No response from OpenAI');
+
+      // Record ACTUAL usage from this real response — never estimated. Awaited
+      // before returning so a final-report call's cost is durably persisted
+      // before its caller can build/return the completed report.
+      if (usageContext?.interviewId && response.usage) {
+        await recordAIUsage({
+          interviewId: usageContext.interviewId,
+          operation: usageContext.operation,
+          questionIndex: usageContext.questionIndex,
+          model: response.model || this.config.model,
+          promptTokens: response.usage.prompt_tokens,
+          cachedTokens: response.usage.prompt_tokens_details?.cached_tokens ?? 0,
+          completionTokens: response.usage.completion_tokens,
+          totalTokens: response.usage.total_tokens,
+        });
+      }
 
       return this.safeParseJSON(content);
     } catch (error: any) {

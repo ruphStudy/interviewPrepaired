@@ -1,5 +1,26 @@
 import puppeteer from 'puppeteer';
 
+/** Same adaptive-precision rule used by the report frontend — a real nonzero cost must never print as "$0.00". */
+function formatCostUsd(value: number): string {
+  if (!value) return '$0.00';
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  if (value >= 0.0001) return `$${value.toFixed(6)}`;
+  return `$${value.toFixed(8)}`;
+}
+
+// USD is the actual billed currency — this is only a reference conversion
+// for display, not a second "actual" figure. Approximate rate, update
+// periodically; kept in sync with the same rate used in ReportDashboard.tsx.
+const USD_TO_INR_RATE = 83;
+
+function formatCostInr(usdValue: number): string {
+  const inr = (usdValue || 0) * USD_TO_INR_RATE;
+  if (inr === 0) return '₹0.00';
+  if (inr >= 1) return `₹${inr.toFixed(2)}`;
+  if (inr >= 0.01) return `₹${inr.toFixed(4)}`;
+  return `₹${inr.toFixed(6)}`;
+}
+
 /** Same validity rule used by the report API/frontend — the PDF must never print the literal text "undefined"/"null" or an empty value. */
 function isValidModelAnswer(value: unknown): value is string {
   return (
@@ -50,7 +71,7 @@ export class PDFService {
    * Generate HTML template for PDF
    */
   private generateHTML(report: any): string {
-    const { interview, questions, finalReport, statistics } = report;
+    const { interview, questions, finalReport, statistics, aiCost } = report;
 
     return `
       <!DOCTYPE html>
@@ -314,6 +335,30 @@ export class PDFService {
           <div class="score-card">
             <h2>${finalReport.overallScore?.toFixed(1) || '0.0'}</h2>
             <p>Overall Score (out of 10.0)</p>
+          </div>
+
+          <!-- AI Usage & Cost -->
+          <div class="section">
+            <h2 class="section-title">AI Usage & Cost</h2>
+            ${aiCost ? `
+              <p style="font-size:11px;color:#6b7280;margin-bottom:8px;">INR is an approximate reference conversion (1 USD &asymp; &#8377;${USD_TO_INR_RATE}), not a second actual figure — USD is the real billed currency.</p>
+              <div class="scores-grid">
+                <div class="score-box">
+                  <div class="score-box-title">AI Cost</div>
+                  <div class="score-box-value">${formatCostUsd(aiCost.totalCostUsd)}</div>
+                  <div style="font-size:11px;color:#9ca3af;">&asymp; ${formatCostInr(aiCost.totalCostUsd)}</div>
+                </div>
+                <div class="score-box">
+                  <div class="score-box-title">Total Tokens</div>
+                  <div class="score-box-value">${aiCost.totalTokens.toLocaleString()}</div>
+                </div>
+                <div class="score-box">
+                  <div class="score-box-title">AI Calls</div>
+                  <div class="score-box-value">${aiCost.callCount}</div>
+                </div>
+              </div>
+              ${!aiCost.pricingComplete ? '<p style="font-size:12px;color:#b45309;margin-top:8px;">Partial cost — pricing unavailable for one or more model calls.</p>' : ''}
+            ` : '<p style="font-size:13px;color:#6b7280;">AI usage was not tracked for this interview.</p>'}
           </div>
 
           <!-- Category Scores -->

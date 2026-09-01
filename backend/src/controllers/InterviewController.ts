@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { InterviewService } from '../services/InterviewService';
 import { PDFService } from '../services/PDFService';
+import { questionFileParserService } from '../services/QuestionFileParserService';
 import { ApiError } from '../utils/ApiError';
 import { successResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
@@ -12,6 +13,7 @@ interface AuthRequest extends Request {
     name: string;
     role: string;
   };
+  file?: Express.Multer.File;
 }
 
 export class InterviewController {
@@ -37,10 +39,17 @@ export class InterviewController {
       throw new ApiError(401, 'Authentication required');
     }
 
-    const { topic, difficulty, experienceYears, totalQuestions, interviewStyle, experienceLevel } = req.body;
-    console.log('🔵 [InterviewController] Request body:', { topic, difficulty, experienceYears, totalQuestions, interviewStyle, experienceLevel });
+    const { topic, difficulty, experienceYears, totalQuestions, interviewStyle, experienceLevel, interviewMode, questions, shuffleQuestions, interviewLanguage } = req.body;
+    console.log('🔵 [InterviewController] Request body:', { topic, difficulty, experienceYears, totalQuestions, interviewStyle, experienceLevel, interviewMode, interviewLanguage });
 
-    if (!topic || !difficulty || !experienceYears) {
+    const isUploadedMode = interviewMode === 'uploaded';
+
+    if (isUploadedMode) {
+      if (!Array.isArray(questions) || questions.length === 0) {
+        throw new ApiError(400, 'At least 1 question is required for uploaded interview mode');
+      }
+    } else if (!topic || !difficulty || experienceYears === undefined || experienceYears === null) {
+      // experienceYears can legitimately be 0 — a truthy/falsy check would wrongly reject it.
       throw new ApiError(400, 'Missing required fields: topic, difficulty, experienceYears');
     }
 
@@ -53,6 +62,10 @@ export class InterviewController {
       totalQuestions: totalQuestions || 5,
       interviewStyle,
       experienceLevel,
+      interviewMode: isUploadedMode ? 'uploaded' : undefined,
+      uploadedQuestions: isUploadedMode ? questions : undefined,
+      shuffleQuestions: !!shuffleQuestions,
+      interviewLanguage,
     });
 
     console.log('✅ [InterviewController] Interview started successfully');
@@ -75,6 +88,7 @@ export class InterviewController {
           },
           totalQuestions: interview.totalQuestions,
           createdAt: interview.createdAt,
+          interviewLanguage: interview.interviewLanguage,
         },
       })
     );
@@ -259,6 +273,43 @@ export class InterviewController {
 
     res.status(200).json(
       successResponse('Statistics retrieved successfully', { stats })
+    );
+  });
+
+  /**
+   * POST /api/interview/parse-question-file
+   * Parse an uploaded question file (TXT/CSV/DOCX/PDF) into a preview list.
+   * Preview only — does NOT create an interview.
+   */
+  public parseQuestionFile = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new ApiError(401, 'Authentication required');
+    }
+
+    const file = req.file;
+    if (!file) {
+      throw new ApiError(400, 'No file uploaded');
+    }
+
+    const parsed = await questionFileParserService.parseFile(file.buffer, file.originalname);
+
+    const questions = parsed.map((q) => ({
+      questionText: q.questionText,
+      referenceAnswer: q.referenceAnswer,
+      hasAnswer: !!q.referenceAnswer,
+    }));
+    const questionsWithAnswers = questions.filter((q) => q.hasAnswer).length;
+
+    res.status(200).json(
+      successResponse('File parsed successfully', {
+        questions,
+        summary: {
+          totalQuestions: questions.length,
+          questionsWithAnswers,
+          questionsWithoutAnswers: questions.length - questionsWithAnswers,
+        },
+      })
     );
   });
 }

@@ -1,31 +1,34 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { AvatarState } from '../components/InterviewAvatar/AvatarState';
 import { voiceService } from '../services/voice.service';
+import { DEFAULT_LANGUAGE_CODE } from '../config/languages';
 
 interface UseSpeechInterviewProps {
   onAnswerComplete: (answer: string, duration: number) => void;
   onQuestionSpoken: () => void;
+  language?: string; // e.g. 'en-IN' | 'hi-IN' | 'mr-IN' — falls back to English when missing
 }
 
-export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken }: UseSpeechInterviewProps) => {
+export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, language }: UseSpeechInterviewProps) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [currentAnswer, setCurrentAnswer] = useState('');
   const [avatarState, setAvatarState] = useState<AvatarState>(AvatarState.IDLE);
-  
+
   const recognitionRef = useRef<any>(null);
   const startTimeRef = useRef<number>(0);
+  const resolvedLanguage = language || DEFAULT_LANGUAGE_CODE;
 
-  // Initialize Speech Recognition with Indian English
+  // Initialize Speech Recognition in the selected interview language
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = true;
       recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-IN'; // Indian English for recognition
-      
-      console.log('🎤 Speech Recognition initialized with Indian English (en-IN)');
+      recognitionRef.current.lang = resolvedLanguage;
+
+      console.log(`🎤 Speech Recognition initialized with language (${resolvedLanguage})`);
 
       recognitionRef.current.onresult = (event: any) => {
         let interimTranscript = '';
@@ -58,27 +61,26 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken }: UseSp
       }
       voiceService.stopSpeaking();
     };
-  }, []);
+  }, [resolvedLanguage]);
 
-  // Speak text using Voice Service (with Indian English voice)
+  // Speak text using Voice Service, matching the selected interview language
   const speak = useCallback((text: string, onEnd?: () => void) => {
     console.log('[Speech] Speaking:', text);
     return new Promise<void>((resolve) => {
       setIsSpeaking(true);
       setAvatarState(AvatarState.SPEAKING);
 
-      // Use voice service which handles Indian voice selection
       voiceService.speak(text, () => {
         console.log('[Speech] Finished speaking');
         setIsSpeaking(false);
         setAvatarState(AvatarState.IDLE);
         if (onEnd) onEnd();
         resolve();
-      });
-      
+      }, resolvedLanguage);
+
       console.log('[Speech] Started speaking');
     });
-  }, []);
+  }, [resolvedLanguage]);
 
   // Start listening to user's answer
   const startListening = useCallback(() => {

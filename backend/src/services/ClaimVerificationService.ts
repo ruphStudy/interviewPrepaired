@@ -16,6 +16,7 @@ interface ExtractClaimsParams {
   answer: string;
   questionNumber: number;
   currentTracking: IClaimVerificationTracking;
+  interviewId?: string;
 }
 
 interface ClaimExtractionResult {
@@ -31,14 +32,15 @@ class ClaimVerificationService {
    * Extract verifiable claims from an answer
    */
   async extractClaims(params: ExtractClaimsParams): Promise<IClaimVerificationTracking> {
-    const { question, answer, questionNumber, currentTracking } = params;
-    
+    const { question, answer, questionNumber, currentTracking, interviewId } = params;
+
     try {
       // Call AI to detect verifiable claims
       const extraction = await this.detectClaims({
         question,
         answer,
         questionNumber,
+        interviewId,
       });
       
       // Add new claims to tracking
@@ -69,8 +71,9 @@ class ClaimVerificationService {
     question: string;
     answer: string;
     questionNumber: number;
+    interviewId?: string;
   }): Promise<ClaimExtractionResult> {
-    const { question, answer, questionNumber } = params;
+    const { question, answer, questionNumber, interviewId } = params;
     
     const systemPrompt = `You are an expert interviewer trained to identify verifiable claims.
 
@@ -128,7 +131,7 @@ Identify all verifiable claims in the answer above.`;
     try {
       const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.3, 1000);
+      const response = await openAIService.callOpenAI(prompt, 0.3, 1000, { interviewId, operation: 'claim-verification' });
       
       const claims = this.validateClaimExtraction(response, questionNumber);
       return { newClaims: claims };

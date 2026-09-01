@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import Interview, { IInterview, IEvaluation } from '../models/interview.model';
+import Interview, { IInterview, IEvaluation, IQuestion } from '../models/interview.model';
 import { getOpenAIService, InterviewTopic, QuestionResponse } from './OpenAIService';
 import { 
   DifficultyLevel, 
@@ -18,6 +18,12 @@ import { difficultyManagerService } from './DifficultyManagerService';
 import { initializeDifficultyTracking, mapLevelToDifficulty } from '../models/DifficultyTracking.model';import { claimVerificationService } from './ClaimVerificationService';
 import { contradictionDetectorService } from './ContradictionDetectorService';
 import { starAnalysisService } from './STARAnalysisService';
+import { buildAICostReport, AICostReport } from './AIUsageService';
+import { normalizeLanguageCode } from '../config/languages';
+
+// Uploaded-mode question count is NOT subject to the AI-generated-interview
+// 1–10 limit; this is only a sensible upper safety bound.
+const MAX_UPLOADED_QUESTIONS = 200;
 
 /** Same validity rule the frontend/report/PDF must all agree on — never treat a stringified "undefined"/"null"/placeholder/empty value as a real expected answer. */
 function isValidModelAnswer(value: unknown): value is string {
@@ -40,6 +46,10 @@ interface StartInterviewParams {
   experienceLevel?: ExperienceLevel;
   roleName?: string; // NEW: Specific role title
   industry?: string; // NEW: Industry context
+  interviewMode?: 'ai-generated' | 'uploaded';
+  uploadedQuestions?: Array<{ questionText: string; referenceAnswer?: string }>;
+  shuffleQuestions?: boolean;
+  interviewLanguage?: string;
 }
 
 interface SubmitAnswerParams {
@@ -71,11 +81,15 @@ interface InterviewReport {
     completedAt?: Date;
     totalQuestions: number;
     answeredQuestions: number;
+    interviewLanguage?: string;
   };
   questions: Array<{
     questionText: string;
     expectedPoints?: string[];
     modelAnswer?: string;
+    questionSource?: 'ai' | 'uploaded';
+    answerSource?: 'uploaded' | 'ai-generated';
+    referenceAnswer?: string;
     answerText?: string;
     answeredAt?: Date;
     duration?: number;
@@ -97,10 +111,69 @@ interface InterviewReport {
     strengthsCount: number;
     weaknessesCount: number;
   };
+  // null for interviews that predate AI usage tracking — never a fabricated/estimated cost.
+  aiCost: AICostReport | null;
 }
 
 export class InterviewService {
   private openAIService = getOpenAIService();
+
+  /**
+   * Single source of truth for a question's expected/reference answer.
+   * Uploaded reference answers are never overwritten or regenerated; a
+   * modelAnswer is only generated via OpenAI when nothing valid exists yet,
+   * and the result is persisted so it is never regenerated again.
+   */
+  private async resolveExpectedAnswer(
+    interview: IInterview,
+    questionIndex: number
+  ): Promise<{ expectedAnswer?: string; answerSource?: 'uploaded' | 'ai-generated' }> {
+    const question = interview.questions[questionIndex];
+    if (!question) return {};
+
+    if (question.questionSource === 'uploaded' && isValidModelAnswer(question.referenceAnswer)) {
+      return { expectedAnswer: question.referenceAnswer, answerSource: 'uploaded' };
+    }
+
+    if (isValidModelAnswer(question.modelAnswer)) {
+      return { expectedAnswer: question.modelAnswer, answerSource: question.answerSource || 'ai-generated' };
+    }
+
+    try {
+      const generated = await this.openAIService.generateModelAnswer({
+        question: question.questionText,
+        topic: interview.topic,
+        difficulty: interview.difficulty,
+        experienceLevel: interview.experienceLevel || 'professional',
+        expectedPoints: question.expectedPoints,
+        questionType: question.questionType as any,
+        interviewId: interview._id.toString(),
+        questionIndex,
+        interviewLanguage: interview.interviewLanguage,
+      });
+
+      question.modelAnswer = generated;
+      question.answerSource = 'ai-generated';
+      interview.markModified(`questions.${questionIndex}.modelAnswer`);
+      interview.markModified(`questions.${questionIndex}.answerSource`);
+
+      await Interview.updateOne(
+        { _id: interview._id },
+        {
+          $set: {
+            [`questions.${questionIndex}.modelAnswer`]: generated,
+            [`questions.${questionIndex}.answerSource`]: 'ai-generated',
+          },
+        }
+      );
+
+      console.log(`[ModelAnswer] Q${questionIndex + 1}`, { generated: true, length: generated.length });
+      return { expectedAnswer: generated, answerSource: 'ai-generated' };
+    } catch (err) {
+      console.error(`[ModelAnswer] Generation failed for Q${questionIndex + 1} (non-critical):`, err);
+      return {};
+    }
+  }
 
   /**
    * Start a new interview session
@@ -111,6 +184,10 @@ export class InterviewService {
    * 3. Generate first question using blueprint
    */
   async startInterview(params: StartInterviewParams): Promise<IInterview> {
+    if (params.interviewMode === 'uploaded') {
+      return this.startUploadedInterview(params);
+    }
+
     console.log('🟢 [InterviewService] startInterview called with params:', params);
     const { 
       userId, 
@@ -123,6 +200,7 @@ export class InterviewService {
       roleName,
       industry
     } = params;
+    const interviewLanguage = normalizeLanguageCode(params.interviewLanguage);
 
     // Validate total questions
     if (totalQuestions < 1 || totalQuestions > 10) {
@@ -185,7 +263,14 @@ export class InterviewService {
         questions: [],
         competencyCoverage: initialCoverage,
         difficultyTracking: initialDifficulty,
+        interviewLanguage,
       });
+
+      // Persist the shell now (before any AI call) so interview._id already
+      // exists in MongoDB — AI usage/cost tracking below attributes its
+      // record to this interview via a targeted update, which would silently
+      // match nothing if the document didn't exist in the DB yet.
+      await interview.save();
 
       // =====================================================================
       // STEP 3: Generate First Question Using Blueprint
@@ -198,11 +283,13 @@ export class InterviewService {
         interviewStyle: finalInterviewStyle,
         totalQuestions,
       };
-      
+
       const questionResponse = await this.openAIService.generateQuestion({
         sessionConfig,
         // TODO: Pass blueprint context to question generation
         // This will be used to generate questions targeting specific competencies
+        interviewId: interview._id.toString(),
+        interviewLanguage,
       });
 
       console.log('🟢 [InterviewService] Question generated:', questionResponse);
@@ -221,6 +308,85 @@ export class InterviewService {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new ApiError(500, `Failed to start interview: ${message}`);
     }
+  }
+
+  /**
+   * Start an interview from a pre-parsed uploaded question set — no AI
+   * question generation, no blueprint/competency/difficulty tracking (those
+   * only exist to drive AI question generation, which uploaded mode skips).
+   */
+  private async startUploadedInterview(params: StartInterviewParams): Promise<IInterview> {
+    const {
+      userId,
+      topic,
+      difficulty,
+      experienceYears,
+      totalQuestions,
+      interviewStyle,
+      experienceLevel,
+      uploadedQuestions,
+      shuffleQuestions,
+    } = params;
+    const interviewLanguage = normalizeLanguageCode(params.interviewLanguage);
+
+    if (!uploadedQuestions || uploadedQuestions.length === 0) {
+      throw new ApiError(400, 'At least 1 uploaded question is required');
+    }
+
+    let pool = [...uploadedQuestions];
+    if (shuffleQuestions) {
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+
+    // Uploaded mode is not subject to the AI-generated-interview 1–10 cap —
+    // the candidate should be able to practice a subset or the full set
+    // (e.g. 25 or 50 uploaded questions), bounded only by a generous safety
+    // limit and however many questions were actually uploaded.
+    const effectiveTotal = Math.min(totalQuestions || pool.length, pool.length, MAX_UPLOADED_QUESTIONS);
+    if (effectiveTotal < 1) {
+      throw new ApiError(400, 'Total questions must be at least 1');
+    }
+    pool = pool.slice(0, effectiveTotal);
+
+    const finalExperienceLevel = experienceLevel || mapExperienceYearsToLevel(experienceYears);
+    const finalInterviewStyle = interviewStyle || inferInterviewStyle(topic);
+
+    const questions: IQuestion[] = pool.map((q) => {
+      const hasReferenceAnswer = isValidModelAnswer(q.referenceAnswer);
+      return {
+        questionText: q.questionText,
+        questionSource: 'uploaded',
+        referenceAnswer: hasReferenceAnswer ? q.referenceAnswer!.trim() : undefined,
+        answerSource: hasReferenceAnswer ? 'uploaded' : undefined,
+        expectedPoints: [],
+      } as IQuestion;
+    });
+
+    const interview = new Interview({
+      userId: new Types.ObjectId(userId),
+      topic,
+      difficulty,
+      experienceYears,
+      experienceLevel: finalExperienceLevel,
+      interviewStyle: finalInterviewStyle,
+      interviewMode: 'uploaded',
+      interviewLanguage,
+      totalQuestions: effectiveTotal,
+      status: 'in-progress',
+      currentQuestion: 1,
+      questions,
+    });
+
+    await interview.save();
+    console.log('✅ [InterviewService] Uploaded-question interview started', {
+      totalQuestions: effectiveTotal,
+      withReferenceAnswer: questions.filter((q) => q.answerSource === 'uploaded').length,
+    });
+
+    return interview;
   }
 
   /**
@@ -282,8 +448,12 @@ export class InterviewService {
         question: currentQuestion.questionText,
         answer,
         expectedPoints: currentQuestion.expectedPoints,
+        referenceAnswer: isValidModelAnswer(currentQuestion.referenceAnswer) ? currentQuestion.referenceAnswer : undefined,
+        interviewId: interview._id.toString(),
+        questionIndex: currentQuestionIndex,
+        interviewLanguage: interview.interviewLanguage,
       });
-      
+
       // Perform STAR analysis for behavioral interviews
       let starAnalysis = null;
       try {
@@ -291,6 +461,7 @@ export class InterviewService {
           question: currentQuestion.questionText,
           answer,
           interviewStyle: interviewStyle as InterviewStyle,
+          interviewId: interview._id.toString(),
         });
         
         if (starAnalysis) {
@@ -312,43 +483,11 @@ export class InterviewService {
       });
 
       // =====================================================================
-      // Generate Model Answer (Ideal Answer for Learning)
+      // Resolve Expected Answer (uploaded reference answer takes priority;
+      // AI model-answer is generated only when nothing valid exists yet)
       // =====================================================================
-      console.log('[InterviewService] Generating model answer for learning...');
-      try {
-        const modelAnswer = await this.openAIService.generateModelAnswer({
-          question: currentQuestion.questionText,
-          topic: interview.topic,
-          difficulty: interview.difficulty,
-          experienceLevel: interview.experienceLevel || 'professional',
-          expectedPoints: currentQuestion.expectedPoints,
-          questionType: currentQuestion.questionType as any,
-        });
-        
-        // Store model answer in the question. Set it on the in-memory
-        // document (so later code/response in this request already sees it)
-        // AND persist it immediately with a targeted $set — the last-question
-        // path below reloads the interview from MongoDB before building the
-        // final report, so relying only on a later `interview.save()` (many
-        // async steps downstream) risks the reload missing it.
-        if (interview.questions[currentQuestionIndex]) {
-          interview.questions[currentQuestionIndex].modelAnswer = modelAnswer;
-          interview.markModified(`questions.${currentQuestionIndex}.modelAnswer`);
-
-          await Interview.updateOne(
-            { _id: interview._id },
-            { $set: { [`questions.${currentQuestionIndex}.modelAnswer`]: modelAnswer } }
-          );
-
-          console.log(`[ModelAnswer] Q${currentQuestionIndex + 1}`, {
-            generated: !!modelAnswer,
-            length: modelAnswer?.length,
-          });
-        }
-      } catch (modelAnswerError) {
-        console.error('[InterviewService] Model answer generation failed (non-critical):', modelAnswerError);
-        // Don't fail the interview if model answer generation fails — modelAnswer stays unset for this question.
-      }
+      console.log('[InterviewService] Resolving expected answer for learning...');
+      await this.resolveExpectedAnswer(interview, currentQuestionIndex);
 
       // =====================================================================
       // NEW: Extract and Store Interview Memory
@@ -360,6 +499,7 @@ export class InterviewService {
           answer,
           questionNumber: interview.currentQuestion,
           existingMemory: interview.interviewMemory || createEmptyMemory(),
+          interviewId: interview._id.toString(),
         });
         
         // Update interview memory
@@ -381,6 +521,7 @@ export class InterviewService {
             answer,
             questionNumber: interview.currentQuestion,
             currentTracking: interview.claimVerification,
+            interviewId: interview._id.toString(),
           });
           
           interview.claimVerification = updatedClaims;
@@ -402,6 +543,7 @@ export class InterviewService {
             currentQuestionNumber: interview.currentQuestion,
             interviewMemory: interview.interviewMemory,
             currentTracking: interview.contradictionTracking,
+            interviewId: interview._id.toString(),
           });
           
           interview.contradictionTracking = updatedContradictions;
@@ -430,6 +572,7 @@ export class InterviewService {
               questionNumber: interview.currentQuestion,
               competencies: blueprint.competencies,
               currentCoverage: interview.competencyCoverage,
+              interviewId: interview._id.toString(),
             });
             
             interview.competencyCoverage = updatedCoverage;
@@ -510,9 +653,26 @@ export class InterviewService {
           // Still use the reloaded interview even if report generation failed
           finalInterview = reloadedInterview;
         }
+      } else if (interview.interviewMode === 'uploaded') {
+        // Uploaded-mode questions are all pre-populated at creation time —
+        // never call AI to generate the next question, just advance to the
+        // next already-stored question.
+        console.log(`[InterviewService] Uploaded mode: advancing to pre-loaded question ${interview.currentQuestion + 1}`);
+        interview.currentQuestion += 1;
+        await interview.save();
+
+        const upcoming = interview.questions[interview.currentQuestion - 1];
+        if (upcoming) {
+          nextQuestion = {
+            question: upcoming.questionText,
+            questionType: upcoming.questionType as any,
+            expectedPoints: upcoming.expectedPoints || [],
+            followUpTopics: [],
+          };
+        }
       } else {
         console.log(`[InterviewService] More questions remaining. Current: ${interview.currentQuestion}, Total: ${interview.totalQuestions}`);
-        
+
         // =====================================================================
         // Generate Next Question with Memory Context
         // =====================================================================
@@ -563,6 +723,8 @@ export class InterviewService {
           coverageContext, // NEW: Pass coverage context
           priorityCompetency, // NEW: Pass priority competency
           difficultyContext, // NEW: Pass difficulty context
+          interviewId: interview._id.toString(),
+          interviewLanguage: interview.interviewLanguage,
         });
 
         // Add next question with expected points
@@ -630,6 +792,8 @@ export class InterviewService {
       const finalReport = await this.openAIService.generateFinalReport({
         sessionConfig,
         evaluations,
+        interviewId: interview._id.toString(),
+        interviewLanguage: interview.interviewLanguage,
       });
 
       console.log('[InterviewService] Final report received from OpenAI');
@@ -716,47 +880,24 @@ export class InterviewService {
       0
     );
 
-    // Backfill: old/evaluated questions may predate reliable modelAnswer
-    // persistence. Generate it (once, real OpenAI call) only when genuinely
-    // missing/invalid, so we never waste tokens re-generating an existing
-    // answer and never insert a fake/template one.
+    // Backfill/resolve expected answer per evaluated question via the same
+    // helper used during submission — an uploaded referenceAnswer or an
+    // already-generated modelAnswer is reused as-is; AI is only called when
+    // genuinely missing, so we never waste tokens re-generating an answer.
+    const resolvedAnswers = new Map<number, string>();
     for (let i = 0; i < interview.questions.length; i++) {
-      const q = interview.questions[i];
-      const isValid = isValidModelAnswer(q.modelAnswer);
-
-      if (!q.evaluation || isValid) {
-        continue;
-      }
-
-      try {
-        const experienceLevel = interview.experienceLevel || mapExperienceYearsToLevel(interview.experienceYears);
-        const generated = await this.openAIService.generateModelAnswer({
-          question: q.questionText,
-          topic: interview.topic,
-          difficulty: interview.difficulty,
-          experienceLevel: experienceLevel || 'professional',
-          expectedPoints: q.expectedPoints,
-          questionType: q.questionType as any,
-        });
-
-        q.modelAnswer = generated;
-        await Interview.updateOne(
-          { _id: interview._id },
-          { $set: { [`questions.${i}.modelAnswer`]: generated } }
-        );
-        console.log(`[ModelAnswer] Backfilled Q${i + 1}`, { generated: true, length: generated.length });
-      } catch (backfillError) {
-        console.error(`[ModelAnswer] Backfill failed for Q${i + 1} (non-critical):`, backfillError);
-        // Leave modelAnswer unset — report will simply omit it for this question.
-      }
+      if (!interview.questions[i].evaluation) continue;
+      const { expectedAnswer } = await this.resolveExpectedAnswer(interview, i);
+      if (expectedAnswer) resolvedAnswers.set(i, expectedAnswer);
     }
 
     console.log(
       '[Report] model answers:',
       interview.questions.map((q, i) => ({
         question: i + 1,
-        hasModelAnswer: isValidModelAnswer(q.modelAnswer),
-        length: q.modelAnswer?.length || 0,
+        questionSource: q.questionSource || 'ai',
+        answerSource: q.answerSource,
+        hasExpectedAnswer: resolvedAnswers.has(i),
       }))
     );
 
@@ -771,11 +912,15 @@ export class InterviewService {
         completedAt: interview.completedAt ?? interview.updatedAt,
         totalQuestions: interview.totalQuestions,
         answeredQuestions,
+        interviewLanguage: interview.interviewLanguage,
       },
-      questions: interview.questions.map((q) => ({
+      questions: interview.questions.map((q, i) => ({
         questionText: q.questionText,
         expectedPoints: q.expectedPoints,
-        modelAnswer: isValidModelAnswer(q.modelAnswer) ? q.modelAnswer : undefined,
+        modelAnswer: resolvedAnswers.get(i),
+        questionSource: q.questionSource || 'ai',
+        answerSource: q.answerSource,
+        referenceAnswer: isValidModelAnswer(q.referenceAnswer) ? q.referenceAnswer : undefined,
         answerText: q.answerText,
         answeredAt: q.answeredAt,
         duration: q.duration,
@@ -799,6 +944,15 @@ export class InterviewService {
         strengthsCount,
         weaknessesCount,
       },
+      // Re-fetched rather than read off the in-memory `interview` doc — the
+      // backfill loop above may have just persisted a fresh AI call's usage
+      // via a targeted update, which the in-memory document wouldn't reflect.
+      // .lean() — a hydrated partial-projection document would still run the
+      // schema's post('init') hook, which computes every virtual (including
+      // ones that assume `questions` is present) and crashes on a doc that
+      // only has `aiUsage` selected. .lean() returns a plain object instead,
+      // skipping hydration/virtuals/hooks entirely.
+      aiCost: buildAICostReport((await Interview.findById(interview._id).select('aiUsage').lean())?.aiUsage),
     };
   }
 

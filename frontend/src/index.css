@@ -6,40 +6,156 @@
   * {
     @apply border-gray-200 dark:border-gray-700;
   }
-  
+
   body {
-    @apply bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    @apply bg-slate-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 antialiased;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+
+  h1, h2, h3, h4 {
+    @apply tracking-tight;
   }
 }
 
 @layer components {
+  /* ---- Layout ---- */
+  .page-shell {
+    @apply min-h-screen bg-slate-50 dark:bg-gray-900;
+  }
+
+  .page-container {
+    @apply max-w-6xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  .page-header {
+    @apply mb-8;
+  }
+
+  .page-title {
+    @apply text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight;
+  }
+
+  .page-subtitle {
+    @apply mt-1.5 text-sm sm:text-base text-gray-500 dark:text-gray-400;
+  }
+
+  .section-title {
+    @apply text-base font-semibold text-gray-900 dark:text-white;
+  }
+
+  .helper-text {
+    @apply text-xs text-gray-500 dark:text-gray-400;
+  }
+
+  /* ---- Buttons ---- */
   .btn {
-    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-primary {
-    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+    @apply bg-primary-600 text-white shadow-soft hover:bg-primary-700 hover:shadow-card focus-visible:ring-primary-500;
   }
 
   .btn-secondary {
-    @apply bg-gray-200 text-gray-900 hover:bg-gray-300 focus:ring-gray-400 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600;
+    @apply bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400 focus-visible:ring-gray-400 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-700;
   }
 
   .btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+    @apply bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500;
   }
 
+  /* ---- Cards & surfaces ---- */
   .card {
-    @apply bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700;
+    @apply bg-white dark:bg-gray-800 rounded-xl shadow-card p-6 border border-gray-200/80 dark:border-gray-700;
   }
 
+  .card-flat {
+    @apply bg-white dark:bg-gray-800 rounded-xl border border-gray-200/80 dark:border-gray-700 p-5;
+  }
+
+  .surface-muted {
+    @apply bg-slate-50 dark:bg-gray-900/50 border border-gray-200/80 dark:border-gray-700 rounded-lg;
+  }
+
+  /* ---- Forms ---- */
   .input {
-    @apply w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100;
+    @apply w-full px-3.5 py-2.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg transition-colors focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder:text-gray-400;
+  }
+
+  .input-error {
+    @apply border-red-400 focus:ring-red-500/30 focus:border-red-500;
   }
 
   .label {
-    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2;
+    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5;
+  }
+
+  .field-error {
+    @apply mt-1.5 text-xs font-medium text-red-600 dark:text-red-400;
+  }
+
+  /* ---- Segmented control / mode toggle ---- */
+  .segmented {
+    @apply grid gap-2 p-1 bg-slate-100 dark:bg-gray-900/60 rounded-xl border border-gray-200/80 dark:border-gray-700;
+  }
+
+  .segmented-option {
+    @apply px-4 py-2.5 rounded-lg text-sm font-semibold text-center transition-all duration-150 cursor-pointer select-none;
+  }
+
+  .segmented-option-active {
+    @apply bg-white dark:bg-gray-700 text-primary-700 dark:text-primary-300 shadow-soft;
+  }
+
+  .segmented-option-inactive {
+    @apply text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200;
+  }
+
+  /* ---- Tabs ---- */
+  .tabs {
+    @apply flex items-center gap-1 border-b border-gray-200 dark:border-gray-700;
+  }
+
+  .tab {
+    @apply px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 border-b-2 border-transparent -mb-px transition-colors;
+  }
+
+  .tab-active {
+    @apply text-primary-700 dark:text-primary-300 border-primary-600;
+  }
+
+  /* ---- Badges ---- */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold;
+  }
+
+  .badge-success {
+    @apply bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400;
+  }
+
+  .badge-warning {
+    @apply bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400;
+  }
+
+  .badge-neutral {
+    @apply bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300;
+  }
+
+  .badge-info {
+    @apply bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300;
+  }
+
+  /* ---- Stat tiles ---- */
+  .stat-tile {
+    @apply text-center px-3 py-4 rounded-lg surface-muted;
+  }
+
+  .stat-tile-value {
+    @apply text-2xl font-bold text-gray-900 dark:text-white;
+  }
+
+  .stat-tile-label {
+    @apply mt-1 text-xs font-medium text-gray-500 dark:text-gray-400;
   }
 }
 

@@ -9,6 +9,7 @@ export interface MemoryExtractionRequest {
   answer: string;
   questionNumber: number;
   existingMemory?: IInterviewMemory;
+  interviewId?: string;
 }
 
 /**
@@ -49,7 +50,8 @@ export class InterviewMemoryService {
       const extractedFacts = await this.callAIForMemoryExtraction(
         request.question,
         request.answer,
-        currentMemory
+        currentMemory,
+        request.interviewId
       );
 
       // Update memory with new facts
@@ -72,7 +74,8 @@ export class InterviewMemoryService {
   private async callAIForMemoryExtraction(
     question: string,
     answer: string,
-    existingMemory: IInterviewMemory
+    existingMemory: IInterviewMemory,
+    interviewId?: string
   ): Promise<MemoryExtractionResponse> {
     const existingMemorySummary = formatMemoryForAI(existingMemory);
 
@@ -140,8 +143,8 @@ Return ONLY valid JSON:
 }`;
 
     try {
-      const response = await this.openAIService.callOpenAI(prompt, 0.3, 800);
-      
+      const response = await this.openAIService.callOpenAI(prompt, 0.3, 800, { interviewId, operation: 'memory-extraction' });
+
       // Validate response
       return this.validateMemoryResponse(response);
       

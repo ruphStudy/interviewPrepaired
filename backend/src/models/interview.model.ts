@@ -5,6 +5,7 @@ import { IDifficultyTracking, difficultyTrackingSchema } from './DifficultyTrack
 import { IClaimVerificationTracking, claimVerificationTrackingSchema, initializeClaimTracking } from './ClaimVerification.model';
 import { IContradictionTracking, contradictionTrackingSchema, initializeContradictionTracking } from './ContradictionTracking.model';
 import { ISTARAnalysis } from './STARAnalysis.model';
+import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE } from '../config/languages';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -55,10 +56,48 @@ export interface IQuestion {
   questionType?: string; // Type of question: fundamentals, coding, system-design, etc.
   expectedPoints?: string[]; // Key points that should be covered in the answer
   modelAnswer?: string; // Complete ideal answer for reference (generated after evaluation)
+  questionSource?: 'ai' | 'uploaded'; // Where the question came from
+  referenceAnswer?: string; // Reference answer supplied in an uploaded question set
+  answerSource?: 'uploaded' | 'ai-generated'; // Where the expected answer came from
   answerText?: string;
   answeredAt?: Date;
   duration?: number;
   evaluation?: IEvaluation;
+}
+
+export interface IAIUsageCall {
+  operation: string;
+  model: string;
+  questionIndex?: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputCostUsd: number;
+  cachedInputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+  pricingStatus: 'calculated' | 'unknown';
+  timestamp: Date;
+}
+
+export interface IAIUsageTotals {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputCostUsd: number;
+  cachedInputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+  callCount: number;
+  // Not user-facing — lets buildAICostReport() derive pricingComplete without rescanning calls[].
+  pricingCompleteCallCount: number;
+}
+
+export interface IAIUsage {
+  calls: IAIUsageCall[];
+  totals: IAIUsageTotals;
 }
 
 export interface IFinalReport {
@@ -94,8 +133,15 @@ export interface IInterview extends Document {
   totalQuestions: number;
   currentQuestion: number;
   status: 'created' | 'in-progress' | 'paused' | 'completed' | 'evaluated';
+  interviewMode?: 'ai-generated' | 'uploaded';
+  // Absent on interviews created before this feature — schema `default` below
+  // makes those hydrate as 'en-IN', so no migration/backfill is needed.
+  interviewLanguage?: string;
   questions: IQuestion[];
   finalReport?: IFinalReport;
+  // Absent entirely for interviews that predate this feature — never defaulted, so
+  // "not tracked" is distinguishable from "tracked, zero cost".
+  aiUsage?: IAIUsage;
   
   // Interview Memory - Accumulated facts from candidate's answers
   interviewMemory?: IInterviewMemory;
@@ -282,6 +328,19 @@ const questionSchema = new Schema<IQuestion>(
       type: String,
       trim: true,
     },
+    questionSource: {
+      type: String,
+      enum: ['ai', 'uploaded'],
+      default: 'ai',
+    },
+    referenceAnswer: {
+      type: String,
+      trim: true,
+    },
+    answerSource: {
+      type: String,
+      enum: ['uploaded', 'ai-generated'],
+    },
     answerText: {
       type: String,
       trim: true,
@@ -300,6 +359,53 @@ const questionSchema = new Schema<IQuestion>(
     },
   },
   { _id: false, timestamps: false }
+);
+
+const aiUsageCallSchema = new Schema<IAIUsageCall>(
+  {
+    operation: { type: String, required: true },
+    model: { type: String, required: true },
+    questionIndex: { type: Number },
+    inputTokens: { type: Number, required: true, default: 0 },
+    cachedInputTokens: { type: Number, required: true, default: 0 },
+    outputTokens: { type: Number, required: true, default: 0 },
+    totalTokens: { type: Number, required: true, default: 0 },
+    inputCostUsd: { type: Number, required: true, default: 0 },
+    cachedInputCostUsd: { type: Number, required: true, default: 0 },
+    outputCostUsd: { type: Number, required: true, default: 0 },
+    totalCostUsd: { type: Number, required: true, default: 0 },
+    pricingStatus: { type: String, enum: ['calculated', 'unknown'], required: true },
+    timestamp: { type: Date, required: true, default: Date.now },
+  },
+  { _id: false }
+);
+
+const aiUsageTotalsSchema = new Schema<IAIUsageTotals>(
+  {
+    inputTokens: { type: Number, default: 0 },
+    cachedInputTokens: { type: Number, default: 0 },
+    outputTokens: { type: Number, default: 0 },
+    totalTokens: { type: Number, default: 0 },
+    inputCostUsd: { type: Number, default: 0 },
+    cachedInputCostUsd: { type: Number, default: 0 },
+    outputCostUsd: { type: Number, default: 0 },
+    totalCostUsd: { type: Number, default: 0 },
+    callCount: { type: Number, default: 0 },
+    pricingCompleteCallCount: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
+// No top-level default — an interview document must NOT get this path
+// materialized just by being read/saved. It stays genuinely absent until the
+// first AI call for that interview persists usage via $push/$inc, which is
+// what lets old interviews be told "not tracked" instead of "zero cost".
+const aiUsageSchema = new Schema<IAIUsage>(
+  {
+    calls: { type: [aiUsageCallSchema], default: [] },
+    totals: { type: aiUsageTotalsSchema, default: () => ({}) },
+  },
+  { _id: false }
 );
 
 const finalReportSchema = new Schema<IFinalReport>(
@@ -453,7 +559,10 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       type: Number,
       required: [true, 'Total questions is required'],
       min: [1, 'Must have at least 1 question'],
-      max: [50, 'Cannot have more than 50 questions'],
+      // Schema-level ceiling only; AI-generated interviews stay capped at 10
+      // by the route validator and InterviewService.startInterview() checks.
+      // Uploaded-mode interviews may use up to this many questions.
+      max: [200, 'Cannot have more than 200 questions'],
     },
     currentQuestion: {
       type: Number,
@@ -471,6 +580,16 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       default: 'created',
       index: true,
     },
+    interviewMode: {
+      type: String,
+      enum: ['ai-generated', 'uploaded'],
+      default: 'ai-generated',
+    },
+    interviewLanguage: {
+      type: String,
+      enum: SUPPORTED_LANGUAGE_CODES,
+      default: DEFAULT_LANGUAGE_CODE,
+    },
     questions: {
       type: [questionSchema],
       default: [],
@@ -483,6 +602,10 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
     },
     finalReport: {
       type: finalReportSchema,
+    },
+    aiUsage: {
+      type: aiUsageSchema,
+      required: false,
     },
     interviewMemory: {
       type: interviewMemorySchema,

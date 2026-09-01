@@ -103,9 +103,12 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
     <div className={`flex flex-col items-center justify-center ${className}`}>
       {/* Avatar Container */}
       <div className="relative">
-        {/* Main Avatar Circle - LARGER SIZE */}
+        {/* Main Avatar Circle — sized to fit within the screen's constrained
+            height (max-h-[60vh] on the parent) with room left for the state
+            chip below and the question card/controls that follow; a fixed
+            32rem circle used to overflow that budget and collide with them. */}
         <div
-          className={`relative w-[32rem] h-[32rem] rounded-full bg-gradient-to-br ${config.gradient} flex items-center justify-center shadow-2xl transform transition-all duration-500 overflow-hidden`}
+          className={`relative w-40 h-40 sm:w-56 sm:h-56 md:w-64 md:h-64 lg:w-72 lg:h-72 rounded-full bg-gradient-to-br ${config.gradient} flex items-center justify-center shadow-2xl transform transition-all duration-500 overflow-hidden`}
         >
           {/* Glow Effect */}
           <div className="absolute inset-0 rounded-full bg-white opacity-10 animate-pulse" />
@@ -163,18 +166,15 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
         />
       </div>
 
-      {/* State Label */}
-      <div className="mt-8 text-center">
-        <div className="relative">
-          <span className={`
-            inline-block px-8 py-3 rounded-full text-lg font-bold uppercase tracking-widest
-            bg-gradient-to-r ${config.gradient} text-white shadow-lg
-            transform transition-all duration-300 hover:scale-110
-          `}>
-            {config.label}
-          </span>
-          <div className={`absolute inset-0 rounded-full bg-gradient-to-r ${config.gradient} blur-xl opacity-50 animate-pulse`} />
-        </div>
+      {/* State Label — a compact chip, not a second large stacked pill, so
+          this block's total height stays small and predictable. */}
+      <div className="mt-3 text-center">
+        <span className={`
+          inline-block px-4 py-1 rounded-full text-xs font-bold uppercase tracking-widest
+          bg-gradient-to-r ${config.gradient} text-white shadow-md
+        `}>
+          {config.label}
+        </span>
       </div>
     </div>
   );

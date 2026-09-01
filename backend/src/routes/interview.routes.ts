@@ -1,14 +1,35 @@
 import { Router } from 'express';
+import multer from 'multer';
 import interviewController from '../controllers/InterviewController';
 import { protect } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 import { body, param, query } from 'express-validator';
+import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 
 const router = Router();
 
+// Uploaded question-file parsing — memory storage only, file is parsed and
+// discarded, never written to disk.
+const questionFileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['.txt', '.csv', '.docx', '.pdf'];
+    const ext = file.originalname.slice(file.originalname.lastIndexOf('.')).toLowerCase();
+    if (!allowed.includes(ext)) {
+      cb(new Error(`Unsupported file type "${ext}". Supported types: .txt, .csv, .docx, .pdf`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
 // Validation rules
+const isUploadedMode = (_value: unknown, { req }: { req: any }) => req.body.interviewMode !== 'uploaded';
+
 const startInterviewValidation = [
   body('topic')
+    .if(isUploadedMode)
     .notEmpty()
     .withMessage('Topic is required')
     .isString()
@@ -17,19 +38,40 @@ const startInterviewValidation = [
     .isLength({ min: 2, max: 100 })
     .withMessage('Topic must be between 2 and 100 characters'),
   body('difficulty')
+    .if(isUploadedMode)
     .notEmpty()
     .withMessage('Difficulty is required')
     .isIn(['beginner', 'intermediate', 'advanced', 'expert'])
     .withMessage('Invalid difficulty level'),
   body('experienceYears')
+    .if(isUploadedMode)
     .notEmpty()
     .withMessage('Experience years is required')
     .isInt({ min: 0, max: 50 })
     .withMessage('Experience years must be between 0 and 50'),
+  body('questions')
+    .if((_value, { req }) => req.body.interviewMode === 'uploaded')
+    .isArray({ min: 1 })
+    .withMessage('At least 1 question is required for uploaded interview mode'),
   body('totalQuestions')
     .optional()
-    .isInt({ min: 1, max: 10 })
-    .withMessage('Total questions must be between 1 and 10'),
+    .isInt({ min: 1 })
+    .withMessage('Total questions must be a positive integer')
+    .custom((value, { req }) => {
+      // AI-generated interviews stay capped at 10; uploaded-mode interviews
+      // may use up to MAX_UPLOADED_QUESTIONS (kept in sync with
+      // InterviewService's own limit) since the candidate may want to
+      // practice a full uploaded set larger than 10 questions.
+      const max = req.body.interviewMode === 'uploaded' ? 200 : 10;
+      if (Number(value) > max) {
+        throw new Error(`Total questions must be at most ${max}`);
+      }
+      return true;
+    }),
+  body('interviewLanguage')
+    .optional()
+    .isIn(SUPPORTED_LANGUAGE_CODES)
+    .withMessage(`Interview language must be one of: ${SUPPORTED_LANGUAGE_CODES.join(', ')}`),
 ];
 
 const submitAnswerValidation = [
@@ -105,6 +147,18 @@ router.post(
   ...startInterviewValidation,
   validate,
   interviewController.startInterview
+);
+
+/**
+ * POST /api/interview/parse-question-file
+ * Parse an uploaded question file (TXT/CSV/DOCX/PDF) into a preview list.
+ * Preview only — does NOT create an interview.
+ */
+router.post(
+  '/parse-question-file',
+  protect,
+  questionFileUpload.single('file'),
+  interviewController.parseQuestionFile
 );
 
 /**

@@ -20,6 +20,7 @@ import {
 import Header from '../components/Header';
 import { interviewApi, InterviewReport } from '../api/interviewApi';
 import { API_BASE_URL } from '../config/api.config';
+import { getLanguageByCode } from '../config/languages';
 
 /** Never render the literal text "undefined"/"null"/placeholder or an empty value as an expected answer. */
 function hasValidModelAnswer(modelAnswer: unknown): modelAnswer is string {
@@ -30,6 +31,27 @@ function hasValidModelAnswer(modelAnswer: unknown): modelAnswer is string {
     modelAnswer !== 'null' &&
     modelAnswer !== 'Model answer generation unavailable.'
   );
+}
+
+/** Adaptive precision so a real nonzero cost never displays as "$0.00". */
+function formatCostUsd(value: number): string {
+  if (value === 0) return '$0.00';
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  if (value >= 0.0001) return `$${value.toFixed(6)}`;
+  return `$${value.toFixed(8)}`;
+}
+
+// USD is the actual billed currency (from OpenAI's own USD pricing) — this is
+// only a reference conversion for display, not a second "actual" figure.
+// Approximate rate, update periodically; not tied to an exact FX date/rate.
+const USD_TO_INR_RATE = 83;
+
+function formatCostInr(usdValue: number): string {
+  const inr = usdValue * USD_TO_INR_RATE;
+  if (inr === 0) return '₹0.00';
+  if (inr >= 1) return `₹${inr.toFixed(2)}`;
+  if (inr >= 0.01) return `₹${inr.toFixed(4)}`;
+  return `₹${inr.toFixed(6)}`;
 }
 
 // Types
@@ -333,6 +355,7 @@ const ReportDashboard: React.FC = () => {
         createdAt: report.interview.createdAt,
         completedAt: report.interview.completedAt,
         finalReport: report.finalReport,
+        aiCost: report.aiCost,
         questions: report.questions.map((q) => ({
           questionText: q.questionText,
           answerText: q.answerText,
@@ -374,12 +397,12 @@ const ReportDashboard: React.FC = () => {
   // Loading State
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="page-shell">
         <Header />
         <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 64px)' }}>
           <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600 text-lg">Loading report...</p>
+            <div className="h-10 w-10 rounded-full border-2 border-gray-200 border-t-primary-600 mx-auto mb-4 animate-spin"></div>
+            <p className="text-gray-500 text-sm font-medium">Loading report...</p>
           </div>
         </div>
       </div>
@@ -389,34 +412,24 @@ const ReportDashboard: React.FC = () => {
   // Error State
   if (error || !report) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="page-shell">
         <Header />
         <div className="flex items-center justify-center p-4" style={{ minHeight: 'calc(100vh - 64px)' }}>
-          <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
-            <div className="text-center">
-              <svg
-                className="w-16 h-16 text-red-500 mx-auto mb-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          <div className="card max-w-md w-full text-center">
+            <svg className="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Error Loading Report</h2>
-            <p className="text-gray-600 mb-6">{error || 'Report not found'}</p>
-            <button
-              onClick={() => navigate('/setup')}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
-            >
+            <h2 className="section-title text-lg mb-2">Error Loading Report</h2>
+            <p className="text-sm text-gray-500 mb-6">{error || 'Report not found'}</p>
+            <button onClick={() => navigate('/setup')} className="btn btn-primary">
               Start New Interview
             </button>
           </div>
-        </div>
         </div>
       </div>
     );
@@ -426,6 +439,7 @@ const ReportDashboard: React.FC = () => {
   const barData = getBarChartData();
   const historyData = getHistoryChartData();
   const finalReport = report.finalReport;
+  const aiCost = report.aiCost;
   // 0 is a valid score, so this must be a nullish check, not `||`.
   const overallScore =
     typeof report.finalReport?.overallScore === 'number'
@@ -433,18 +447,17 @@ const ReportDashboard: React.FC = () => {
       : report.statistics?.averageScore ?? 0;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="page-shell">
       <Header />
-      <div className="py-8 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">Interview Report</h1>
-                <div className="flex flex-wrap gap-4 text-sm text-gray-600">
+      <div className="page-container py-8">
+        {/* Header */}
+        <div className="card mb-6">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div>
+              <h1 className="page-title text-2xl mb-2">Interview Report</h1>
+              <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-gray-500">
                 <span className="flex items-center">
-                  <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
                     <path
                       fillRule="evenodd"
@@ -452,23 +465,23 @@ const ReportDashboard: React.FC = () => {
                       clipRule="evenodd"
                     />
                   </svg>
-                  <span className="font-semibold mr-1">Topic:</span> {report.interview.topic}
+                  <span className="font-medium text-gray-700 mr-1">Topic:</span> {report.interview.topic}
                 </span>
                 <span className="flex items-center">
-                  <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                   </svg>
-                  <span className="font-semibold mr-1">Difficulty:</span> {report.interview.difficulty}
+                  <span className="font-medium text-gray-700 mr-1">Difficulty:</span> {report.interview.difficulty}
                 </span>
                 <span className="flex items-center">
-                  <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fillRule="evenodd"
                       d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
                       clipRule="evenodd"
                     />
                   </svg>
-                  <span className="font-semibold mr-1">Date:</span>{' '}
+                  <span className="font-medium text-gray-700 mr-1">Date:</span>{' '}
                   {new Date(report.interview.createdAt).toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'long',
@@ -476,27 +489,34 @@ const ReportDashboard: React.FC = () => {
                   })}
                 </span>
                 <span className="flex items-center">
-                  <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fillRule="evenodd"
                       d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z"
                       clipRule="evenodd"
                     />
                   </svg>
-                  <span className="font-semibold mr-1">Questions:</span> {report.questions.length} / {report.interview.totalQuestions}
+                  <span className="font-medium text-gray-700 mr-1">Questions:</span> {report.questions.length} / {report.interview.totalQuestions}
+                </span>
+                <span className="flex items-center">
+                  <svg className="w-4 h-4 mr-1.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 21a9 9 0 100-18 9 9 0 000 18zM3 12h18" />
+                  </svg>
+                  <span className="font-medium text-gray-700 mr-1">Language:</span>{' '}
+                  {getLanguageByCode(report.interview.interviewLanguage).nativeLabel}
                 </span>
               </div>
             </div>
-            <div className="mt-4 md:mt-0 flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-2 shrink-0">
               <button
                 onClick={exportToPDF}
                 disabled={exportLoading !== null}
-                className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                className="btn btn-secondary text-sm px-3.5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {exportLoading === 'pdf' ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                  <span className="h-3.5 w-3.5 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin" />
                 ) : (
-                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fillRule="evenodd"
                       d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 6a1 1 0 10-2 0v3.586l-1.293-1.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V8z"
@@ -509,12 +529,12 @@ const ReportDashboard: React.FC = () => {
               <button
                 onClick={exportToCSV}
                 disabled={exportLoading !== null}
-                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                className="btn btn-secondary text-sm px-3.5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {exportLoading === 'csv' ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                  <span className="h-3.5 w-3.5 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin" />
                 ) : (
-                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-emerald-600" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fillRule="evenodd"
                       d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
@@ -527,12 +547,12 @@ const ReportDashboard: React.FC = () => {
               <button
                 onClick={exportToJSON}
                 disabled={exportLoading !== null}
-                className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                className="btn btn-secondary text-sm px-3.5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {exportLoading === 'json' ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                  <span className="h-3.5 w-3.5 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin" />
                 ) : (
-                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-violet-600" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fillRule="evenodd"
                       d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"
@@ -547,41 +567,25 @@ const ReportDashboard: React.FC = () => {
         </div>
 
         {/* Tabs */}
-        <div className="bg-white rounded-lg shadow-lg mb-6">
-          <div className="border-b border-gray-200">
-            <nav className="flex -mb-px">
+        <div className="tabs mb-6">
               <button
                 onClick={() => setActiveTab('overview')}
-                className={`px-6 py-4 text-sm font-medium border-b-2 transition ${
-                  activeTab === 'overview'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`tab ${activeTab === 'overview' ? 'tab-active' : ''}`}
               >
                 Overview
               </button>
               <button
                 onClick={() => setActiveTab('details')}
-                className={`px-6 py-4 text-sm font-medium border-b-2 transition ${
-                  activeTab === 'details'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`tab ${activeTab === 'details' ? 'tab-active' : ''}`}
               >
                 Detailed Analysis
               </button>
               <button
                 onClick={() => setActiveTab('history')}
-                className={`px-6 py-4 text-sm font-medium border-b-2 transition ${
-                  activeTab === 'history'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
+                className={`tab ${activeTab === 'history' ? 'tab-active' : ''}`}
               >
                 History
               </button>
-            </nav>
-          </div>
         </div>
 
         <div id="report-content">
@@ -589,20 +593,16 @@ const ReportDashboard: React.FC = () => {
           {activeTab === 'overview' && (
             <div className="space-y-6">
               {/* Overall Score Card */}
-              <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg shadow-lg p-8 text-white">
-                <div className="text-center">
-                  <h2 className="text-lg font-semibold mb-2 opacity-90">Overall Score</h2>
-                  <div className="text-7xl font-bold mb-2">
-                    {overallScore.toFixed(1)}
-                  </div>
-                  <div className="text-2xl opacity-90">out of 10.0</div>
-                  <div className="mt-4 inline-block px-6 py-2 bg-white bg-opacity-20 rounded-full text-sm font-semibold">
-                    {overallScore >= 8
-                      ? 'Excellent Performance'
-                      : overallScore >= 6
-                      ? 'Good Performance'
-                      : 'Needs Improvement'}
-                  </div>
+              <div className="bg-primary-700 rounded-xl shadow-card p-8 text-white text-center">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-primary-100">Overall Score</h2>
+                <div className="text-6xl sm:text-7xl font-bold mt-2 mb-1 tracking-tight">{overallScore.toFixed(1)}</div>
+                <div className="text-primary-100 text-sm">out of 10.0</div>
+                <div className="mt-4 inline-flex items-center px-4 py-1.5 bg-white/15 rounded-full text-sm font-semibold">
+                  {overallScore >= 8
+                    ? 'Excellent Performance'
+                    : overallScore >= 6
+                    ? 'Good Performance'
+                    : 'Needs Improvement'}
                 </div>
               </div>
 
@@ -644,8 +644,8 @@ const ReportDashboard: React.FC = () => {
               </div>
 
               {/* Radar Chart */}
-              <div className="bg-white rounded-lg shadow-lg p-6">
-                <h3 className="text-xl font-bold text-gray-900 mb-4">Performance Radar</h3>
+              <div className="card">
+                <h3 className="section-title text-lg mb-4">Performance Radar</h3>
                 <ResponsiveContainer width="100%" height={400}>
                   <RadarChart data={radarData}>
                     <PolarGrid stroke="#e5e7eb" />
@@ -669,7 +669,7 @@ const ReportDashboard: React.FC = () => {
               {/* Strengths, Weaknesses, Suggestions Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Strengths */}
-                <div className="bg-white rounded-lg shadow-lg p-6">
+                <div className="card">
                   <div className="flex items-center mb-4">
                     <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mr-3">
                       <svg className="w-6 h-6 text-green-600" fill="currentColor" viewBox="0 0 20 20">
@@ -697,7 +697,7 @@ const ReportDashboard: React.FC = () => {
                 </div>
 
                 {/* Weaknesses */}
-                <div className="bg-white rounded-lg shadow-lg p-6">
+                <div className="card">
                   <div className="flex items-center mb-4">
                     <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mr-3">
                       <svg className="w-6 h-6 text-red-600" fill="currentColor" viewBox="0 0 20 20">
@@ -725,7 +725,7 @@ const ReportDashboard: React.FC = () => {
                 </div>
 
                 {/* Suggestions */}
-                <div className="bg-white rounded-lg shadow-lg p-6">
+                <div className="card">
                   <div className="flex items-center mb-4">
                     <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mr-3">
                       <svg className="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
@@ -751,16 +751,16 @@ const ReportDashboard: React.FC = () => {
 
               {/* Summary */}
               {finalReport?.summary && (
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                  <h3 className="text-xl font-bold text-gray-900 mb-4">Summary</h3>
+                <div className="card">
+                  <h3 className="section-title text-lg mb-4">Summary</h3>
                   <p className="text-gray-700 leading-relaxed">{finalReport.summary}</p>
                 </div>
               )}
 
               {/* Next Steps */}
               {finalReport?.nextSteps && finalReport.nextSteps.length > 0 && (
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                  <h3 className="text-xl font-bold text-gray-900 mb-4">Next Steps</h3>
+                <div className="card">
+                  <h3 className="section-title text-lg mb-4">Next Steps</h3>
                   <ol className="space-y-3">
                     {finalReport.nextSteps.map((step, index) => (
                       <li key={index} className="flex items-start">
@@ -773,6 +773,58 @@ const ReportDashboard: React.FC = () => {
                   </ol>
                 </div>
               )}
+
+              {/* AI Usage & Cost */}
+              <div className="card">
+                <h3 className="section-title text-lg mb-1">AI Usage & Cost</h3>
+                {aiCost ? (
+                  <>
+                    <p className="helper-text mb-1">Based on actual API usage recorded for this interview.</p>
+                    <p className="helper-text mb-4">
+                      INR is an approximate reference conversion (1 USD ≈ ₹{USD_TO_INR_RATE}), not a second actual figure — USD is the real billed currency.
+                    </p>
+                    {!aiCost.pricingComplete && (
+                      <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                        <svg className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p className="text-sm text-amber-800">
+                          Partial cost — pricing unavailable for one or more model calls. The total below excludes those calls.
+                        </p>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      <div className="stat-tile">
+                        <p className="stat-tile-value">{formatCostUsd(aiCost.totalCostUsd)}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">≈ {formatCostInr(aiCost.totalCostUsd)}</p>
+                        <p className="stat-tile-label">AI Cost</p>
+                      </div>
+                      <div className="stat-tile">
+                        <p className="stat-tile-value">{aiCost.totalTokens.toLocaleString()}</p>
+                        <p className="stat-tile-label">Total Tokens</p>
+                      </div>
+                      <div className="stat-tile">
+                        <p className="stat-tile-value">{aiCost.callCount}</p>
+                        <p className="stat-tile-label">AI Calls</p>
+                      </div>
+                      <div className="stat-tile">
+                        <p className="stat-tile-value">{aiCost.inputTokens.toLocaleString()}</p>
+                        <p className="stat-tile-label">Input Tokens</p>
+                      </div>
+                      <div className="stat-tile">
+                        <p className="stat-tile-value">{aiCost.outputTokens.toLocaleString()}</p>
+                        <p className="stat-tile-label">Output Tokens</p>
+                      </div>
+                      <div className="stat-tile">
+                        <p className="stat-tile-value">{aiCost.cachedInputTokens.toLocaleString()}</p>
+                        <p className="stat-tile-label">Cached Input Tokens</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500">AI usage was not tracked for this interview.</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -780,8 +832,8 @@ const ReportDashboard: React.FC = () => {
           {activeTab === 'details' && (
             <div className="space-y-6">
               {/* Per Question Bar Chart */}
-              <div className="bg-white rounded-lg shadow-lg p-6">
-                <h3 className="text-xl font-bold text-gray-900 mb-4">Scores by Question</h3>
+              <div className="card">
+                <h3 className="section-title text-lg mb-4">Scores by Question</h3>
                 <ResponsiveContainer width="100%" height={400}>
                   <BarChart data={barData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -822,14 +874,14 @@ const ReportDashboard: React.FC = () => {
 
               {/* Question Details */}
               <div className="space-y-4">
-                <h3 className="text-xl font-bold text-gray-900">Question-by-Question Analysis</h3>
+                <h3 className="section-title text-lg">Question-by-Question Analysis</h3>
                 {report.questions.map((question, index) => (
-                  <div key={index} className="bg-white rounded-lg shadow-lg p-6">
-                    <div className="flex items-start justify-between mb-4">
-                      <h4 className="text-lg font-bold text-gray-900">Question {index + 1}</h4>
+                  <div key={index} className="card">
+                    <div className="flex items-start justify-between mb-4 pb-4 border-b border-gray-100">
+                      <h4 className="section-title">Question {index + 1}</h4>
                       {question.evaluation && (
                         <span
-                          className={`px-3 py-1 rounded-full text-sm font-semibold ${getScoreBgColor(
+                          className={`badge ${getScoreBgColor(
                             question.evaluation.overallScore
                           )} ${getScoreColor(question.evaluation.overallScore)}`}
                         >
@@ -839,14 +891,14 @@ const ReportDashboard: React.FC = () => {
                     </div>
 
                     <div className="mb-4">
-                      <p className="font-semibold text-gray-700 mb-2">Question:</p>
-                      <p className="text-gray-600">{question.questionText}</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Question</p>
+                      <p className="text-gray-800">{question.questionText}</p>
                     </div>
 
                     {question.answerText && (
                       <div className="mb-4">
-                        <p className="font-semibold text-gray-700 mb-2">Your Answer:</p>
-                        <p className="text-gray-600 bg-gray-50 p-4 rounded-lg">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Your Answer</p>
+                        <p className="text-gray-600 surface-muted p-3.5">
                           {question.answerText}
                         </p>
                       </div>
@@ -855,18 +907,15 @@ const ReportDashboard: React.FC = () => {
                     {/* Expected Interview Answer - Company Standard */}
                     {hasValidModelAnswer(question.modelAnswer) && (
                       <div className="mb-4">
-                        <p className="font-semibold text-gray-700 mb-2 flex items-center">
-                          <svg className="w-5 h-5 mr-2 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-primary-700 mb-1.5 flex items-center gap-1.5">
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                             <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
                             <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
                           </svg>
                           Expected Interview Answer
                         </p>
-                        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg">
-                          <p className="text-sm text-blue-800 mb-3 font-semibold italic">
-                            📚 Company-standard answer a strong candidate should provide:
-                          </p>
-                          <div className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                        <div className="bg-primary-50/60 border border-primary-100 p-4 rounded-lg">
+                          <div className="text-gray-700 leading-relaxed whitespace-pre-wrap text-sm">
                             {question.modelAnswer}
                           </div>
                         </div>
@@ -876,8 +925,8 @@ const ReportDashboard: React.FC = () => {
                     {/* Key Points Expected */}
                     {question.expectedPoints && question.expectedPoints.length > 0 && (
                       <div className="mb-4">
-                        <p className="font-semibold text-gray-700 mb-2 flex items-center">
-                          <svg className="w-5 h-5 mr-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 mb-1.5 flex items-center gap-1.5">
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                             <path
                               fillRule="evenodd"
                               d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
@@ -886,12 +935,12 @@ const ReportDashboard: React.FC = () => {
                           </svg>
                           Key Points Expected
                         </p>
-                        <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
-                          <ul className="space-y-2">
+                        <div className="bg-emerald-50/60 border border-emerald-100 p-4 rounded-lg">
+                          <ul className="space-y-1.5">
                             {question.expectedPoints.map((point, i) => (
-                              <li key={i} className="flex items-start text-gray-700">
+                              <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
                                 <svg
-                                  className="w-5 h-5 mr-2 mt-0.5 flex-shrink-0 text-green-600"
+                                  className="w-4 h-4 mt-0.5 flex-shrink-0 text-emerald-600"
                                   fill="currentColor"
                                   viewBox="0 0 20 20"
                                 >
@@ -1067,6 +1116,65 @@ const ReportDashboard: React.FC = () => {
                   </div>
                 ))}
               </div>
+
+              {/* AI Usage & Cost Breakdown */}
+              <div className="card">
+                <h3 className="section-title text-lg mb-1">AI Usage & Cost Breakdown</h3>
+                {aiCost ? (
+                  <>
+                    <p className="helper-text mb-1">Based on actual API usage recorded for this interview.</p>
+                    <p className="helper-text mb-4">
+                      INR is an approximate reference conversion (1 USD ≈ ₹{USD_TO_INR_RATE}), not a second actual figure — USD is the real billed currency.
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
+                            <th className="py-2 pr-4">Operation</th>
+                            <th className="py-2 pr-4 text-right">Calls</th>
+                            <th className="py-2 pr-4 text-right">Input</th>
+                            <th className="py-2 pr-4 text-right">Cached</th>
+                            <th className="py-2 pr-4 text-right">Output</th>
+                            <th className="py-2 pr-4 text-right">Cost (USD)</th>
+                            <th className="py-2 pr-0 text-right">Cost (INR, approx)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {aiCost.breakdown.map((row) => (
+                            <tr key={row.operation}>
+                              <td className="py-2 pr-4 text-gray-800">{row.operation}</td>
+                              <td className="py-2 pr-4 text-right text-gray-600">{row.callCount}</td>
+                              <td className="py-2 pr-4 text-right text-gray-600">{row.inputTokens.toLocaleString()}</td>
+                              <td className="py-2 pr-4 text-right text-gray-600">{row.cachedInputTokens.toLocaleString()}</td>
+                              <td className="py-2 pr-4 text-right text-gray-600">{row.outputTokens.toLocaleString()}</td>
+                              <td className="py-2 pr-4 text-right font-medium text-gray-900">{formatCostUsd(row.costUsd)}</td>
+                              <td className="py-2 pr-0 text-right text-gray-500">{formatCostInr(row.costUsd)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-gray-200 font-semibold text-gray-900">
+                            <td className="py-2 pr-4">TOTAL</td>
+                            <td className="py-2 pr-4 text-right">{aiCost.callCount}</td>
+                            <td className="py-2 pr-4 text-right">{aiCost.inputTokens.toLocaleString()}</td>
+                            <td className="py-2 pr-4 text-right">{aiCost.cachedInputTokens.toLocaleString()}</td>
+                            <td className="py-2 pr-4 text-right">{aiCost.outputTokens.toLocaleString()}</td>
+                            <td className="py-2 pr-4 text-right">{formatCostUsd(aiCost.totalCostUsd)}</td>
+                            <td className="py-2 pr-0 text-right text-gray-600">{formatCostInr(aiCost.totalCostUsd)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                    {!aiCost.pricingComplete && (
+                      <p className="mt-3 text-xs text-amber-700">
+                        Partial cost — pricing unavailable for one or more model calls.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500">AI usage was not tracked for this interview.</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -1076,8 +1184,8 @@ const ReportDashboard: React.FC = () => {
               {historyData.length > 0 ? (
                 <>
                   {/* History Line Chart */}
-                  <div className="bg-white rounded-lg shadow-lg p-6">
-                    <h3 className="text-xl font-bold text-gray-900 mb-4">Score Progression</h3>
+                  <div className="card">
+                    <h3 className="section-title text-lg mb-4">Score Progression</h3>
                     <ResponsiveContainer width="100%" height={300}>
                       <LineChart data={historyData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -1098,35 +1206,27 @@ const ReportDashboard: React.FC = () => {
                   </div>
 
                   {/* History List */}
-                  <div className="bg-white rounded-lg shadow-lg p-6">
-                    <h3 className="text-xl font-bold text-gray-900 mb-4">Past Interviews</h3>
-                    <div className="space-y-4">
+                  <div className="card">
+                    <h3 className="section-title text-lg mb-4">Past Interviews</h3>
+                    <div className="divide-y divide-gray-100">
                       {history.map((item) => (
                         <div
                           key={item.id}
-                          className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition cursor-pointer"
+                          className="flex items-center justify-between py-3.5 px-2 -mx-2 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
                           onClick={() => navigate(`/report/${item.id}`)}
                         >
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h4 className="font-semibold text-gray-900">{item.topic}</h4>
-                              <p className="text-sm text-gray-600">
-                                {item.difficulty} • {item.totalQuestions} questions
-                              </p>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {new Date(item.createdAt).toLocaleDateString()}
-                              </p>
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-900">{item.topic}</h4>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {item.difficulty} &middot; {item.totalQuestions} questions &middot;{' '}
+                              {new Date(item.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0 ml-4">
+                            <div className={`text-xl font-bold ${getScoreColor(item.overallScore)}`}>
+                              {item.overallScore.toFixed(1)}
                             </div>
-                            <div className="text-right">
-                              <div
-                                className={`text-2xl font-bold ${getScoreColor(
-                                  item.overallScore
-                                )}`}
-                              >
-                                {item.overallScore.toFixed(1)}
-                              </div>
-                              <div className="text-xs text-gray-600">/ 10.0</div>
-                            </div>
+                            <div className="text-[11px] text-gray-400">/ 10.0</div>
                           </div>
                         </div>
                       ))}
@@ -1134,9 +1234,9 @@ const ReportDashboard: React.FC = () => {
                   </div>
                 </>
               ) : (
-                <div className="bg-white rounded-lg shadow-lg p-12 text-center">
+                <div className="card p-12 text-center">
                   <svg
-                    className="w-16 h-16 text-gray-400 mx-auto mb-4"
+                    className="w-12 h-12 text-gray-300 mx-auto mb-4"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -1144,17 +1244,17 @@ const ReportDashboard: React.FC = () => {
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      strokeWidth={2}
+                      strokeWidth={1.5}
                       d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                     />
                   </svg>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-2">No History Yet</h3>
-                  <p className="text-gray-600 mb-6">
+                  <h3 className="section-title mb-1.5">No History Yet</h3>
+                  <p className="text-sm text-gray-500 mb-6">
                     Complete more interviews to see your progress over time
                   </p>
                   <button
                     onClick={() => navigate('/setup')}
-                    className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+                    className="btn btn-primary"
                   >
                     Start New Interview
                   </button>
@@ -1165,12 +1265,9 @@ const ReportDashboard: React.FC = () => {
         </div>
 
         {/* Bottom Actions */}
-        <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
-          <button
-            onClick={() => navigate('/setup')}
-            className="flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition"
-          >
-            <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+        <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+          <button onClick={() => navigate('/setup')} className="btn btn-primary px-6">
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path
                 fillRule="evenodd"
                 d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z"
@@ -1179,11 +1276,8 @@ const ReportDashboard: React.FC = () => {
             </svg>
             Start New Interview
           </button>
-          <button
-            onClick={() => navigate('/history')}
-            className="flex items-center justify-center px-6 py-3 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition"
-          >
-            <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+          <button onClick={() => navigate('/history')} className="btn btn-secondary px-6">
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
               <path
                 fillRule="evenodd"
@@ -1194,7 +1288,6 @@ const ReportDashboard: React.FC = () => {
             View All History
           </button>
         </div>
-      </div>
       </div>
     </div>
   );
@@ -1209,19 +1302,17 @@ interface ScoreCardProps {
 
 const ScoreCard: React.FC<ScoreCardProps> = ({ title, score, icon }) => {
   const getColorClasses = (score: number) => {
-    if (score >= 8) return 'from-green-500 to-green-700';
-    if (score >= 6) return 'from-yellow-500 to-yellow-700';
-    return 'from-red-500 to-red-700';
+    if (score >= 8) return 'text-emerald-600';
+    if (score >= 6) return 'text-amber-600';
+    return 'text-red-500';
   };
 
   return (
-    <div className={`bg-gradient-to-br ${getColorClasses(score)} rounded-lg shadow-lg p-6 text-white`}>
-      <div className="text-center">
-        <div className="text-3xl mb-2">{icon}</div>
-        <div className="text-sm font-semibold mb-2 opacity-90">{title}</div>
-        <div className="text-4xl font-bold">{score.toFixed(1)}</div>
-        <div className="text-xs opacity-75 mt-1">out of 10</div>
-      </div>
+    <div className="card-flat text-center">
+      <div className="text-2xl mb-1.5">{icon}</div>
+      <div className="text-xs font-medium text-gray-500 mb-1.5">{title}</div>
+      <div className={`text-3xl font-bold ${getColorClasses(score)}`}>{score.toFixed(1)}</div>
+      <div className="text-xs text-gray-400 mt-0.5">out of 10</div>
     </div>
   );
 };
