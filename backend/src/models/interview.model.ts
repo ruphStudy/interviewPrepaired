@@ -6,6 +6,7 @@ import { IClaimVerificationTracking, claimVerificationTrackingSchema, initialize
 import { IContradictionTracking, contradictionTrackingSchema, initializeContradictionTracking } from './ContradictionTracking.model';
 import { ISTARAnalysis } from './STARAnalysis.model';
 import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE } from '../config/languages';
+import { InterviewStatus } from '../constants/interview';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -132,7 +133,7 @@ export interface IInterview extends Document {
   
   totalQuestions: number;
   currentQuestion: number;
-  status: 'created' | 'in-progress' | 'paused' | 'completed' | 'evaluated';
+  status: InterviewStatus;
   interviewMode?: 'ai-generated' | 'uploaded';
   // Absent on interviews created before this feature — schema `default` below
   // makes those hydrate as 'en-IN', so no migration/backfill is needed.
@@ -574,10 +575,10 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       type: String,
       required: [true, 'Status is required'],
       enum: {
-        values: ['created', 'in-progress', 'paused', 'completed', 'evaluated'],
+        values: Object.values(InterviewStatus),
         message: '{VALUE} is not a valid status',
       },
-      default: 'created',
+      default: InterviewStatus.CREATED,
       index: true,
     },
     interviewMode: {
@@ -714,8 +715,8 @@ interviewSchema.methods.submitAnswer = async function (
     this.questions[questionIndex].duration = duration;
   }
 
-  if (this.status === 'created') {
-    this.status = 'in-progress';
+  if (this.status === InterviewStatus.CREATED) {
+    this.status = InterviewStatus.IN_PROGRESS;
   }
 
   return await this.save();
@@ -850,7 +851,7 @@ interviewSchema.methods.generateFinalReport = async function (
     generatedAt: new Date(),
   };
 
-  this.status = 'evaluated';
+  this.status = InterviewStatus.EVALUATED;
   return await this.save();
 };
 
@@ -859,11 +860,11 @@ interviewSchema.methods.canTransitionTo = function (
   newStatus: string
 ): boolean {
   const validTransitions: { [key: string]: string[] } = {
-    created: ['in-progress'],
-    'in-progress': ['paused', 'completed'],
-    paused: ['in-progress', 'completed'],
-    completed: ['evaluated'],
-    evaluated: [],
+    [InterviewStatus.CREATED]: [InterviewStatus.IN_PROGRESS],
+    [InterviewStatus.IN_PROGRESS]: [InterviewStatus.PAUSED, InterviewStatus.COMPLETED],
+    [InterviewStatus.PAUSED]: [InterviewStatus.IN_PROGRESS, InterviewStatus.COMPLETED],
+    [InterviewStatus.COMPLETED]: [InterviewStatus.EVALUATED],
+    [InterviewStatus.EVALUATED]: [],
   };
 
   return validTransitions[this.status]?.includes(newStatus) || false;
@@ -890,7 +891,7 @@ interviewSchema.statics.findByDifficulty = function (
 interviewSchema.statics.findInProgress = function (
   this: IInterviewModel
 ): Promise<IInterview[]> {
-  return this.find({ status: { $in: ['in-progress', 'paused'] } }).sort({
+  return this.find({ status: { $in: [InterviewStatus.IN_PROGRESS, InterviewStatus.PAUSED] } }).sort({
     updatedAt: -1,
   });
 };
@@ -904,7 +905,7 @@ interviewSchema.statics.getStatistics = async function (
         _id: null,
         totalInterviews: { $sum: 1 },
         completedInterviews: {
-          $sum: { $cond: [{ $in: ['$status', ['completed', 'evaluated']] }, 1, 0] },
+          $sum: { $cond: [{ $in: ['$status', [InterviewStatus.COMPLETED, InterviewStatus.EVALUATED]] }, 1, 0] },
         },
         averageScore: { $avg: '$finalReport.overallScore' },
       },
@@ -959,11 +960,11 @@ interviewSchema.pre('save', function (next) {
 
   // Auto-complete if all questions are answered
   if (
-    this.status === 'in-progress' &&
+    this.status === InterviewStatus.IN_PROGRESS &&
     this.questions.length === this.totalQuestions &&
     this.questions.every((q) => q.answerText)
   ) {
-    this.status = 'completed';
+    this.status = InterviewStatus.COMPLETED;
   }
 
   next();

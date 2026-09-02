@@ -6,6 +6,7 @@ import { validate } from '../middleware/validation';
 import { body, param, query } from 'express-validator';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 import { InterviewStyle } from '../services/OpenAIService';
+import { InterviewStatus } from '../constants/interview';
 
 const router = Router();
 
@@ -136,7 +137,7 @@ const historyQueryValidation = [
     .withMessage('Invalid difficulty level'),
   query('status')
     .optional()
-    .isIn(['created', 'in-progress', 'paused', 'completed', 'evaluated'])
+    .isIn(Object.values(InterviewStatus))
     .withMessage('Invalid status'),
 ];
 

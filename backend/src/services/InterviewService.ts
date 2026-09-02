@@ -12,6 +12,7 @@ import { userSubscriptionService } from './UserSubscriptionService';
 import { interviewCreditService } from './InterviewCreditService';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
 import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
+import { InterviewStatus, isAnswerableStatus } from '../constants/interview';
 import { blueprintService } from './BlueprintService';
 import { interviewMemoryService } from './InterviewMemoryService';
 import { createEmptyMemory } from '../models/InterviewMemory.model';
@@ -362,7 +363,9 @@ export class InterviewService {
         blueprintId: blueprint._id,
         blueprintVersion: blueprint.version,
         totalQuestions,
-        status: 'in-progress',
+        // Shell only — not usable until the first question is generated and
+        // persisted below, at which point it transitions to IN_PROGRESS.
+        status: InterviewStatus.CREATED,
         currentQuestion: 1,
         questions: [],
         competencyCoverage: initialCoverage,
@@ -419,11 +422,15 @@ export class InterviewService {
         }
 
         console.log('🟢 [InterviewService] Question generated:', questionResponse);
-        // Add question to interview with expected points. addQuestion()
-        // already persists (it calls save() internally) — this is the one
-        // and only save for the first question; an extra save() here would
-        // be redundant and, if it transiently failed, would wrongly trigger
-        // a refund for an interview that had, in fact, already succeeded.
+        // Transition CREATED -> IN_PROGRESS in-memory now, so addQuestion()'s
+        // internal save() persists the status change together with the
+        // question in one write. Add question to interview with expected
+        // points. addQuestion() already persists (it calls save()
+        // internally) — this is the one and only save for the first
+        // question; an extra save() here would be redundant and, if it
+        // transiently failed, would wrongly trigger a refund for an
+        // interview that had, in fact, already succeeded.
+        interview.status = InterviewStatus.IN_PROGRESS;
         await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType);
 
         console.log('✅ [InterviewService] Interview started successfully with blueprint');
@@ -510,7 +517,10 @@ export class InterviewService {
       interviewMode: 'uploaded',
       interviewLanguage,
       totalQuestions: effectiveTotal,
-      status: 'in-progress',
+      // All questions are already embedded in this single document — unlike
+      // generated mode there's no separate "shell without a question" stage,
+      // so this goes straight to IN_PROGRESS (same lifecycle end state).
+      status: InterviewStatus.IN_PROGRESS,
       currentQuestion: 1,
       questions,
     });
@@ -551,8 +561,14 @@ export class InterviewService {
       throw new ApiError(404, 'Interview not found');
     }
 
-    if (interview.status === 'completed' || interview.status === 'evaluated') {
+    if (interview.status === InterviewStatus.COMPLETED || interview.status === InterviewStatus.EVALUATED) {
       throw new ApiError(400, 'Interview is already completed');
+    }
+
+    // CREATED (initialization never finished) and PAUSED (not implemented)
+    // are the remaining non-answerable states — only IN_PROGRESS may answer.
+    if (!isAnswerableStatus(interview.status)) {
+      throw new ApiError(400, `Interview is not ready to accept answers (status: ${interview.status})`);
     }
 
     // Get current question index
@@ -773,7 +789,7 @@ export class InterviewService {
       if (isCompleted) {
         console.log('[InterviewService] Interview completed! Generating final report...');
         // Mark as completed and set completion timestamp
-        interview.status = 'completed';
+        interview.status = InterviewStatus.COMPLETED;
         interview.completedAt = new Date();
         await interview.save();
         console.log('[InterviewService] Interview saved with status: completed');
@@ -1179,7 +1195,7 @@ export class InterviewService {
         totalQuestions: interview.totalQuestions,
         answeredQuestions: interview.questions.filter((q) => q.answerText).length,
         createdAt: interview.createdAt,
-        completedAt: interview.status === 'completed' || interview.status === 'evaluated'
+        completedAt: interview.status === InterviewStatus.COMPLETED || interview.status === InterviewStatus.EVALUATED
           ? interview.completedAt ?? interview.updatedAt
           : undefined,
       })),
@@ -1207,11 +1223,11 @@ export class InterviewService {
     }).sort({ createdAt: -1 }).lean();
 
     const completedInterviews = interviews.filter(
-      (i) => i.status === 'completed' || i.status === 'evaluated'
+      (i) => i.status === InterviewStatus.COMPLETED || i.status === InterviewStatus.EVALUATED
     );
 
     const evaluatedInterviews = interviews.filter(
-      (i) => i.status === 'evaluated' && i.finalReport?.overallScore !== undefined
+      (i) => i.status === InterviewStatus.EVALUATED && i.finalReport?.overallScore !== undefined
     );
 
     // Calculate scores only from evaluated interviews with valid scores
