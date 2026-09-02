@@ -10,6 +10,25 @@ export interface AIUsageContext {
   questionIndex?: number;
 }
 
+/**
+ * Optional out-parameter populated by callOpenAI with the real usage/model
+ * metadata from that exact request. Deliberately a per-call object (not
+ * shared instance state) so concurrent calls on the shared OpenAIService
+ * singleton can never clobber each other's metadata. Used by OpenAIProvider
+ * (backend/src/ai/providers) to expose AIResponseMetadata without a second
+ * OpenAI request, a new usage-persistence path, or any change to the
+ * existing public method return types.
+ */
+export interface AICallMetadataSink {
+  current?: {
+    model: string;
+    promptTokens: number;
+    cachedTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}
+
 // ============================================================================
 // Enums & Types
 // ============================================================================
@@ -313,7 +332,7 @@ Return JSON: { "message": "..." }`;
    * Generate dynamic interview blueprint with profession-specific competencies
    * This is the foundation for the entire interview process
    */
-  async generateInterviewBlueprint(request: BlueprintGenerationRequest): Promise<BlueprintGenerationResponse> {
+  async generateInterviewBlueprint(request: BlueprintGenerationRequest, metadataSink?: AICallMetadataSink): Promise<BlueprintGenerationResponse> {
     console.log('[OpenAIService] Generating interview blueprint for:', request);
 
     const roleDescription = this.buildRoleDescription(request);
@@ -388,8 +407,8 @@ Return ONLY valid JSON in this exact format:
 }`;
 
     try {
-      const response = await this.callOpenAI(prompt, 0.7, 2000);
-      
+      const response = await this.callOpenAI(prompt, 0.7, 2000, undefined, metadataSink);
+
       // Validate response structure
       if (!response.competencies || !Array.isArray(response.competencies)) {
         throw new Error('Invalid blueprint response: missing or invalid competencies array');
@@ -517,12 +536,12 @@ Return ONLY valid JSON in this exact format:
     return types;
   }
 
-  async generateQuestion(request: QuestionRequest): Promise<QuestionResponse> {
+  async generateQuestion(request: QuestionRequest, metadataSink?: AICallMetadataSink): Promise<QuestionResponse> {
     const appropriateTypes = this.getAppropriateQuestionTypes(
       request.sessionConfig.experienceLevel,
       request.sessionConfig.interviewStyle
     );
-    
+
     const systemPrompt = `${this.getQuestionSystemPrompt(request.sessionConfig, appropriateTypes)}\n\n${getLanguageInstruction(request.interviewLanguage)}`;
     const userPrompt = this.getQuestionUserPrompt(request);
 
@@ -530,7 +549,8 @@ Return ONLY valid JSON in this exact format:
       `${systemPrompt}\n\n${userPrompt}`,
       0.8,
       getMaxTokensForLanguage(800, request.interviewLanguage),
-      { interviewId: request.interviewId, operation: 'question-generation' }
+      { interviewId: request.interviewId, operation: 'question-generation' },
+      metadataSink
     );
 
     return {
@@ -568,7 +588,7 @@ Return JSON with: question, reason, challengeType (assumption/depth/experience/a
     };
   }
 
-  async evaluateAnswer(request: EvaluationRequest): Promise<DynamicEvaluationResponse> {
+  async evaluateAnswer(request: EvaluationRequest, metadataSink?: AICallMetadataSink): Promise<DynamicEvaluationResponse> {
     const dimensions = this.getEvaluationDimensions(request.sessionConfig);
     const systemPrompt = `${this.getEvaluationSystemPrompt(request.sessionConfig, dimensions)}
 
@@ -657,7 +677,8 @@ EXAMPLE:
       `${systemPrompt}\n\n${userPrompt}`,
       0.3,
       getMaxTokensForLanguage(1500, request.interviewLanguage),
-      { interviewId: request.interviewId, operation: 'answer-evaluation', questionIndex: request.questionIndex }
+      { interviewId: request.interviewId, operation: 'answer-evaluation', questionIndex: request.questionIndex },
+      metadataSink
     );
 
     // Normalize dimensions and scores
@@ -679,7 +700,7 @@ EXAMPLE:
     };
   }
 
-  async generateFinalReport(request: FinalReportRequest): Promise<FinalReportResponse> {
+  async generateFinalReport(request: FinalReportRequest, metadataSink?: AICallMetadataSink): Promise<FinalReportResponse> {
     const systemPrompt = `${this.getFinalReportSystemPrompt(request.sessionConfig)}
 
 ${getLanguageInstruction(request.interviewLanguage)}
@@ -690,7 +711,8 @@ Write "summary", "recommendations", "strengthsOverview", "weaknessesOverview", a
       `${systemPrompt}\n\n${userPrompt}`,
       0.4,
       getMaxTokensForLanguage(2000, request.interviewLanguage),
-      { interviewId: request.interviewId, operation: 'final-report-generation' }
+      { interviewId: request.interviewId, operation: 'final-report-generation' },
+      metadataSink
     );
 
     const avgScore = this.calculateAverageScore(request.evaluations);
@@ -826,7 +848,7 @@ Write "summary", "recommendations", "strengthsOverview", "weaknessesOverview", a
     interviewId?: string;
     questionIndex?: number;
     interviewLanguage?: string;
-  }): Promise<string> {
+  }, metadataSink?: AICallMetadataSink): Promise<string> {
     const prompt = `You are generating the ideal answer a strong candidate would give verbally in a real ${params.topic} technical interview.
 
 ${getLanguageInstruction(params.interviewLanguage)}
@@ -861,7 +883,7 @@ Return strict JSON:
         interviewId: params.interviewId,
         operation: 'model-answer-generation',
         questionIndex: params.questionIndex,
-      });
+      }, metadataSink);
 
       // Validate the expected { "answer": "..." } shape — a falsy-but-present
       // empty string, a non-string `answer`, or a missing field must never
@@ -1061,7 +1083,7 @@ Performance by Question:\n`;
    * Call OpenAI API with JSON response format
    * Made public for use by other services (e.g., InterviewMemoryService)
    */
-  async callOpenAI(prompt: string, temperature: number, maxTokens: number, usageContext?: AIUsageContext): Promise<any> {
+  async callOpenAI(prompt: string, temperature: number, maxTokens: number, usageContext?: AIUsageContext, metadataSink?: AICallMetadataSink): Promise<any> {
     try {
       const response = await this.client.chat.completions.create({
         model: this.config.model,
@@ -1073,6 +1095,18 @@ Performance by Question:\n`;
 
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error('No response from OpenAI');
+
+      // Expose this exact request's real metadata to the caller (e.g.
+      // OpenAIProvider) via the out-param, independent of cost tracking below.
+      if (metadataSink) {
+        metadataSink.current = {
+          model: response.model || this.config.model,
+          promptTokens: response.usage?.prompt_tokens ?? 0,
+          cachedTokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+          completionTokens: response.usage?.completion_tokens ?? 0,
+          totalTokens: response.usage?.total_tokens ?? 0,
+        };
+      }
 
       // Record ACTUAL usage from this real response — never estimated. Awaited
       // before returning so a final-report call's cost is durably persisted
