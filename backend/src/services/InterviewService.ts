@@ -25,6 +25,7 @@ import { starAnalysisService } from './STARAnalysisService';
 import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode } from '../config/languages';
 import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
+import { questionSetService } from './QuestionSetService';
 
 /** Same validity rule the frontend/report/PDF must all agree on — never treat a stringified "undefined"/"null"/placeholder/empty value as a real expected answer. */
 function isValidModelAnswer(value: unknown): value is string {
@@ -49,6 +50,11 @@ interface StartInterviewParams {
   industry?: string; // NEW: Industry context
   interviewMode?: 'ai-generated' | 'uploaded';
   uploadedQuestions?: Array<{ questionText: string; referenceAnswer?: string }>;
+  // Alternative source for uploaded mode — mutually exclusive with
+  // uploadedQuestions. Resolved to the same ParsedQuestion[] shape before
+  // hitting the same validate/select/start pipeline, so a saved set and a
+  // directly-posted question array converge on one code path.
+  questionSetId?: string;
   shuffleQuestions?: boolean;
   interviewLanguage?: string;
 }
@@ -229,23 +235,40 @@ export class InterviewService {
     if (params.interviewStyle !== undefined && !Object.values(InterviewStyle).includes(params.interviewStyle)) {
       throw new ApiError(400, 'Invalid interview style');
     }
+    if (params.questionSetId) {
+      throw new ApiError(400, 'questionSetId is only supported for uploaded interview mode');
+    }
   }
 
   /**
    * Defensive, uploaded-mode-only input validation and normalization — runs
    * before any DB write, credit check, or persistence, same principle as
-   * validateGeneratedInterviewInput. This is the trust boundary for
-   * `uploadedQuestions`: the parse-preview endpoint already returns
-   * normalized data, but a direct/non-HTTP caller could still hand this
-   * service raw structured objects, so normalization is re-applied here
-   * rather than assumed. Returns the normalized, deduplicated question set.
+   * validateGeneratedInterviewInput. This is the trust boundary for both
+   * uploaded-mode sources: a direct `uploadedQuestions` array, or a saved
+   * `questionSetId` (resolved here, ownership-scoped, via QuestionSetService
+   * — never queried directly). Either source converges on the same
+   * normalized ParsedQuestion[] before selection/start. Returns the
+   * normalized, deduplicated question set.
    */
-  private validateUploadedInterviewInput(params: StartInterviewParams): ParsedQuestion[] {
-    if (!Array.isArray(params.uploadedQuestions) || params.uploadedQuestions.length === 0) {
-      throw new ApiError(400, 'At least 1 uploaded question is required');
+  private async validateUploadedInterviewInput(params: StartInterviewParams): Promise<ParsedQuestion[]> {
+    const hasUploadedQuestions = Array.isArray(params.uploadedQuestions) && params.uploadedQuestions.length > 0;
+    const hasQuestionSetId = typeof params.questionSetId === 'string' && params.questionSetId.trim().length > 0;
+
+    if (hasUploadedQuestions && hasQuestionSetId) {
+      throw new ApiError(400, 'Provide either uploadedQuestions or questionSetId, not both');
+    }
+    if (!hasUploadedQuestions && !hasQuestionSetId) {
+      throw new ApiError(400, 'At least 1 uploaded question or a questionSetId is required');
     }
 
-    const normalized = normalizeUploadedQuestions(params.uploadedQuestions);
+    // getQuestionSet is ownership-scoped ({_id, userId}) and throws
+    // ApiError(404) if the set doesn't exist or belongs to another user —
+    // never leaks whether the id exists for someone else.
+    const rawQuestions = hasQuestionSetId
+      ? (await questionSetService.getQuestionSet(params.userId, params.questionSetId as string)).questions
+      : (params.uploadedQuestions as ParsedQuestion[]);
+
+    const normalized = normalizeUploadedQuestions(rawQuestions);
     if (normalized.length === 0) {
       throw new ApiError(400, 'No valid uploaded questions found');
     }
@@ -384,7 +407,7 @@ export class InterviewService {
     if (params.interviewMode !== 'uploaded') {
       this.validateGeneratedInterviewInput(params);
     } else {
-      normalizedUploadedQuestions = this.validateUploadedInterviewInput(params);
+      normalizedUploadedQuestions = await this.validateUploadedInterviewInput(params);
     }
 
     // Shared credit gate — applies to both interview modes before any

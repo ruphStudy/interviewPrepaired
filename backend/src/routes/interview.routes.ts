@@ -6,7 +6,7 @@ import { validate } from '../middleware/validation';
 import { body, param, query } from 'express-validator';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 import { InterviewStyle } from '../services/OpenAIService';
-import { InterviewStatus } from '../constants/interview';
+import { InterviewStatus, MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 
 const router = Router();
 
@@ -51,10 +51,28 @@ const startInterviewValidation = [
     .withMessage('Experience years is required')
     .isInt({ min: 0, max: 50 })
     .withMessage('Experience years must be between 0 and 50'),
+  // Required only when uploaded mode has no questionSetId — a saved-set
+  // start supplies its questions via questionSetId instead. The "neither
+  // supplied" and "both supplied" cases are the authoritative checks in
+  // InterviewService.validateUploadedInterviewInput; questionSetId's own
+  // custom validator below just rejects the "both" case a step earlier.
   body('questions')
-    .if((_value, { req }) => req.body.interviewMode === 'uploaded')
+    .if((_value, { req }) => req.body.interviewMode === 'uploaded' && !req.body.questionSetId)
     .isArray({ min: 1 })
-    .withMessage('At least 1 question is required for uploaded interview mode'),
+    .withMessage('At least 1 question is required when questionSetId is not provided'),
+  body('questionSetId')
+    .optional()
+    .isMongoId()
+    .withMessage('Invalid questionSetId')
+    .custom((_value, { req }) => {
+      if (req.body.interviewMode !== 'uploaded') {
+        throw new Error('questionSetId is only supported for uploaded interview mode');
+      }
+      if (Array.isArray(req.body.questions) && req.body.questions.length > 0) {
+        throw new Error('Provide either questions or questionSetId, not both');
+      }
+      return true;
+    }),
   body('totalQuestions')
     .optional()
     .isInt({ min: 1 })
@@ -64,7 +82,7 @@ const startInterviewValidation = [
       // may use up to MAX_UPLOADED_QUESTIONS (kept in sync with
       // InterviewService's own limit) since the candidate may want to
       // practice a full uploaded set larger than 10 questions.
-      const max = req.body.interviewMode === 'uploaded' ? 200 : 10;
+      const max = req.body.interviewMode === 'uploaded' ? MAX_UPLOADED_QUESTIONS : 10;
       if (Number(value) > max) {
         throw new Error(`Total questions must be at most ${max}`);
       }

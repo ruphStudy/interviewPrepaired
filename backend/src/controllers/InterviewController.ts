@@ -40,16 +40,16 @@ export class InterviewController {
       throw new ApiError(401, 'Authentication required');
     }
 
-    const { topic, difficulty, experienceYears, totalQuestions, interviewStyle, experienceLevel, interviewMode, questions, shuffleQuestions, interviewLanguage } = req.body;
+    const { topic, difficulty, experienceYears, totalQuestions, interviewStyle, experienceLevel, interviewMode, questions, questionSetId, shuffleQuestions, interviewLanguage } = req.body;
     console.log('🔵 [InterviewController] Request body:', { topic, difficulty, experienceYears, totalQuestions, interviewStyle, experienceLevel, interviewMode, interviewLanguage });
 
     const isUploadedMode = interviewMode === 'uploaded';
 
-    if (isUploadedMode) {
-      if (!Array.isArray(questions) || questions.length === 0) {
-        throw new ApiError(400, 'At least 1 question is required for uploaded interview mode');
-      }
-    } else if (!topic || !difficulty || experienceYears === undefined || experienceYears === null) {
+    // Uploaded-mode source presence/ambiguity (uploadedQuestions vs
+    // questionSetId — exactly one required) is validated once, in
+    // InterviewService.validateUploadedInterviewInput, so it isn't
+    // duplicated/diverged here.
+    if (!isUploadedMode && (!topic || !difficulty || experienceYears === undefined || experienceYears === null)) {
       // experienceYears can legitimately be 0 — a truthy/falsy check would wrongly reject it.
       throw new ApiError(400, 'Missing required fields: topic, difficulty, experienceYears');
     }
@@ -68,6 +68,7 @@ export class InterviewController {
         experienceLevel,
         interviewMode: isUploadedMode ? 'uploaded' : undefined,
         uploadedQuestions: isUploadedMode ? questions : undefined,
+        questionSetId: isUploadedMode ? questionSetId : undefined,
         shuffleQuestions: shuffleQuestions === true,
         interviewLanguage,
       });
