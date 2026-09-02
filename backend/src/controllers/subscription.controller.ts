@@ -3,6 +3,7 @@ import { catchAsync } from '../utils/catchAsync';
 import { successResponse } from '../utils/ApiResponse';
 import { subscriptionPlanService } from '../services/SubscriptionPlanService';
 import { userSubscriptionService } from '../services/UserSubscriptionService';
+import { interviewCreditService } from '../services/InterviewCreditService';
 import { AuthRequest } from '../middleware/auth';
 
 export const getActivePlans = catchAsync(async (_req: AuthRequest, res: Response) => {
@@ -44,6 +45,50 @@ export const getMySubscription = catchAsync(async (req: AuthRequest, res: Respon
         cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
         cancelledAt: subscription.cancelledAt,
       },
+    })
+  );
+});
+
+export const getMyCredits = catchAsync(async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+
+  const [balance, ledgerPage] = await Promise.all([
+    interviewCreditService.getBalance(userId),
+    interviewCreditService.getLedger(userId, { page: 1, limit: 20 }),
+  ]);
+
+  res.status(200).json(
+    successResponse('Credit balance retrieved successfully', {
+      balance,
+      recentTransactions: ledgerPage.transactions.map((tx) => ({
+        type: tx.type,
+        amount: tx.amount,
+        balanceAfter: tx.balanceAfter,
+        description: tx.description,
+        createdAt: tx.createdAt,
+      })),
+    })
+  );
+});
+
+export const getMyCreditHistory = catchAsync(async (req: AuthRequest, res: Response) => {
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+
+  const ledgerPage = await interviewCreditService.getLedger(req.user!.id, { page, limit });
+
+  res.status(200).json(
+    successResponse('Credit history retrieved successfully', {
+      transactions: ledgerPage.transactions.map((tx) => ({
+        type: tx.type,
+        amount: tx.amount,
+        balanceAfter: tx.balanceAfter,
+        description: tx.description,
+        createdAt: tx.createdAt,
+      })),
+      page: ledgerPage.page,
+      limit: ledgerPage.limit,
+      total: ledgerPage.total,
     })
   );
 });

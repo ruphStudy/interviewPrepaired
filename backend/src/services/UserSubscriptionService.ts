@@ -1,6 +1,7 @@
 import { UserSubscription, IUserSubscription, UserSubscriptionSource } from '../models/UserSubscription.model';
 import { SubscriptionPlan, ISubscriptionPlan } from '../models/SubscriptionPlan.model';
 import { subscriptionPlanService } from './SubscriptionPlanService';
+import { interviewCreditService } from './InterviewCreditService';
 import { ApiError } from '../utils/ApiError';
 
 const CURRENT_STATUSES = ['active', 'trial'];
@@ -47,8 +48,9 @@ class UserSubscriptionService {
 
     const now = new Date();
 
+    let created: IUserSubscription;
     try {
-      return await UserSubscription.create({
+      created = await UserSubscription.create({
         userId,
         planId: freePlan._id,
         planCode: freePlan.code,
@@ -68,6 +70,17 @@ class UserSubscriptionService {
       }
       throw error;
     }
+
+    // Credit grant is best-effort here — a failure must not undo the
+    // subscription that was just created; it's logged and left recoverable
+    // via grantPlanCredits' idempotency key on any later retry.
+    try {
+      await interviewCreditService.grantPlanCredits(userId, created);
+    } catch (error) {
+      console.error('[UserSubscriptionService] Failed to grant FREE plan credits:', error);
+    }
+
+    return created;
   }
 
   /**
@@ -97,7 +110,7 @@ class UserSubscriptionService {
     const now = new Date();
     const currentPeriodEnd = plan.billingInterval === 'month' ? addOneCalendarMonth(now) : undefined;
 
-    return UserSubscription.create({
+    const created = await UserSubscription.create({
       userId,
       planId: plan._id,
       planCode: plan.code,
@@ -108,6 +121,16 @@ class UserSubscriptionService {
       cancelAtPeriodEnd: false,
       source,
     });
+
+    // Grant the new plan's full included interviews — no proration, no
+    // wiping the existing balance. Best-effort/logged like ensureFreeSubscription.
+    try {
+      await interviewCreditService.grantPlanCredits(userId, created);
+    } catch (error) {
+      console.error('[UserSubscriptionService] Failed to grant plan credits on changePlan:', error);
+    }
+
+    return created;
   }
 
   /**
