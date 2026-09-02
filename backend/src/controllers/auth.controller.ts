@@ -5,6 +5,7 @@ import { ApiError } from '../utils/ApiError';
 import { successResponse, createdResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
 import { AuthRequest } from '../middleware/auth';
+import { userSubscriptionService } from '../services/UserSubscriptionService';
 
 const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
   const token = user.generateToken();
@@ -29,6 +30,14 @@ export const register = catchAsync(async (req: AuthRequest, res: Response) => {
     email,
     password,
   });
+
+  // Registration succeeds on core user creation alone — a FREE subscription
+  // failure must never block account creation, only be logged clearly.
+  try {
+    await userSubscriptionService.ensureFreeSubscription(user._id.toString());
+  } catch (error) {
+    console.error('[auth.register] Failed to initialize FREE subscription for new user:', error);
+  }
 
   user.password = undefined as any;
   sendTokenResponse(user, 201, res);
