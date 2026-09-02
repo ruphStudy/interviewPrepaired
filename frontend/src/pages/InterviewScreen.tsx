@@ -5,6 +5,15 @@ import { AvatarState } from '../components/InterviewAvatar/AvatarState';
 import { useSpeechInterview } from '../hooks/useSpeechInterview';
 import { interviewApi } from '../api/interviewApi';
 import { getInterviewPhrase } from '../config/interviewPhrases';
+import {
+  PlayCircle,
+  Mic,
+  Square,
+  Loader2,
+  Volume2,
+  CheckCircle2,
+  Lightbulb,
+} from 'lucide-react';
 
 interface LocationState {
   interview?: any;
@@ -220,132 +229,203 @@ export const InterviewScreen: React.FC = () => {
     setPhase('PROCESSING');
   };
 
+  // Presentation-only: maps the existing `phase` to a small status chip label
+  // shown over the interviewer panel. Adds no new application state.
+  const getPhaseLabel = (p: InterviewPhase): string => {
+    switch (p) {
+      case 'READY':
+        return 'Ready';
+      case 'WELCOME':
+        return 'Welcoming you';
+      case 'QUESTION':
+        return 'Asking question';
+      case 'LISTENING':
+        return 'Listening';
+      case 'PROCESSING':
+        return 'Reviewing your answer';
+      case 'NEXT_QUESTION':
+        return 'Preparing next question';
+      case 'COMPLETED':
+        return 'Interview complete';
+      default:
+        return '';
+    }
+  };
+
+  const getPhaseChipClass = (p: InterviewPhase): string => {
+    switch (p) {
+      case 'LISTENING':
+        return 'badge-success';
+      case 'PROCESSING':
+        return 'badge-warning';
+      case 'COMPLETED':
+        return 'badge-success';
+      default:
+        return 'badge-info';
+    }
+  };
+
   // Show Loading
   if (!interviewData || !currentQuestion) {
     return (
-      <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center">
-        <div className="text-white text-center">
-          <div className="h-12 w-12 rounded-full border-2 border-white/20 border-t-white mx-auto mb-4 animate-spin"></div>
-          <div className="text-xl font-semibold mb-1">Loading interview...</div>
-          <div className="text-sm text-white/60">Preparing your interview experience</div>
-        </div>
+      <div className="min-h-screen bg-mentor-bg flex flex-col items-center justify-center px-4">
+        <Loader2 className="w-10 h-10 text-primary-600 animate-spin mb-4" />
+        <p className="text-base font-semibold text-mentor-text mb-1">Loading interview...</p>
+        <p className="text-sm text-mentor-text-muted">Preparing your interview experience</p>
       </div>
     );
   }
 
+  const showQuestion = phase !== 'READY' && phase !== 'WELCOME' && phase !== 'COMPLETED' && !!currentQuestion;
+
   return (
-    <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col overflow-hidden">
+    <div className="relative min-h-screen bg-mentor-bg flex flex-col">
       {/* Header */}
-      <div className="w-full px-4 py-4 md:px-8 md:py-5 flex items-center justify-between text-white flex-shrink-0 border-b border-white/10">
-        <div>
-          <h1 className="text-base md:text-xl font-semibold tracking-tight">{interviewData.topic} Interview</h1>
-          <span className="inline-block mt-1 text-[11px] md:text-xs font-medium text-white/70 bg-white/10 rounded-full px-2.5 py-0.5">
+      <header className="w-full bg-white border-b border-mentor-border px-4 py-4 md:px-8 md:py-5 flex items-center justify-between gap-4 shrink-0">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div className="w-5 h-5 rounded-md bg-primary-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">
+              AI
+            </div>
+            <span className="text-xs font-semibold text-mentor-text-muted">Interview Prepared Pro</span>
+          </div>
+          <h1 className="text-base md:text-xl font-semibold text-mentor-text tracking-tight truncate">
+            {interviewData.topic} Interview
+          </h1>
+          <span className="badge badge-info mt-1.5">
             {interviewData.difficulty?.charAt(0).toUpperCase() + interviewData.difficulty?.slice(1)} Level
           </span>
         </div>
-        <div className="text-right">
-          <p className="text-xs md:text-sm font-medium text-white/80">
+        <div className="text-right shrink-0">
+          <p className="text-xs md:text-sm font-medium text-mentor-text-secondary mb-2">
             Question {currentQuestionNumber} of {totalQuestions}
           </p>
-          <div className="w-28 md:w-44 bg-white/15 rounded-full h-1.5 mt-2">
+          <div className="w-28 md:w-44 bg-mentor-surface rounded-full h-1.5">
             <div
-              className="bg-primary-400 h-1.5 rounded-full transition-all duration-500"
+              className="bg-primary-600 h-1.5 rounded-full transition-all duration-500"
               style={{ width: `${(currentQuestionNumber / totalQuestions) * 100}%` }}
             />
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Main Content - Avatar with Overlaid Question */}
-      <div className="flex-1 flex flex-col items-center justify-center relative w-full min-h-0">
-        <div className="w-full h-full max-h-[60vh] flex items-center justify-center">
-          <InterviewAvatar currentState={avatarState} />
+      {/* Main Content */}
+      <div className="flex-1 w-full max-w-[1440px] mx-auto px-4 md:px-7 py-5 md:py-6 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-5 md:gap-6 min-h-0">
+        {/* Interviewer Panel */}
+        <div className="card p-0 overflow-hidden flex flex-col min-h-[320px] lg:min-h-0">
+          <div className="flex-1 flex items-center justify-center bg-mentor-surface min-h-0">
+            <InterviewAvatar currentState={avatarState} />
+          </div>
+          <div className="px-5 py-3 border-t border-mentor-border flex items-center justify-center shrink-0">
+            <span className={`badge ${getPhaseChipClass(phase)}`}>{getPhaseLabel(phase)}</span>
+          </div>
         </div>
 
-        {/* Question Display - OVERLAID on video */}
-        {phase !== 'READY' && phase !== 'WELCOME' && phase !== 'COMPLETED' && currentQuestion && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 max-w-5xl w-[95%] md:w-[85%]" key={`question-${currentQuestionNumber}`}>
-            <div className="bg-slate-900/75 backdrop-blur-xl rounded-2xl p-4 md:p-6 shadow-2xl border border-white/10 transition-all duration-300">
-              <div className="text-center mb-2 md:mb-3">
-                <span className="inline-block px-3 py-1 md:px-4 md:py-1.5 bg-primary-600 rounded-full text-white text-xs md:text-sm font-semibold tracking-wide">
-                  Question {currentQuestionNumber}
-                </span>
-              </div>
-              <p className="text-white text-base md:text-xl text-center leading-relaxed font-medium">
-                {currentQuestion}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Welcome Message during READY phase - Centered overlay */}
-        {phase === 'READY' && (
-          <div className="absolute inset-0 flex items-center justify-center px-4 md:px-6">
-            <div className="max-w-xl w-full">
-              <div className="bg-white/[0.07] backdrop-blur-lg rounded-2xl p-6 md:p-10 shadow-2xl border border-white/10 text-center">
-                <h2 className="text-white text-2xl md:text-3xl font-bold mb-3 tracking-tight">Ready to begin?</h2>
-                <p className="text-white/70 text-sm md:text-base mb-7 leading-relaxed">
-                  Click below to start your {interviewData?.topic} interview.
-                  The AI interviewer will welcome you and ask {totalQuestions} questions.
+        {/* Question / Status Panel */}
+        <div className="flex flex-col gap-4 min-h-0">
+          <div className="card flex-1 min-h-[220px] lg:min-h-0 overflow-y-auto">
+            {phase === 'READY' && (
+              <div className="h-full flex flex-col items-center justify-center text-center p-6">
+                <PlayCircle size={40} className="text-primary-600 mb-3" />
+                <h2 className="section-title text-lg mb-2">Ready to begin?</h2>
+                <p className="text-sm text-mentor-text-secondary leading-relaxed mb-6">
+                  Click Start Interview when you're ready. Your AI interviewer will introduce the session and ask{' '}
+                  {totalQuestions} questions.
                 </p>
-                <button
-                  onClick={handleStartInterview}
-                  className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 md:px-10 md:py-4 bg-emerald-500 hover:bg-emerald-400 text-white text-base md:text-lg font-semibold rounded-full shadow-lg transition-all duration-200 hover:shadow-xl"
-                >
-                  <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
+                <button onClick={handleStartInterview} className="btn btn-primary px-6">
+                  <PlayCircle size={18} />
                   Start Interview
                 </button>
               </div>
-            </div>
-          </div>
-        )}
+            )}
 
-        {/* Phase Indicator */}
-        {phase === 'WELCOME' && (
-          <div className="absolute text-white/80 text-center animate-pulse">
-            <p className="text-base font-medium">Preparing your interview...</p>
+            {phase === 'WELCOME' && (
+              <div className="h-full flex flex-col items-center justify-center text-center p-6">
+                <Loader2 size={28} className="text-primary-600 animate-spin mb-3" />
+                <p className="text-sm font-medium text-mentor-text-secondary">Your interviewer is getting started...</p>
+              </div>
+            )}
+
+            {phase === 'COMPLETED' && (
+              <div className="h-full flex flex-col items-center justify-center text-center p-6">
+                <CheckCircle2 size={40} className="text-mentor-success mb-3" />
+                <h2 className="section-title text-lg mb-2">Interview complete</h2>
+                <p className="text-sm text-mentor-text-secondary">Your feedback is being prepared.</p>
+              </div>
+            )}
+
+            {showQuestion && (
+              <div className="p-5 md:p-6 h-full flex flex-col" key={`question-${currentQuestionNumber}`}>
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <h2 className="section-title">Current Question</h2>
+                  <span className="badge badge-info shrink-0">
+                    Question {currentQuestionNumber} of {totalQuestions}
+                  </span>
+                </div>
+                <p className="text-[19px] md:text-[21px] font-semibold text-mentor-text leading-relaxed">
+                  {currentQuestion}
+                </p>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Guidance */}
+          <div className="surface-muted p-4 shrink-0">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Lightbulb size={16} className="text-primary-600" />
+              <p className="text-sm font-semibold text-mentor-text">Take your time</p>
+            </div>
+            <p className="text-xs text-mentor-text-secondary leading-relaxed">
+              Structure your answer clearly and speak naturally.
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* Controls - Fixed at bottom center */}
-      <div className="w-full pb-6 md:pb-8 flex items-center justify-center flex-shrink-0">
-        {phase === 'LISTENING' && !isListening && !isSpeaking && (
-            <button
-              onClick={handleStartAnswer}
-              disabled={isProcessing}
-              className="inline-flex items-center gap-2.5 px-7 py-3 md:px-9 md:py-3.5 bg-emerald-500 hover:bg-emerald-400 text-white text-sm md:text-base font-semibold rounded-full shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
+      {/* Controls */}
+      <div className="w-full max-w-[1440px] mx-auto px-4 md:px-7 pb-6 md:pb-8 shrink-0">
+        <div className="card flex items-center justify-center py-5 min-h-[76px]">
+          {phase === 'LISTENING' && !isListening && !isSpeaking && (
+            <button onClick={handleStartAnswer} disabled={isProcessing} className="btn btn-primary px-7">
+              <Mic size={18} />
               Start Answer
-          </button>
-        )}
+            </button>
+          )}
 
-        {isListening && (
-            <button
-              onClick={handleStopAnswer}
-              className="inline-flex items-center gap-2.5 px-7 py-3 md:px-9 md:py-3.5 bg-red-500 hover:bg-red-400 text-white text-sm md:text-base font-semibold rounded-full shadow-lg transition-all duration-200"
-            >
-              <span className="w-2.5 h-2.5 bg-white rounded-sm animate-pulse"></span>
-              Stop Answer
-          </button>
-        )}
+          {isListening && (
+            <div className="flex flex-col items-center gap-2">
+              <button
+                onClick={handleStopAnswer}
+                className="btn px-7 bg-mentor-error text-white hover:opacity-90 focus-visible:ring-mentor-error"
+              >
+                <Square size={16} />
+                Stop Answer
+              </button>
+              <span className="text-xs text-mentor-text-muted flex items-center gap-1.5">
+                <Mic size={12} className="text-mentor-error" />
+                Listening...
+              </span>
+            </div>
+          )}
 
-        {phase === 'PROCESSING' && (
-            <div className="inline-flex items-center gap-2.5 px-7 py-3 md:px-9 md:py-3.5 bg-white/10 border border-white/10 text-white text-sm md:text-base font-medium rounded-full">
-                <span className="flex gap-1">
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                </span>
-                Processing...
-          </div>
-        )}
+          {phase === 'PROCESSING' && (
+            <div className="inline-flex items-center gap-2.5 px-6 py-2.5 rounded-full bg-mentor-surface text-mentor-text-secondary text-sm font-medium">
+              <Loader2 size={16} className="animate-spin" />
+              Reviewing your answer...
+            </div>
+          )}
+
+          {isSpeaking && !isListening && phase !== 'PROCESSING' && (
+            <div className="inline-flex items-center gap-2 text-sm font-medium text-primary-600">
+              <Volume2 size={16} />
+              Interviewer is speaking
+            </div>
+          )}
+
+          {phase === 'READY' && (
+            <p className="text-sm text-mentor-text-muted">Click Start Interview above to begin.</p>
+          )}
+        </div>
       </div>
 
       {/* Exit Button */}
@@ -356,7 +436,7 @@ export const InterviewScreen: React.FC = () => {
               navigate('/setup');
             }
           }}
-          className="px-3.5 py-2 md:px-4 md:py-2 bg-white/10 hover:bg-white/15 backdrop-blur-md text-white/90 text-xs md:text-sm font-medium rounded-lg transition-colors border border-white/10"
+          className="btn btn-secondary px-3.5 py-2 text-xs md:text-sm"
         >
           Exit Interview
         </button>
