@@ -180,6 +180,35 @@ export class InterviewService {
   }
 
   /**
+   * Defensive, generated-mode-only input validation — runs before any DB
+   * write, credit check, or AI call. Route-level validation already covers
+   * this for HTTP callers; this exists for direct/non-HTTP callers of the
+   * service and to fail fast before assertCreditAvailable's lazy
+   * subscription/credit initialization runs for a request that was never
+   * going to be valid anyway. Mirrors the accepted values already enforced
+   * elsewhere (route validators, generated-interview 1–10 cap) — no new
+   * business restrictions.
+   */
+  private validateGeneratedInterviewInput(params: StartInterviewParams): void {
+    if (!params.topic || typeof params.topic !== 'string' || !params.topic.trim()) {
+      throw new ApiError(400, 'Topic is required');
+    }
+    if (!params.difficulty) {
+      throw new ApiError(400, 'Difficulty is required');
+    }
+    if (params.experienceYears === undefined || params.experienceYears === null || typeof params.experienceYears !== 'number') {
+      // experienceYears can legitimately be 0 — checked explicitly above rather than via truthiness.
+      throw new ApiError(400, 'Experience years is required');
+    }
+    if (params.totalQuestions !== undefined && (params.totalQuestions < 1 || params.totalQuestions > 10)) {
+      throw new ApiError(400, 'Total questions must be between 1 and 10');
+    }
+    if (params.interviewStyle !== undefined && !Object.values(InterviewStyle).includes(params.interviewStyle)) {
+      throw new ApiError(400, 'Invalid interview style');
+    }
+  }
+
+  /**
    * Single source of truth for a question's expected/reference answer.
    * Uploaded reference answers are never overwritten or regenerated; a
    * modelAnswer is only generated via OpenAI when nothing valid exists yet,
@@ -251,6 +280,13 @@ export class InterviewService {
    * 3. Generate first question using blueprint
    */
   async startInterview(params: StartInterviewParams): Promise<IInterview> {
+    // Validate generated-mode input before any DB write, credit check, or AI
+    // call. Uploaded mode validates its own input separately inside
+    // startUploadedInterview (unchanged).
+    if (params.interviewMode !== 'uploaded') {
+      this.validateGeneratedInterviewInput(params);
+    }
+
     // Shared credit gate — applies to both interview modes before any
     // expensive AI work (or the uploaded-mode document creation) begins.
     await this.assertCreditAvailable(params.userId);
@@ -260,23 +296,20 @@ export class InterviewService {
     }
 
     console.log('🟢 [InterviewService] startInterview called with params:', params);
-    const { 
-      userId, 
-      topic, 
-      difficulty, 
-      experienceYears, 
-      totalQuestions = 5, 
-      interviewStyle, 
+    const {
+      userId,
+      topic,
+      difficulty,
+      experienceYears,
+      totalQuestions = 5,
+      interviewStyle,
       experienceLevel,
       roleName,
       industry
     } = params;
+    // Normalized once here and reused as-is for the interview document, the
+    // question-generation AI call, and its context — never recomputed.
     const interviewLanguage = normalizeLanguageCode(params.interviewLanguage);
-
-    // Validate total questions
-    if (totalQuestions < 1 || totalQuestions > 10) {
-      throw new ApiError(400, 'Total questions must be between 1 and 10');
-    }
 
     // Map experience years to level if not provided
     const finalExperienceLevel = experienceLevel || mapExperienceYearsToLevel(experienceYears);
@@ -335,6 +368,7 @@ export class InterviewService {
         competencyCoverage: initialCoverage,
         difficultyTracking: initialDifficulty,
         interviewLanguage,
+        interviewMode: 'ai-generated',
       });
 
       // Persist the shell now (before any AI call) so interview._id already
@@ -377,13 +411,20 @@ export class InterviewService {
         );
         const questionResponse = questionResult.data;
 
-        console.log('🟢 [InterviewService] Question generated:', questionResponse);
-        // Add question to interview with expected points
-        await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType);
+        // A malformed/empty first question must fail the start (and refund
+        // the consumed credit) rather than leave a usable-looking interview
+        // with no real question.
+        if (!questionResponse?.question || typeof questionResponse.question !== 'string' || questionResponse.question.trim().length < 10) {
+          throw new Error('Generated first question was empty or malformed');
+        }
 
-        // Save interview
-        console.log('🟢 [InterviewService] Saving interview...');
-        await interview.save();
+        console.log('🟢 [InterviewService] Question generated:', questionResponse);
+        // Add question to interview with expected points. addQuestion()
+        // already persists (it calls save() internally) — this is the one
+        // and only save for the first question; an extra save() here would
+        // be redundant and, if it transiently failed, would wrongly trigger
+        // a refund for an interview that had, in fact, already succeeded.
+        await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType);
 
         console.log('✅ [InterviewService] Interview started successfully with blueprint');
         return interview;

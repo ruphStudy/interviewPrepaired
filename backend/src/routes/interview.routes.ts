@@ -5,6 +5,7 @@ import { protect } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 import { body, param, query } from 'express-validator';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
+import { InterviewStyle } from '../services/OpenAIService';
 
 const router = Router();
 
@@ -72,6 +73,10 @@ const startInterviewValidation = [
     .optional()
     .isIn(SUPPORTED_LANGUAGE_CODES)
     .withMessage(`Interview language must be one of: ${SUPPORTED_LANGUAGE_CODES.join(', ')}`),
+  body('interviewStyle')
+    .optional()
+    .isIn(Object.values(InterviewStyle))
+    .withMessage(`Interview style must be one of: ${Object.values(InterviewStyle).join(', ')}`),
 ];
 
 const submitAnswerValidation = [
