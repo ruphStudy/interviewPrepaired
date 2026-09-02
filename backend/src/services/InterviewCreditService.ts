@@ -238,6 +238,36 @@ class InterviewCreditService {
   async initializeSubscriptionCredits(userId: string, subscription: IUserSubscription): Promise<void> {
     await this.grantPlanCredits(userId, subscription);
   }
+
+  /**
+   * Admin-only manual credit adjustment — signed amount, positive to add or
+   * negative to remove. Goes through the same atomic applyLedgerMutation
+   * primitive as every other mutation (no separate balance-mutation code),
+   * so a negative adjustment can never take balance below 0.
+   */
+  async adjustCredits(params: {
+    userId: string;
+    amount: number;
+    reason: string;
+    adminUserId?: string;
+    idempotencyKey?: string;
+  }): Promise<IInterviewCreditLedger> {
+    if (!Number.isInteger(params.amount) || params.amount === 0) {
+      throw new ApiError(400, 'amount must be a non-zero integer');
+    }
+
+    return this.applyLedgerMutation({
+      userId: params.userId,
+      type: 'ADMIN_ADJUSTMENT',
+      amount: params.amount,
+      referenceType: 'admin',
+      referenceId: params.adminUserId,
+      idempotencyKey: params.idempotencyKey,
+      description: params.reason,
+      metadata: params.adminUserId ? { adminUserId: params.adminUserId } : undefined,
+      requireSufficientBalance: params.amount < 0,
+    });
+  }
 }
 
 export const interviewCreditService = new InterviewCreditService();
