@@ -2,6 +2,7 @@ import app from './app';
 import { connectDatabase } from './config/database';
 import { env, validateEnv } from './config/environment';
 import { logInfo, logError } from './middleware/logger';
+import { subscriptionPlanService } from './services/SubscriptionPlanService';
 
 // Validate environment variables
 validateEnv();
@@ -11,6 +12,16 @@ const startServer = async (): Promise<void> => {
   try {
     // Connect to database
     await connectDatabase();
+
+    // Ensure the default B2C subscription plan catalog exists
+    try {
+      await subscriptionPlanService.ensureDefaultPlans();
+      logInfo('Default subscription plans verified');
+    } catch (error: any) {
+      logError('Failed to seed default subscription plans', { error: error.message });
+      console.error('❌ Failed to seed default subscription plans:', error);
+      process.exit(1);
+    }
 
     // Start Express server
     app.listen(env.port, () => {
