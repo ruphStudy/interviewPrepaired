@@ -19,3 +19,9 @@ export enum InterviewStatus {
 export function isAnswerableStatus(status: InterviewStatus): boolean {
   return status === InterviewStatus.IN_PROGRESS;
 }
+
+// Shared safety bound for any non-AI-generated question list (uploaded-file
+// parsing, saved/manual question sets) — not the AI-generated-interview 1–10
+// cap. Used by InterviewService and QuestionSetService; keep it in one place
+// so the two never drift out of sync.
+export const MAX_UPLOADED_QUESTIONS = 200;

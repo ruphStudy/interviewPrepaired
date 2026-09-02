@@ -12,7 +12,7 @@ import { userSubscriptionService } from './UserSubscriptionService';
 import { interviewCreditService } from './InterviewCreditService';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
 import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
-import { InterviewStatus, isAnswerableStatus } from '../constants/interview';
+import { InterviewStatus, isAnswerableStatus, MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { blueprintService } from './BlueprintService';
 import { interviewMemoryService } from './InterviewMemoryService';
 import { createEmptyMemory } from '../models/InterviewMemory.model';
@@ -25,10 +25,6 @@ import { starAnalysisService } from './STARAnalysisService';
 import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode } from '../config/languages';
 import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
-
-// Uploaded-mode question count is NOT subject to the AI-generated-interview
-// 1–10 limit; this is only a sensible upper safety bound.
-const MAX_UPLOADED_QUESTIONS = 200;
 
 /** Same validity rule the frontend/report/PDF must all agree on — never treat a stringified "undefined"/"null"/placeholder/empty value as a real expected answer. */
 function isValidModelAnswer(value: unknown): value is string {
