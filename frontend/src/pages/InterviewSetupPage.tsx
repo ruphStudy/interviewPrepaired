@@ -10,6 +10,19 @@ import {
   ParsedUploadedQuestion,
 } from '../api/interviewApi';
 import { SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE_CODE } from '../config/languages';
+import {
+  Sparkles,
+  FileText,
+  UploadCloud,
+  Languages,
+  ListChecks,
+  CheckCircle2,
+  Shuffle,
+  RotateCcw,
+  ArrowRight,
+  AlertCircle,
+  Loader2,
+} from 'lucide-react';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -264,42 +277,63 @@ export const InterviewSetupPage: React.FC = () => {
   // Render
   // ============================================================================
 
+  const startLabel = mode === 'uploaded' ? 'Start Practice' : 'Start Interview';
+
   return (
     <AuthenticatedLayout>
-      <div className="page-container py-10 sm:py-14">
-        {/* Hero */}
-        <div className="max-w-2xl mx-auto text-center mb-10">
-          <h1 className="page-title text-3xl sm:text-4xl">Set up your interview</h1>
-          <p className="page-subtitle text-base">
-            Practice for any field with AI-powered feedback, or bring your own question bank.
-          </p>
+      <div className="page-container py-8 sm:py-10">
+        {/* Intro */}
+        <div className="page-header max-w-4xl">
+          <h1 className="page-title">Set up your mock interview</h1>
+          <p className="page-subtitle">Choose how you want to practice and tailor the session to your goals.</p>
         </div>
 
-        <div className="max-w-2xl mx-auto">
-          {/* Setup Form */}
-          <div className="card sm:p-8">
+        <div className="max-w-4xl">
+          {/* Setup Card */}
+          <div className="card p-5 sm:p-8">
             <form onSubmit={handleStartInterview} className="space-y-7">
-              {/* Interview Mode Toggle */}
+              {/* Interview Mode Selector */}
               <div>
                 <label className="label">Interview Mode</label>
-                <div className="segmented grid-cols-2">
+                <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => setMode('ai-generated')}
-                    className={`segmented-option ${
-                      mode === 'ai-generated' ? 'segmented-option-active' : 'segmented-option-inactive'
+                    className={`text-left rounded-xl border p-4 transition-colors ${
+                      mode === 'ai-generated'
+                        ? 'border-primary-600 bg-mentor-soft shadow-soft'
+                        : 'border-mentor-border bg-white hover:bg-mentor-surface'
                     }`}
                   >
-                    AI Generated Interview
+                    <div className="flex items-center gap-2.5 mb-1.5">
+                      <Sparkles size={18} className={mode === 'ai-generated' ? 'text-primary-700' : 'text-mentor-text-secondary'} />
+                      <span className={`text-sm font-semibold ${mode === 'ai-generated' ? 'text-primary-700' : 'text-mentor-text'}`}>
+                        AI Generated
+                      </span>
+                    </div>
+                    <p className={`text-xs leading-snug ${mode === 'ai-generated' ? 'text-primary-700/80' : 'text-mentor-text-muted'}`}>
+                      AI creates questions based on your role and level.
+                    </p>
                   </button>
+
                   <button
                     type="button"
                     onClick={() => setMode('uploaded')}
-                    className={`segmented-option ${
-                      mode === 'uploaded' ? 'segmented-option-active' : 'segmented-option-inactive'
+                    className={`text-left rounded-xl border p-4 transition-colors ${
+                      mode === 'uploaded'
+                        ? 'border-primary-600 bg-mentor-soft shadow-soft'
+                        : 'border-mentor-border bg-white hover:bg-mentor-surface'
                     }`}
                   >
-                    Practice From My Questions
+                    <div className="flex items-center gap-2.5 mb-1.5">
+                      <FileText size={18} className={mode === 'uploaded' ? 'text-primary-700' : 'text-mentor-text-secondary'} />
+                      <span className={`text-sm font-semibold ${mode === 'uploaded' ? 'text-primary-700' : 'text-mentor-text'}`}>
+                        Practice From My Questions
+                      </span>
+                    </div>
+                    <p className={`text-xs leading-snug ${mode === 'uploaded' ? 'text-primary-700/80' : 'text-mentor-text-muted'}`}>
+                      Upload your own question set and practice it.
+                    </p>
                   </button>
                 </div>
               </div>
@@ -307,7 +341,8 @@ export const InterviewSetupPage: React.FC = () => {
               {/* Interview Language — applies to both modes: it drives speech
                   recognition, evaluation, expected-answer, and report language. */}
               <div>
-                <label htmlFor="interviewLanguage" className="label">
+                <label htmlFor="interviewLanguage" className="label flex items-center gap-1.5">
+                  <Languages size={14} className="text-mentor-text-muted" />
                   Interview Language *
                 </label>
                 <select
@@ -322,59 +357,42 @@ export const InterviewSetupPage: React.FC = () => {
                     </option>
                   ))}
                 </select>
+                <p className="helper-text mt-1.5">Used for questions, speech recognition, evaluation and feedback.</p>
               </div>
 
               {mode === 'ai-generated' && (
                 <>
-                  {/* Topic Selection */}
-                  <div>
-                    <label htmlFor="topic" className="label">
-                      Interview Topic / Field *
-                    </label>
-                    <select
-                      id="topic"
-                      value={topic}
-                      onChange={(e) => {
-                        setTopic(e.target.value);
-                        // Clear custom topic if switching away from "Other"
-                        if (e.target.value !== 'Other') {
-                          setCustomTopic('');
-                        }
-                      }}
-                      className={`input ${errors.topic ? 'input-error' : ''}`}
-                    >
-                      <option value="">Select a topic...</option>
-                      {POPULAR_TOPICS.map((t) => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
-                    {errors.topic && <p className="field-error">{errors.topic}</p>}
-                  </div>
-
-                  {/* Custom Topic Input (shown when "Other" is selected) */}
-                  {topic === 'Other' && (
-                    <div>
-                      <label htmlFor="customTopic" className="label">
-                        Enter Your Topic *
-                      </label>
-                      <input
-                        type="text"
-                        id="customTopic"
-                        value={customTopic}
-                        onChange={(e) => setCustomTopic(e.target.value)}
-                        placeholder="e.g., Nursing, Real Estate, Mechanical Engineering..."
-                        className={`input ${errors.topic ? 'input-error' : ''}`}
-                      />
-                      <p className="helper-text mt-1.5">
-                        Enter any field or domain - the system works for ANY topic!
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Difficulty + Style: two-up on larger screens */}
+                  {/* Topic + Difficulty */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div>
+                      <label htmlFor="topic" className="label">
+                        Interview Topic / Field *
+                      </label>
+                      <select
+                        id="topic"
+                        value={topic}
+                        onChange={(e) => {
+                          setTopic(e.target.value);
+                          // Clear custom topic if switching away from "Other"
+                          if (e.target.value !== 'Other') {
+                            setCustomTopic('');
+                          }
+                        }}
+                        className={`input ${errors.topic ? 'input-error' : ''}`}
+                      >
+                        <option value="">Select a topic...</option>
+                        {POPULAR_TOPICS.map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                      {errors.topic && <p className="field-error">{errors.topic}</p>}
+                      {!errors.topic && (
+                        <p className="helper-text mt-1.5">Choose the role, technology or field you want to practice.</p>
+                      )}
+                    </div>
+
                     <div>
                       <label htmlFor="difficulty" className="label">
                         Difficulty Level *
@@ -394,7 +412,28 @@ export const InterviewSetupPage: React.FC = () => {
                       </select>
                       {errors.difficulty && <p className="field-error">{errors.difficulty}</p>}
                     </div>
+                  </div>
 
+                  {/* Custom Topic Input (shown when "Other" is selected) */}
+                  {topic === 'Other' && (
+                    <div>
+                      <label htmlFor="customTopic" className="label">
+                        Enter Your Topic *
+                      </label>
+                      <input
+                        type="text"
+                        id="customTopic"
+                        value={customTopic}
+                        onChange={(e) => setCustomTopic(e.target.value)}
+                        placeholder="e.g., Nursing, Real Estate, Mechanical Engineering..."
+                        className={`input ${errors.topic ? 'input-error' : ''}`}
+                      />
+                      <p className="helper-text mt-1.5">Enter any role, domain or specialization.</p>
+                    </div>
+                  )}
+
+                  {/* Interview Style + Experience */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                     <div>
                       <label htmlFor="interviewStyle" className="label">
                         Interview Style
@@ -412,49 +451,56 @@ export const InterviewSetupPage: React.FC = () => {
                         ))}
                       </select>
                     </div>
+
+                    <div>
+                      <label htmlFor="experienceYears" className="label">
+                        Years of Experience *
+                      </label>
+                      <input
+                        type="number"
+                        id="experienceYears"
+                        value={experienceYears}
+                        onChange={(e) => setExperienceYears(e.target.value)}
+                        min="0"
+                        max="50"
+                        placeholder="e.g., 3"
+                        className={`input ${errors.experienceYears ? 'input-error' : ''}`}
+                      />
+                      {errors.experienceYears && <p className="field-error">{errors.experienceYears}</p>}
+                    </div>
                   </div>
 
-                  {/* Experience Years */}
-                  <div>
-                    <label htmlFor="experienceYears" className="label">
-                      Years of Experience *
-                    </label>
-                    <input
-                      type="number"
-                      id="experienceYears"
-                      value={experienceYears}
-                      onChange={(e) => setExperienceYears(e.target.value)}
-                      min="0"
-                      max="50"
-                      placeholder="e.g., 3"
-                      className={`input ${errors.experienceYears ? 'input-error' : ''}`}
-                    />
-                    {errors.experienceYears && <p className="field-error">{errors.experienceYears}</p>}
-                    <p className="helper-text mt-1.5">Enter your years of experience in this field (0-50)</p>
+                  {/* Question Count + Tip */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div>
+                      <label htmlFor="totalQuestions" className="label">
+                        Number of Questions *
+                      </label>
+                      <input
+                        type="number"
+                        id="totalQuestions"
+                        value={totalQuestions}
+                        onChange={(e) => setTotalQuestions(e.target.value)}
+                        min="1"
+                        max="10"
+                        placeholder="5"
+                        className={`input ${errors.totalQuestions ? 'input-error' : ''}`}
+                      />
+                      {errors.totalQuestions && <p className="field-error">{errors.totalQuestions}</p>}
+                      {!errors.totalQuestions && <p className="helper-text mt-1.5">Choose 1–10 questions for this session.</p>}
+                    </div>
+
+                    <div className="surface-muted p-4 self-start">
+                      <p className="text-xs font-semibold text-mentor-text mb-1">Tip</p>
+                      <p className="text-xs text-mentor-text-secondary leading-relaxed">
+                        Choose a focused topic to get more relevant interview questions.
+                      </p>
+                    </div>
                   </div>
                 </>
               )}
 
-              {mode === 'ai-generated' ? (
-                /* Question Count (AI mode) */
-                <div>
-                  <label htmlFor="totalQuestions" className="label">
-                    Number of Questions *
-                  </label>
-                  <input
-                    type="number"
-                    id="totalQuestions"
-                    value={totalQuestions}
-                    onChange={(e) => setTotalQuestions(e.target.value)}
-                    min="1"
-                    max="10"
-                    placeholder="5"
-                    className={`input ${errors.totalQuestions ? 'input-error' : ''}`}
-                  />
-                  {errors.totalQuestions && <p className="field-error">{errors.totalQuestions}</p>}
-                  <p className="helper-text mt-1.5">Choose between 1-10 questions for your practice session</p>
-                </div>
-              ) : (
+              {mode === 'uploaded' && (
                 /* Upload Question File (uploaded mode) */
                 <div className="space-y-5">
                   <div>
@@ -462,34 +508,27 @@ export const InterviewSetupPage: React.FC = () => {
                       Upload Question File *
                     </label>
                     <div
-                      className={`surface-muted flex flex-col items-center justify-center text-center px-6 py-8 transition-colors ${
-                        errors.uploadFile ? 'border-red-400' : 'hover:border-primary-300'
+                      className={`surface-muted border-dashed flex flex-col items-center justify-center text-center px-6 py-8 transition-colors ${
+                        errors.uploadFile ? 'border-mentor-error' : 'hover:border-primary-300'
                       }`}
                     >
-                      <svg className="w-8 h-8 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={1.5}
-                          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                        />
-                      </svg>
-                      <p className="text-sm font-medium text-gray-700">
-                        {uploadFile ? uploadFile.name : 'Choose a question file to upload'}
+                      <UploadCloud size={28} className="text-primary-600 mb-2" strokeWidth={1.5} />
+                      <p className="text-sm font-medium text-mentor-text">
+                        {uploadFile ? uploadFile.name : 'Upload your question set'}
                       </p>
-                      <p className="helper-text mt-1">.txt, .csv, .docx, .pdf — text-based only, max 5MB</p>
+                      <p className="helper-text mt-1">TXT, CSV, DOCX or PDF · max 5 MB</p>
                       <input
                         type="file"
                         id="uploadFile"
                         accept=".txt,.csv,.docx,.pdf"
                         onChange={handleFileChange}
-                        className="mt-4 text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 cursor-pointer"
+                        className="mt-4 text-sm text-mentor-text-secondary file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 cursor-pointer"
                       />
                     </div>
                     {errors.uploadFile && <p className="field-error">{errors.uploadFile}</p>}
                     {isParsing && (
                       <p className="mt-2 text-sm text-primary-600 flex items-center gap-2">
-                        <span className="w-3.5 h-3.5 rounded-full border-2 border-primary-300 border-t-primary-600 animate-spin" />
+                        <Loader2 size={14} className="animate-spin" />
                         Parsing {uploadFile?.name}...
                       </p>
                     )}
@@ -498,34 +537,51 @@ export const InterviewSetupPage: React.FC = () => {
 
                   {parsedQuestions.length > 0 && parseSummary && (
                     <div className="card-flat space-y-4">
+                      {/* Parsed Summary */}
                       <div className="grid grid-cols-3 gap-3">
                         <div className="stat-tile">
-                          <p className="stat-tile-value">{parseSummary.totalQuestions}</p>
-                          <p className="stat-tile-label">Questions detected</p>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <ListChecks size={14} className="text-primary-600" />
+                            <p className="stat-tile-value">{parseSummary.totalQuestions}</p>
+                          </div>
+                          <p className="stat-tile-label">Questions</p>
                         </div>
                         <div className="stat-tile">
-                          <p className="stat-tile-value text-emerald-600">{parseSummary.questionsWithAnswers}</p>
-                          <p className="stat-tile-label">Answers detected</p>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <CheckCircle2 size={14} className="text-mentor-success" />
+                            <p className="stat-tile-value text-mentor-success">{parseSummary.questionsWithAnswers}</p>
+                          </div>
+                          <p className="stat-tile-label">Answers Included</p>
                         </div>
                         <div className="stat-tile">
-                          <p className="stat-tile-value text-amber-600">{parseSummary.questionsWithoutAnswers}</p>
-                          <p className="stat-tile-label">AI answers needed</p>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <Sparkles size={14} className="text-mentor-warning" />
+                            <p className="stat-tile-value text-mentor-warning">{parseSummary.questionsWithoutAnswers}</p>
+                          </div>
+                          <p className="stat-tile-label">AI Answers Needed</p>
                         </div>
                       </div>
 
-                      <div className="max-h-48 overflow-y-auto space-y-1.5 bg-white rounded-lg border border-gray-200 p-3">
-                        {parsedQuestions.map((q, i) => (
-                          <div key={i} className="text-sm text-gray-700 flex items-start gap-2.5 py-1">
-                            <span
-                              className={`shrink-0 mt-1.5 inline-block w-1.5 h-1.5 rounded-full ${
-                                q.hasAnswer ? 'bg-emerald-500' : 'bg-amber-400'
-                              }`}
-                            />
-                            <span className="leading-snug">
-                              <span className="text-gray-400 font-medium">{i + 1}.</span> {q.questionText}
-                            </span>
-                          </div>
-                        ))}
+                      {/* Question Preview */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-semibold text-mentor-text">Question Preview</p>
+                          <span className="text-xs text-mentor-text-muted">{parsedQuestions.length} questions</span>
+                        </div>
+                        <div className="max-h-48 overflow-y-auto space-y-2 bg-white rounded-lg border border-mentor-border p-3">
+                          {parsedQuestions.map((q, i) => (
+                            <div key={i} className="flex items-start justify-between gap-3 py-1">
+                              <span className="text-sm text-mentor-text-secondary leading-snug">
+                                <span className="text-mentor-text-muted font-medium">{i + 1}.</span> {q.questionText}
+                              </span>
+                              <span
+                                className={`shrink-0 badge ${q.hasAnswer ? 'badge-success' : 'badge-warning'}`}
+                              >
+                                {q.hasAnswer ? 'Answer included' : 'AI answer needed'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
 
                       <label htmlFor="useAllQuestions" className="flex items-center gap-2.5 cursor-pointer">
@@ -534,9 +590,9 @@ export const InterviewSetupPage: React.FC = () => {
                           id="useAllQuestions"
                           checked={useAllQuestions}
                           onChange={(e) => setUseAllQuestions(e.target.checked)}
-                          className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                          className="h-4 w-4 rounded border-mentor-border text-primary-600 focus:ring-primary-500"
                         />
-                        <span className="text-sm text-gray-700">Use all {parsedQuestions.length} questions</span>
+                        <span className="text-sm text-mentor-text">Use all {parsedQuestions.length} questions</span>
                       </label>
 
                       {!useAllQuestions && (
@@ -564,10 +620,14 @@ export const InterviewSetupPage: React.FC = () => {
                           id="shuffleQuestions"
                           checked={shuffleQuestions}
                           onChange={(e) => setShuffleQuestions(e.target.checked)}
-                          className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                          className="h-4 w-4 rounded border-mentor-border text-primary-600 focus:ring-primary-500"
                         />
-                        <span className="text-sm text-gray-700">Shuffle question order</span>
+                        <span className="text-sm text-mentor-text flex items-center gap-1.5">
+                          <Shuffle size={14} className="text-mentor-text-muted" />
+                          Shuffle question order
+                        </span>
                       </label>
+                      <p className="helper-text -mt-3">Practice questions in a random sequence.</p>
                     </div>
                   )}
                 </div>
@@ -575,30 +635,24 @@ export const InterviewSetupPage: React.FC = () => {
 
               {/* API Error */}
               {apiError && (
-                <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-4">
-                  <svg className="w-5 h-5 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
+                <div className="flex items-start gap-3 rounded-lg border border-mentor-error/30 bg-mentor-error/10 p-4">
+                  <AlertCircle size={20} className="text-mentor-error mt-0.5 shrink-0" />
                   <div>
-                    <h4 className="text-sm font-semibold text-red-900">Error</h4>
-                    <p className="text-sm text-red-700 mt-0.5">{apiError}</p>
+                    <h4 className="text-sm font-semibold text-mentor-error">Error</h4>
+                    <p className="text-sm text-mentor-error mt-0.5">{apiError}</p>
                   </div>
                 </div>
               )}
 
               {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+              <div className="flex items-center justify-between gap-3 pt-2 border-t border-mentor-border">
                 <button
                   type="button"
                   onClick={handleReset}
                   disabled={isLoading}
                   className="btn btn-secondary mt-6"
                 >
+                  <RotateCcw size={16} />
                   Reset
                 </button>
 
@@ -609,68 +663,18 @@ export const InterviewSetupPage: React.FC = () => {
                 >
                   {isLoading ? (
                     <>
-                      <span className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                      <Loader2 size={16} className="animate-spin" />
                       Starting...
                     </>
                   ) : (
                     <>
-                      Start Interview
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
+                      {startLabel}
+                      <ArrowRight size={16} />
                     </>
                   )}
                 </button>
               </div>
             </form>
-          </div>
-
-          {/* Info Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
-            <div className="card-flat">
-              <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center mb-3">
-                <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                  />
-                </svg>
-              </div>
-              <h3 className="section-title text-sm mb-1">AI-Powered</h3>
-              <p className="text-sm text-gray-500">Get intelligent feedback using OpenAI GPT-4 technology</p>
-            </div>
-
-            <div className="card-flat">
-              <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center mb-3">
-                <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                  />
-                </svg>
-              </div>
-              <h3 className="section-title text-sm mb-1">Voice Recording</h3>
-              <p className="text-sm text-gray-500">Practice with real-time speech recognition and transcription</p>
-            </div>
-
-            <div className="card-flat">
-              <div className="w-10 h-10 rounded-lg bg-violet-50 flex items-center justify-center mb-3">
-                <svg className="w-5 h-5 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                  />
-                </svg>
-              </div>
-              <h3 className="section-title text-sm mb-1">Detailed Reports</h3>
-              <p className="text-sm text-gray-500">Receive comprehensive evaluation with scores and suggestions</p>
-            </div>
           </div>
         </div>
       </div>
