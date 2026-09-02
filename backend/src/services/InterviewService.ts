@@ -276,6 +276,39 @@ export class InterviewService {
   }
 
   /**
+   * Builds the exact persisted question snapshot from the already-validated
+   * normalized pool: copy -> optional full-pool shuffle -> slice to count ->
+   * verify the count matches exactly. Never mutates normalizedQuestions.
+   * Shuffling the full pool before slicing (rather than slicing then
+   * shuffling) is required for an unbiased random subset when
+   * totalQuestions < pool.length.
+   */
+  private selectUploadedQuestions(
+    normalizedQuestions: ParsedQuestion[],
+    totalQuestions: number | undefined,
+    shuffleQuestions: boolean | undefined
+  ): ParsedQuestion[] {
+    const pool = [...normalizedQuestions];
+    if (shuffleQuestions === true) {
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+
+    const effectiveTotal = totalQuestions ?? pool.length;
+    const selected = pool.slice(0, effectiveTotal);
+
+    if (selected.length !== effectiveTotal) {
+      // Unreachable given validateUploadedInterviewInput's bounds — fail
+      // loudly rather than ever persist an inconsistent question count.
+      throw new ApiError(500, 'Uploaded question selection count mismatch');
+    }
+
+    return selected;
+  }
+
+  /**
    * Single source of truth for a question's expected/reference answer.
    * Uploaded reference answers are never overwritten or regenerated; a
    * modelAnswer is only generated via OpenAI when nothing valid exists yet,
@@ -542,18 +575,10 @@ export class InterviewService {
 
     // normalizedQuestions was already validated (non-empty, deduplicated,
     // within MAX_UPLOADED_QUESTIONS) by validateUploadedInterviewInput
-    // before the credit gate — copy before shuffling so the caller's array
-    // (e.g. a repeated start from the same preview) is never mutated.
-    let pool = [...normalizedQuestions];
-    if (shuffleQuestions) {
-      for (let i = pool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [pool[i], pool[j]] = [pool[j], pool[i]];
-      }
-    }
-
-    const effectiveTotal = totalQuestions || pool.length;
-    pool = pool.slice(0, effectiveTotal);
+    // before the credit gate. selectUploadedQuestions copies before
+    // shuffling so the caller's array (e.g. a repeated start from the same
+    // preview) is never mutated.
+    const pool = this.selectUploadedQuestions(normalizedQuestions, totalQuestions, shuffleQuestions);
 
     const finalExperienceLevel = experienceLevel || mapExperienceYearsToLevel(experienceYears);
     const finalInterviewStyle = interviewStyle || inferInterviewStyle(topic);
@@ -578,7 +603,7 @@ export class InterviewService {
       interviewStyle: finalInterviewStyle,
       interviewMode: 'uploaded',
       interviewLanguage,
-      totalQuestions: effectiveTotal,
+      totalQuestions: questions.length,
       // All questions are already embedded in this single document — unlike
       // generated mode there's no separate "shell without a question" stage,
       // so this goes straight to IN_PROGRESS (same lifecycle end state).
@@ -595,7 +620,7 @@ export class InterviewService {
     await this.consumeInterviewCredit(userId, interview);
 
     console.log('✅ [InterviewService] Uploaded-question interview started', {
-      totalQuestions: effectiveTotal,
+      totalQuestions: questions.length,
       withReferenceAnswer: questions.filter((q) => q.answerSource === 'uploaded').length,
     });
 

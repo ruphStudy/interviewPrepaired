@@ -70,6 +70,10 @@ const startInterviewValidation = [
       }
       return true;
     }),
+  body('shuffleQuestions')
+    .optional()
+    .isBoolean()
+    .withMessage('shuffleQuestions must be a boolean'),
   body('interviewLanguage')
     .optional()
     .isIn(SUPPORTED_LANGUAGE_CODES)

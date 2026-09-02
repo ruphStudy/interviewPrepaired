@@ -68,7 +68,7 @@ export class InterviewController {
         experienceLevel,
         interviewMode: isUploadedMode ? 'uploaded' : undefined,
         uploadedQuestions: isUploadedMode ? questions : undefined,
-        shuffleQuestions: !!shuffleQuestions,
+        shuffleQuestions: shuffleQuestions === true,
         interviewLanguage,
       });
     } catch (error) {
