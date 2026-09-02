@@ -119,6 +119,31 @@ interface InterviewReport {
   aiCost: AICostReport | null;
 }
 
+interface InterviewSession {
+  interviewId: string;
+  status: InterviewStatus;
+  interviewMode?: 'ai-generated' | 'uploaded';
+  topic: string;
+  difficulty: string;
+  interviewLanguage?: string;
+  totalQuestions: number;
+  currentQuestionIndex: number;
+  answeredQuestions: number;
+  resumable: boolean;
+  reportAvailable: boolean;
+  // Never includes modelAnswer/referenceAnswer/evaluation — recovery must not leak answer/evaluation data.
+  currentQuestion: {
+    questionText: string;
+    expectedPoints?: string[];
+    questionType?: string;
+  } | null;
+  progress: {
+    answered: number;
+    total: number;
+    percentage: number;
+  };
+}
+
 export class InterviewService {
   private aiService = getAIService();
 
@@ -1008,6 +1033,109 @@ export class InterviewService {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new ApiError(500, `Failed to generate final report: ${message}`);
     }
+  }
+
+  /**
+   * Backend recovery only — lets a client that refreshed/reopened the app
+   * safely resume an IN_PROGRESS interview. Reads persisted state only:
+   * zero AI calls, no credit activity, no question regeneration.
+   */
+  async getInterviewSession(params: { interviewId: string; userId: string }): Promise<InterviewSession> {
+    const { interviewId, userId } = params;
+
+    const interview = await Interview.findOne({
+      _id: new Types.ObjectId(interviewId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!interview) {
+      throw new ApiError(404, 'Interview not found');
+    }
+
+    const total = interview.totalQuestions;
+    const answeredQuestions = interview.questions.filter((q) => q.answerText).length;
+    const progress = {
+      answered: answeredQuestions,
+      total,
+      percentage: total > 0 ? Math.round((answeredQuestions / total) * 100) : 0,
+    };
+
+    const base = {
+      interviewId: interview._id.toString(),
+      status: interview.status,
+      interviewMode: interview.interviewMode,
+      topic: interview.topic,
+      difficulty: interview.difficulty,
+      interviewLanguage: interview.interviewLanguage,
+      totalQuestions: total,
+      answeredQuestions,
+      progress,
+    };
+
+    // Terminal states — nothing to resume, never fabricate a question.
+    if (interview.status === InterviewStatus.COMPLETED || interview.status === InterviewStatus.EVALUATED) {
+      return {
+        ...base,
+        currentQuestionIndex: interview.currentQuestion - 1,
+        resumable: false,
+        reportAvailable: interview.status === InterviewStatus.EVALUATED && !!interview.finalReport,
+        currentQuestion: null,
+      };
+    }
+
+    // Not implemented in this prompt — remains a valid stored state, never resumable.
+    if (interview.status === InterviewStatus.PAUSED) {
+      return {
+        ...base,
+        currentQuestionIndex: interview.currentQuestion - 1,
+        resumable: false,
+        reportAvailable: false,
+        currentQuestion: null,
+      };
+    }
+
+    // Shell persisted but initialization never completed — do not pretend it's resumable.
+    if (interview.status === InterviewStatus.CREATED) {
+      throw new ApiError(409, 'Interview initialization was incomplete and cannot be resumed');
+    }
+
+    // IN_PROGRESS from here. A generated interview with no persisted
+    // questions is inconsistent — recovery must not call AI to fix it.
+    if (interview.questions.length === 0) {
+      throw new ApiError(409, 'Interview is in an inconsistent state and cannot be resumed');
+    }
+
+    const firstUnansweredIndex = interview.questions.findIndex((q) => !q.answerText);
+    if (firstUnansweredIndex === -1) {
+      throw new ApiError(409, 'Interview has no unanswered question available to resume');
+    }
+
+    // Do not blindly trust the persisted pointer — validate it against the
+    // actual first unanswered question before using it.
+    const claimedIndex = interview.currentQuestion - 1;
+    const claimedQuestion = interview.questions[claimedIndex];
+    const claimedIsValid = !!claimedQuestion && !claimedQuestion.answerText;
+    const resolvedIndex = claimedIsValid ? claimedIndex : firstUnansweredIndex;
+
+    // Safe, single, targeted repair of a stale pointer — no AI, never
+    // touches answered content.
+    if (!claimedIsValid && interview.currentQuestion !== resolvedIndex + 1) {
+      await Interview.updateOne({ _id: interview._id }, { $set: { currentQuestion: resolvedIndex + 1 } });
+    }
+
+    const question = interview.questions[resolvedIndex];
+
+    return {
+      ...base,
+      currentQuestionIndex: resolvedIndex,
+      resumable: true,
+      reportAvailable: false,
+      currentQuestion: {
+        questionText: question.questionText,
+        expectedPoints: question.expectedPoints,
+        questionType: question.questionType,
+      },
+    };
   }
 
   /**

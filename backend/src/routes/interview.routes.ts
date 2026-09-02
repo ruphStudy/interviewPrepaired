@@ -156,6 +156,19 @@ router.post(
 );
 
 /**
+ * GET /api/interview/:id/session
+ * Backend recovery — resume an existing IN_PROGRESS interview after a
+ * refresh/reopen. Reads persisted state only; no AI calls, no credit activity.
+ */
+router.get(
+  '/:id/session',
+  protect,
+  ...mongoIdValidation,
+  validate,
+  interviewController.getSession
+);
+
+/**
  * POST /api/interview/parse-question-file
  * Parse an uploaded question file (TXT/CSV/DOCX/PDF) into a preview list.
  * Preview only — does NOT create an interview.

@@ -172,6 +172,30 @@ export class InterviewController {
   });
 
   /**
+   * GET /api/interview/:id/session
+   * Backend recovery — safely resume an existing IN_PROGRESS interview
+   * after refresh/reopen. Reads persisted state only.
+   */
+  public getSession = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new ApiError(401, 'Authentication required');
+    }
+
+    const { id } = req.params;
+
+    if (!id) {
+      throw new ApiError(400, 'Interview ID is required');
+    }
+
+    const session = await this.interviewService.getInterviewSession({ interviewId: id, userId });
+
+    res.status(200).json(
+      successResponse('Interview session retrieved successfully', session)
+    );
+  });
+
+  /**
    * GET /api/interview/report/:id
    * Get detailed interview report
    */
