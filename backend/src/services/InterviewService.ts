@@ -1,12 +1,13 @@
 import { Types } from 'mongoose';
 import Interview, { IInterview, IEvaluation, IQuestion } from '../models/interview.model';
-import { getOpenAIService, InterviewTopic, QuestionResponse } from './OpenAIService';
-import { 
-  DifficultyLevel, 
-  ExperienceLevel, 
+import { InterviewTopic, QuestionResponse } from './OpenAIService';
+import {
+  DifficultyLevel,
+  ExperienceLevel,
   InterviewStyle,
   DynamicEvaluationResponse
 } from './OpenAIService';
+import { getAIService } from '../ai';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
 import { ApiError } from '../utils/ApiError';
 import { blueprintService } from './BlueprintService';
@@ -116,7 +117,7 @@ interface InterviewReport {
 }
 
 export class InterviewService {
-  private openAIService = getOpenAIService();
+  private aiService = getAIService();
 
   /**
    * Single source of truth for a question's expected/reference answer.
@@ -140,17 +141,23 @@ export class InterviewService {
     }
 
     try {
-      const generated = await this.openAIService.generateModelAnswer({
-        question: question.questionText,
-        topic: interview.topic,
-        difficulty: interview.difficulty,
-        experienceLevel: interview.experienceLevel || 'professional',
-        expectedPoints: question.expectedPoints,
-        questionType: question.questionType as any,
-        interviewId: interview._id.toString(),
-        questionIndex,
-        interviewLanguage: interview.interviewLanguage,
-      });
+      const modelAnswerResult = await this.aiService.generateModelAnswer(
+        {
+          question: question.questionText,
+          topic: interview.topic,
+          difficulty: interview.difficulty,
+          experienceLevel: interview.experienceLevel || 'professional',
+          expectedPoints: question.expectedPoints,
+          questionType: question.questionType as any,
+        },
+        {
+          interviewId: interview._id.toString(),
+          operation: 'model-answer-generation',
+          questionIndex,
+          language: interview.interviewLanguage,
+        }
+      );
+      const generated = modelAnswerResult.data;
 
       question.modelAnswer = generated;
       question.answerSource = 'ai-generated';
@@ -284,13 +291,21 @@ export class InterviewService {
         totalQuestions,
       };
 
-      const questionResponse = await this.openAIService.generateQuestion({
-        sessionConfig,
-        // TODO: Pass blueprint context to question generation
-        // This will be used to generate questions targeting specific competencies
-        interviewId: interview._id.toString(),
-        interviewLanguage,
-      });
+      const questionResult = await this.aiService.generateQuestion(
+        {
+          sessionConfig,
+          // TODO: Pass blueprint context to question generation
+          // This will be used to generate questions targeting specific competencies
+          interviewId: interview._id.toString(),
+          interviewLanguage,
+        },
+        {
+          interviewId: interview._id.toString(),
+          operation: 'question-generation',
+          language: interviewLanguage,
+        }
+      );
+      const questionResponse = questionResult.data;
 
       console.log('🟢 [InterviewService] Question generated:', questionResponse);
       // Add question to interview with expected points
@@ -443,16 +458,25 @@ export class InterviewService {
       };
 
       // Evaluate answer using OpenAI
-      const evaluation = await this.openAIService.evaluateAnswer({
-        sessionConfig,
-        question: currentQuestion.questionText,
-        answer,
-        expectedPoints: currentQuestion.expectedPoints,
-        referenceAnswer: isValidModelAnswer(currentQuestion.referenceAnswer) ? currentQuestion.referenceAnswer : undefined,
-        interviewId: interview._id.toString(),
-        questionIndex: currentQuestionIndex,
-        interviewLanguage: interview.interviewLanguage,
-      });
+      const evaluationResult = await this.aiService.evaluateAnswer(
+        {
+          sessionConfig,
+          question: currentQuestion.questionText,
+          answer,
+          expectedPoints: currentQuestion.expectedPoints,
+          referenceAnswer: isValidModelAnswer(currentQuestion.referenceAnswer) ? currentQuestion.referenceAnswer : undefined,
+          interviewId: interview._id.toString(),
+          questionIndex: currentQuestionIndex,
+          interviewLanguage: interview.interviewLanguage,
+        },
+        {
+          interviewId: interview._id.toString(),
+          operation: 'answer-evaluation',
+          questionIndex: currentQuestionIndex,
+          language: interview.interviewLanguage,
+        }
+      );
+      const evaluation = evaluationResult.data;
 
       // Perform STAR analysis for behavioral interviews
       let starAnalysis = null;
@@ -716,16 +740,24 @@ export class InterviewService {
           console.log(`[InterviewService] Current difficulty: Level ${interview.difficultyTracking.currentLevel}/5`);
         }
         
-        nextQuestion = await this.openAIService.generateQuestion({
-          sessionConfig: adaptiveSessionConfig,
-          previousQuestions,
-          memoryContext, // NEW: Pass memory context
-          coverageContext, // NEW: Pass coverage context
-          priorityCompetency, // NEW: Pass priority competency
-          difficultyContext, // NEW: Pass difficulty context
-          interviewId: interview._id.toString(),
-          interviewLanguage: interview.interviewLanguage,
-        });
+        const nextQuestionResult = await this.aiService.generateQuestion(
+          {
+            sessionConfig: adaptiveSessionConfig,
+            previousQuestions,
+            memoryContext, // NEW: Pass memory context
+            coverageContext, // NEW: Pass coverage context
+            priorityCompetency, // NEW: Pass priority competency
+            difficultyContext, // NEW: Pass difficulty context
+            interviewId: interview._id.toString(),
+            interviewLanguage: interview.interviewLanguage,
+          },
+          {
+            interviewId: interview._id.toString(),
+            operation: 'question-generation',
+            language: interview.interviewLanguage,
+          }
+        );
+        nextQuestion = nextQuestionResult.data;
 
         // Add next question with expected points
         await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints, nextQuestion.questionType);
@@ -789,12 +821,20 @@ export class InterviewService {
         totalQuestions: interview.totalQuestions,
       };
 
-      const finalReport = await this.openAIService.generateFinalReport({
-        sessionConfig,
-        evaluations,
-        interviewId: interview._id.toString(),
-        interviewLanguage: interview.interviewLanguage,
-      });
+      const finalReportResult = await this.aiService.generateFinalReport(
+        {
+          sessionConfig,
+          evaluations,
+          interviewId: interview._id.toString(),
+          interviewLanguage: interview.interviewLanguage,
+        },
+        {
+          interviewId: interview._id.toString(),
+          operation: 'final-report-generation',
+          language: interview.interviewLanguage,
+        }
+      );
+      const finalReport = finalReportResult.data;
 
       console.log('[InterviewService] Final report received from OpenAI');
       console.log('[InterviewService] Saving final report to interview...');

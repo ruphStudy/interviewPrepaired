@@ -5,7 +5,7 @@ import {
   getHighPriorityClaims,
   formatClaimsForAI
 } from '../models/ClaimVerification.model';
-import { getOpenAIService } from './OpenAIService';
+import { getAIService } from '../ai';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -129,11 +129,13 @@ ${answer}
 Identify all verifiable claims in the answer above.`;
 
     try {
-      const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.3, 1000, { interviewId, operation: 'claim-verification' });
-      
-      const claims = this.validateClaimExtraction(response, questionNumber);
+      const result = await getAIService().generateStructured<any>(
+        { prompt, temperature: 0.3, maxTokens: 1000 },
+        { interviewId, operation: 'claim-verification' }
+      );
+
+      const claims = this.validateClaimExtraction(result.data, questionNumber);
       return { newClaims: claims };
       
     } catch (error) {

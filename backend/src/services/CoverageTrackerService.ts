@@ -1,6 +1,6 @@
 import { ICompetencyCoverage } from '../models/CompetencyCoverage.model';
 import { ICompetency } from '../models/InterviewBlueprint.model';
-import { getOpenAIService } from './OpenAIService';
+import { getAIService } from '../ai';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -110,11 +110,15 @@ ${answer}
 Analyze which competencies were demonstrated and provide evidence.`;
 
     try {
-      const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.3, 800, { interviewId, operation: 'coverage-tracking' });
-      
-      const result = JSON.parse(response);
+      const aiResult = await getAIService().generateStructured<any>(
+        { prompt, temperature: 0.3, maxTokens: 800 },
+        { interviewId, operation: 'coverage-tracking' }
+      );
+
+      // NOTE: pre-existing double-JSON.parse on an already-parsed object —
+      // unchanged/preserved as-is; not in scope for this migration.
+      const result = JSON.parse(aiResult.data);
       return this.validateCoverageAnalysis(result);
       
     } catch (error) {

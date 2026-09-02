@@ -332,7 +332,7 @@ Return JSON: { "message": "..." }`;
    * Generate dynamic interview blueprint with profession-specific competencies
    * This is the foundation for the entire interview process
    */
-  async generateInterviewBlueprint(request: BlueprintGenerationRequest, metadataSink?: AICallMetadataSink): Promise<BlueprintGenerationResponse> {
+  async generateInterviewBlueprint(request: BlueprintGenerationRequest, metadataSink?: AICallMetadataSink, modelOverride?: string): Promise<BlueprintGenerationResponse> {
     console.log('[OpenAIService] Generating interview blueprint for:', request);
 
     const roleDescription = this.buildRoleDescription(request);
@@ -407,7 +407,7 @@ Return ONLY valid JSON in this exact format:
 }`;
 
     try {
-      const response = await this.callOpenAI(prompt, 0.7, 2000, undefined, metadataSink);
+      const response = await this.callOpenAI(prompt, 0.7, 2000, undefined, metadataSink, modelOverride);
 
       // Validate response structure
       if (!response.competencies || !Array.isArray(response.competencies)) {
@@ -536,7 +536,7 @@ Return ONLY valid JSON in this exact format:
     return types;
   }
 
-  async generateQuestion(request: QuestionRequest, metadataSink?: AICallMetadataSink): Promise<QuestionResponse> {
+  async generateQuestion(request: QuestionRequest, metadataSink?: AICallMetadataSink, modelOverride?: string): Promise<QuestionResponse> {
     const appropriateTypes = this.getAppropriateQuestionTypes(
       request.sessionConfig.experienceLevel,
       request.sessionConfig.interviewStyle
@@ -550,7 +550,8 @@ Return ONLY valid JSON in this exact format:
       0.8,
       getMaxTokensForLanguage(800, request.interviewLanguage),
       { interviewId: request.interviewId, operation: 'question-generation' },
-      metadataSink
+      metadataSink,
+      modelOverride
     );
 
     return {
@@ -588,7 +589,7 @@ Return JSON with: question, reason, challengeType (assumption/depth/experience/a
     };
   }
 
-  async evaluateAnswer(request: EvaluationRequest, metadataSink?: AICallMetadataSink): Promise<DynamicEvaluationResponse> {
+  async evaluateAnswer(request: EvaluationRequest, metadataSink?: AICallMetadataSink, modelOverride?: string): Promise<DynamicEvaluationResponse> {
     const dimensions = this.getEvaluationDimensions(request.sessionConfig);
     const systemPrompt = `${this.getEvaluationSystemPrompt(request.sessionConfig, dimensions)}
 
@@ -678,7 +679,8 @@ EXAMPLE:
       0.3,
       getMaxTokensForLanguage(1500, request.interviewLanguage),
       { interviewId: request.interviewId, operation: 'answer-evaluation', questionIndex: request.questionIndex },
-      metadataSink
+      metadataSink,
+      modelOverride
     );
 
     // Normalize dimensions and scores
@@ -700,7 +702,7 @@ EXAMPLE:
     };
   }
 
-  async generateFinalReport(request: FinalReportRequest, metadataSink?: AICallMetadataSink): Promise<FinalReportResponse> {
+  async generateFinalReport(request: FinalReportRequest, metadataSink?: AICallMetadataSink, modelOverride?: string): Promise<FinalReportResponse> {
     const systemPrompt = `${this.getFinalReportSystemPrompt(request.sessionConfig)}
 
 ${getLanguageInstruction(request.interviewLanguage)}
@@ -712,7 +714,8 @@ Write "summary", "recommendations", "strengthsOverview", "weaknessesOverview", a
       0.4,
       getMaxTokensForLanguage(2000, request.interviewLanguage),
       { interviewId: request.interviewId, operation: 'final-report-generation' },
-      metadataSink
+      metadataSink,
+      modelOverride
     );
 
     const avgScore = this.calculateAverageScore(request.evaluations);
@@ -848,7 +851,7 @@ Write "summary", "recommendations", "strengthsOverview", "weaknessesOverview", a
     interviewId?: string;
     questionIndex?: number;
     interviewLanguage?: string;
-  }, metadataSink?: AICallMetadataSink): Promise<string> {
+  }, metadataSink?: AICallMetadataSink, modelOverride?: string): Promise<string> {
     const prompt = `You are generating the ideal answer a strong candidate would give verbally in a real ${params.topic} technical interview.
 
 ${getLanguageInstruction(params.interviewLanguage)}
@@ -883,7 +886,7 @@ Return strict JSON:
         interviewId: params.interviewId,
         operation: 'model-answer-generation',
         questionIndex: params.questionIndex,
-      }, metadataSink);
+      }, metadataSink, modelOverride);
 
       // Validate the expected { "answer": "..." } shape — a falsy-but-present
       // empty string, a non-string `answer`, or a missing field must never
@@ -1083,10 +1086,11 @@ Performance by Question:\n`;
    * Call OpenAI API with JSON response format
    * Made public for use by other services (e.g., InterviewMemoryService)
    */
-  async callOpenAI(prompt: string, temperature: number, maxTokens: number, usageContext?: AIUsageContext, metadataSink?: AICallMetadataSink): Promise<any> {
+  async callOpenAI(prompt: string, temperature: number, maxTokens: number, usageContext?: AIUsageContext, metadataSink?: AICallMetadataSink, modelOverride?: string): Promise<any> {
     try {
+      const modelToUse = modelOverride || this.config.model;
       const response = await this.client.chat.completions.create({
-        model: this.config.model,
+        model: modelToUse,
         messages: [{ role: 'user', content: prompt }],
         temperature,
         max_tokens: maxTokens,
@@ -1100,7 +1104,7 @@ Performance by Question:\n`;
       // OpenAIProvider) via the out-param, independent of cost tracking below.
       if (metadataSink) {
         metadataSink.current = {
-          model: response.model || this.config.model,
+          model: response.model || modelToUse,
           promptTokens: response.usage?.prompt_tokens ?? 0,
           cachedTokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
           completionTokens: response.usage?.completion_tokens ?? 0,
@@ -1116,7 +1120,7 @@ Performance by Question:\n`;
           interviewId: usageContext.interviewId,
           operation: usageContext.operation,
           questionIndex: usageContext.questionIndex,
-          model: response.model || this.config.model,
+          model: response.model || modelToUse,
           promptTokens: response.usage.prompt_tokens,
           cachedTokens: response.usage.prompt_tokens_details?.cached_tokens ?? 0,
           completionTokens: response.usage.completion_tokens,

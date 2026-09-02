@@ -1,5 +1,5 @@
 import { IInterviewMemory, IMemoryItem, createEmptyMemory, formatMemoryForAI } from '../models/InterviewMemory.model';
-import { getOpenAIService } from './OpenAIService';
+import { getAIService } from '../ai';
 
 /**
  * Memory Extraction Request
@@ -32,7 +32,7 @@ export interface MemoryExtractionResponse {
  * Extracts and manages candidate information throughout the interview
  */
 export class InterviewMemoryService {
-  private openAIService = getOpenAIService();
+  private aiService = getAIService();
 
   /**
    * Extract key facts from candidate's answer
@@ -143,10 +143,13 @@ Return ONLY valid JSON:
 }`;
 
     try {
-      const response = await this.openAIService.callOpenAI(prompt, 0.3, 800, { interviewId, operation: 'memory-extraction' });
+      const result = await this.aiService.generateStructured<any>(
+        { prompt, temperature: 0.3, maxTokens: 800 },
+        { interviewId, operation: 'memory-extraction' }
+      );
 
       // Validate response
-      return this.validateMemoryResponse(response);
+      return this.validateMemoryResponse(result.data);
       
     } catch (error) {
       console.error('[MemoryService] AI extraction failed:', error);

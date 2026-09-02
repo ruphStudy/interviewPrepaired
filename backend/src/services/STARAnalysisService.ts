@@ -1,5 +1,5 @@
 import { ISTARAnalysis, shouldAnalyzeSTAR, getSTARCoachingTips } from '../models/STARAnalysis.model';
-import { getOpenAIService } from './OpenAIService';
+import { getAIService } from '../ai';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -96,11 +96,13 @@ ${answer}
 Analyze this answer using the STAR framework.`;
 
     try {
-      const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.3, 800, { interviewId, operation: 'star-analysis' });
+      const result = await getAIService().generateStructured<any>(
+        { prompt, temperature: 0.3, maxTokens: 800 },
+        { interviewId, operation: 'star-analysis' }
+      );
 
-      return this.validateSTARAnalysis(response);
+      return this.validateSTARAnalysis(result.data);
       
     } catch (error) {
       console.error('[STARAnalysis] AI analysis failed:', error);

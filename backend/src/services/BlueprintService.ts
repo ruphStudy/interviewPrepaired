@@ -2,7 +2,7 @@ import InterviewBlueprint, {
   IInterviewBlueprint,
   ICompetency,
 } from '../models/InterviewBlueprint.model';
-import { getOpenAIService } from './OpenAIService';
+import { getAIService } from '../ai';
 import { ApiError } from '../utils/ApiError';
 
 /**
@@ -33,7 +33,7 @@ export interface BlueprintGenerationResponse {
  * Handles blueprint generation, caching, retrieval, and validation
  */
 export class BlueprintService {
-  private openAIService = getOpenAIService();
+  private aiService = getAIService();
   
   // Configuration
   private readonly BLUEPRINT_EXPIRY_DAYS = parseInt(
@@ -102,8 +102,12 @@ export class BlueprintService {
       try {
         console.log(`[BlueprintService] Generation attempt ${attempt}/${this.MAX_GENERATION_RETRIES}`);
 
-        // Generate blueprint using AI
-        const generatedBlueprint = await this.openAIService.generateInterviewBlueprint(params);
+        // Generate blueprint using AI — deliberately no interviewId (blueprint
+        // generation happens before an interview document exists).
+        const blueprintResult = await this.aiService.generateInterviewBlueprint(params, {
+          operation: 'blueprint-generation',
+        });
+        const generatedBlueprint = blueprintResult.data;
 
         // Validate blueprint
         this.validateBlueprint(generatedBlueprint);

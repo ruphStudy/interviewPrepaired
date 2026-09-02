@@ -61,6 +61,8 @@ export interface AIRequestContext {
   operation?: string;
   questionIndex?: number;
   language?: string;
+  /** Optional resolved-route model override — provider-neutral, set by AIService's model routing, not an OpenAI-specific concept. */
+  model?: string;
 }
 
 /**

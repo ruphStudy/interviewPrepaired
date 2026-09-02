@@ -55,7 +55,7 @@ export class OpenAIProvider implements AIProvider {
       interviewId: request.interviewId ?? context?.interviewId,
       interviewLanguage: request.interviewLanguage ?? context?.language,
     };
-    const data = await this.service.generateQuestion(mergedRequest, sink);
+    const data = await this.service.generateQuestion(mergedRequest, sink, context?.model);
     return { data, metadata: toMetadata(sink) };
   }
 
@@ -67,7 +67,7 @@ export class OpenAIProvider implements AIProvider {
       questionIndex: request.questionIndex ?? context?.questionIndex,
       interviewLanguage: request.interviewLanguage ?? context?.language,
     };
-    const data = await this.service.evaluateAnswer(mergedRequest, sink);
+    const data = await this.service.evaluateAnswer(mergedRequest, sink, context?.model);
     return { data, metadata: toMetadata(sink) };
   }
 
@@ -85,7 +85,8 @@ export class OpenAIProvider implements AIProvider {
         questionIndex: context?.questionIndex,
         interviewLanguage: context?.language,
       },
-      sink
+      sink,
+      context?.model
     );
     return { data, metadata: toMetadata(sink) };
   }
@@ -97,18 +98,19 @@ export class OpenAIProvider implements AIProvider {
       interviewId: request.interviewId ?? context?.interviewId,
       interviewLanguage: request.interviewLanguage ?? context?.language,
     };
-    const data = await this.service.generateFinalReport(mergedRequest, sink);
+    const data = await this.service.generateFinalReport(mergedRequest, sink, context?.model);
     return { data, metadata: toMetadata(sink) };
   }
 
   async generateInterviewBlueprint(
     request: BlueprintGenerationRequest,
-    _context?: AIRequestContext
+    context?: AIRequestContext
   ): Promise<AIResult<BlueprintGenerationResponse>> {
     // Deliberately untracked/shared — matches OpenAIService's existing
-    // behavior of never attributing blueprint calls to an interviewId.
+    // behavior of never attributing blueprint calls to an interviewId. Model
+    // routing still applies (provider-neutral, unrelated to cost attribution).
     const sink: AICallMetadataSink = {};
-    const data = await this.service.generateInterviewBlueprint(request, sink);
+    const data = await this.service.generateInterviewBlueprint(request, sink, context?.model);
     return { data, metadata: toMetadata(sink) };
   }
 
@@ -119,7 +121,7 @@ export class OpenAIProvider implements AIProvider {
       : undefined;
     // callOpenAI always requests JSON-object format (OpenAIService's single choke
     // point) — non-JSON parses fall back to the stringified parsed content.
-    const parsed = await this.service.callOpenAI(request.prompt, request.temperature ?? 0.7, request.maxTokens ?? 500, usageContext, sink);
+    const parsed = await this.service.callOpenAI(request.prompt, request.temperature ?? 0.7, request.maxTokens ?? 500, usageContext, sink, context?.model);
     const text = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
     return { data: text, metadata: toMetadata(sink) };
   }
@@ -137,7 +139,8 @@ export class OpenAIProvider implements AIProvider {
       request.temperature ?? 0.7,
       request.maxTokens ?? 1000,
       usageContext,
-      sink
+      sink,
+      context?.model
     )) as T;
     return { data, metadata: toMetadata(sink) };
   }

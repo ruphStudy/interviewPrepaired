@@ -5,7 +5,7 @@ import {
   getUnresolvedContradictions
 } from '../models/ContradictionTracking.model';
 import { IInterviewMemory } from '../models/InterviewMemory.model';
-import { getOpenAIService } from './OpenAIService';
+import { getAIService } from '../ai';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -132,12 +132,14 @@ ${currentAnswer}
 Analyze the current answer for contradictions with previous statements.`;
 
     try {
-      const openAIService = getOpenAIService();
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await openAIService.callOpenAI(prompt, 0.2, 1000, { interviewId, operation: 'contradiction-detection' });
-      
+      const result = await getAIService().generateStructured<any>(
+        { prompt, temperature: 0.2, maxTokens: 1000 },
+        { interviewId, operation: 'contradiction-detection' }
+      );
+
       const contradictions = this.validateContradictionDetection(
-        response,
+        result.data,
         currentQuestionNumber
       );
       
