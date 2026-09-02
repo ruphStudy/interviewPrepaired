@@ -17,7 +17,7 @@ import {
   LineChart,
   Line,
 } from 'recharts';
-import Header from '../components/Header';
+import AuthenticatedLayout from '../components/AuthenticatedLayout';
 import { interviewApi, InterviewReport } from '../api/interviewApi';
 import { API_BASE_URL } from '../config/api.config';
 import { getLanguageByCode } from '../config/languages';
@@ -397,23 +397,21 @@ const ReportDashboard: React.FC = () => {
   // Loading State
   if (isLoading) {
     return (
-      <div className="page-shell">
-        <Header />
+      <AuthenticatedLayout>
         <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 64px)' }}>
           <div className="text-center">
             <div className="h-10 w-10 rounded-full border-2 border-gray-200 border-t-primary-600 mx-auto mb-4 animate-spin"></div>
             <p className="text-gray-500 text-sm font-medium">Loading report...</p>
           </div>
         </div>
-      </div>
+      </AuthenticatedLayout>
     );
   }
 
   // Error State
   if (error || !report) {
     return (
-      <div className="page-shell">
-        <Header />
+      <AuthenticatedLayout>
         <div className="flex items-center justify-center p-4" style={{ minHeight: 'calc(100vh - 64px)' }}>
           <div className="card max-w-md w-full text-center">
             <svg className="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -431,7 +429,7 @@ const ReportDashboard: React.FC = () => {
             </button>
           </div>
         </div>
-      </div>
+      </AuthenticatedLayout>
     );
   }
 
@@ -447,8 +445,7 @@ const ReportDashboard: React.FC = () => {
       : report.statistics?.averageScore ?? 0;
 
   return (
-    <div className="page-shell">
-      <Header />
+    <AuthenticatedLayout>
       <div className="page-container py-8">
         {/* Header */}
         <div className="card mb-6">
@@ -1289,7 +1286,7 @@ const ReportDashboard: React.FC = () => {
           </button>
         </div>
       </div>
-    </div>
+    </AuthenticatedLayout>
   );
 };
 

@@ -9,22 +9,23 @@ interface AppShellProps {
 }
 
 /**
- * Structural foundation for the Calm Mentor app shell: an optional sidebar
- * column beside a content column (optional header + page content). No pages
- * are wired to this yet — it exists so Step 2's sidebar/header can drop in
- * without every page needing a rewrite.
+ * Structural foundation for the Calm Mentor app shell: a sidebar column
+ * pinned to the viewport beside a content column (header + page content).
+ * The sidebar slot only ever renders on desktop (md+) — a small screen gets
+ * no permanent sidebar; a caller wanting a mobile drawer composes that
+ * itself (see AuthenticatedLayout) rather than this component knowing about it.
  */
 export default function AppShell({ children, sidebar, header }: AppShellProps) {
   return (
     <div className="min-h-screen bg-mentor-bg dark:bg-gray-900 md:flex">
       {sidebar && (
-        <div className="hidden md:block md:w-64 md:shrink-0 md:border-r md:border-mentor-border md:dark:border-gray-700">
+        <div className="hidden md:block md:w-[232px] md:shrink-0 md:sticky md:top-0 md:h-screen md:border-r md:border-mentor-border md:dark:border-gray-700">
           {sidebar}
         </div>
       )}
 
       <div className="flex-1 min-w-0 flex flex-col">
-        {header && <div>{header}</div>}
+        {header}
         <main className="flex-1 min-w-0">{children}</main>
       </div>
     </div>

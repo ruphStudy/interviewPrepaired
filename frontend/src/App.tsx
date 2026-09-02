@@ -1,7 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
-import Header from './components/Header';
+import AuthenticatedLayout from './components/AuthenticatedLayout';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
@@ -11,8 +11,7 @@ import ReportDashboard from './pages/ReportDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 
 const ComingSoonPage = ({ title }: { title: string }) => (
-  <div className="page-shell">
-    <Header />
+  <AuthenticatedLayout>
     <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 64px)' }}>
       <div className="card max-w-sm w-full text-center">
         <div className="w-11 h-11 rounded-lg bg-primary-50 flex items-center justify-center mx-auto mb-4">
@@ -24,7 +23,7 @@ const ComingSoonPage = ({ title }: { title: string }) => (
         <p className="text-sm text-gray-500">This page is coming soon.</p>
       </div>
     </div>
-  </div>
+  </AuthenticatedLayout>
 );
 
 function App() {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Header from '../components/Header';
+import AuthenticatedLayout from '../components/AuthenticatedLayout';
 import {
   interviewApi,
   POPULAR_TOPICS,
@@ -265,8 +265,7 @@ export const InterviewSetupPage: React.FC = () => {
   // ============================================================================
 
   return (
-    <div className="page-shell">
-      <Header />
+    <AuthenticatedLayout>
       <div className="page-container py-10 sm:py-14">
         {/* Hero */}
         <div className="max-w-2xl mx-auto text-center mb-10">
@@ -675,7 +674,7 @@ export const InterviewSetupPage: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>
+    </AuthenticatedLayout>
   );
 };
 

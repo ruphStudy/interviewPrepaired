@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import Header from '../components/Header';
+import AuthenticatedLayout from '../components/AuthenticatedLayout';
 import axios from 'axios';
 import { API_BASE_URL } from '../config/api.config';
 
@@ -78,9 +78,7 @@ const DashboardPage: React.FC = () => {
   };
 
   return (
-    <div className="page-shell">
-      <Header />
-
+    <AuthenticatedLayout>
       <main className="page-container py-8">
         {/* Welcome Section */}
         <div className="page-header">
@@ -247,7 +245,7 @@ const DashboardPage: React.FC = () => {
           </ul>
         </div>
       </main>
-    </div>
+    </AuthenticatedLayout>
   );
 };
 

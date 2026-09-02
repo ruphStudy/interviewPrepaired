@@ -28,6 +28,7 @@ export default {
           bg: '#F8FAF9',
           card: '#FFFFFF',
           surface: '#F3FAF8',
+          soft: '#E6F7F4',
           mint: '#ECFDF5',
           aqua: '#ECFEFF',
           border: '#DDEBE7',
