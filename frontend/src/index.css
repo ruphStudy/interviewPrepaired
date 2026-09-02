@@ -4,11 +4,11 @@
 
 @layer base {
   * {
-    @apply border-gray-200 dark:border-gray-700;
+    @apply border-mentor-border dark:border-gray-700;
   }
 
   body {
-    @apply bg-slate-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 antialiased;
+    @apply bg-mentor-bg dark:bg-gray-900 text-mentor-text dark:text-gray-100 antialiased;
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 
@@ -20,11 +20,11 @@
 @layer components {
   /* ---- Layout ---- */
   .page-shell {
-    @apply min-h-screen bg-slate-50 dark:bg-gray-900;
+    @apply min-h-screen bg-mentor-bg dark:bg-gray-900;
   }
 
   .page-container {
-    @apply max-w-6xl mx-auto px-4 sm:px-6 lg:px-8;
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
   }
 
   .page-header {
@@ -32,19 +32,19 @@
   }
 
   .page-title {
-    @apply text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight;
+    @apply text-[28px] leading-tight font-bold text-mentor-text dark:text-white tracking-tight;
   }
 
   .page-subtitle {
-    @apply mt-1.5 text-sm sm:text-base text-gray-500 dark:text-gray-400;
+    @apply mt-1.5 text-sm text-mentor-text-secondary dark:text-gray-400;
   }
 
   .section-title {
-    @apply text-base font-semibold text-gray-900 dark:text-white;
+    @apply text-[18px] font-semibold text-mentor-text dark:text-white;
   }
 
   .helper-text {
-    @apply text-xs text-gray-500 dark:text-gray-400;
+    @apply text-xs text-mentor-text-muted dark:text-gray-400;
   }
 
   /* ---- Buttons ---- */
@@ -57,46 +57,46 @@
   }
 
   .btn-secondary {
-    @apply bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400 focus-visible:ring-gray-400 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-700;
+    @apply bg-white text-mentor-text border border-mentor-border hover:bg-mentor-surface hover:border-primary-300 focus-visible:ring-primary-400 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-700;
   }
 
   .btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500;
+    @apply bg-mentor-error text-white hover:opacity-90 focus-visible:ring-mentor-error;
   }
 
   /* ---- Cards & surfaces ---- */
   .card {
-    @apply bg-white dark:bg-gray-800 rounded-xl shadow-card p-6 border border-gray-200/80 dark:border-gray-700;
+    @apply bg-white dark:bg-gray-800 rounded-2xl shadow-card p-6 border border-mentor-border dark:border-gray-700;
   }
 
   .card-flat {
-    @apply bg-white dark:bg-gray-800 rounded-xl border border-gray-200/80 dark:border-gray-700 p-5;
+    @apply bg-white dark:bg-gray-800 rounded-2xl border border-mentor-border dark:border-gray-700 p-5;
   }
 
   .surface-muted {
-    @apply bg-slate-50 dark:bg-gray-900/50 border border-gray-200/80 dark:border-gray-700 rounded-lg;
+    @apply bg-mentor-surface dark:bg-gray-900/50 border border-mentor-border dark:border-gray-700 rounded-lg;
   }
 
   /* ---- Forms ---- */
   .input {
-    @apply w-full px-3.5 py-2.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg transition-colors focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder:text-gray-400;
+    @apply w-full px-3.5 py-2.5 text-sm border border-mentor-border dark:border-gray-600 rounded-lg transition-colors focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 bg-white dark:bg-gray-700 text-mentor-text dark:text-gray-100 placeholder:text-mentor-text-muted;
   }
 
   .input-error {
-    @apply border-red-400 focus:ring-red-500/30 focus:border-red-500;
+    @apply border-mentor-error focus:ring-mentor-error/30 focus:border-mentor-error;
   }
 
   .label {
-    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5;
+    @apply block text-sm font-medium text-mentor-text-secondary dark:text-gray-300 mb-1.5;
   }
 
   .field-error {
-    @apply mt-1.5 text-xs font-medium text-red-600 dark:text-red-400;
+    @apply mt-1.5 text-xs font-medium text-mentor-error dark:text-red-400;
   }
 
   /* ---- Segmented control / mode toggle ---- */
   .segmented {
-    @apply grid gap-2 p-1 bg-slate-100 dark:bg-gray-900/60 rounded-xl border border-gray-200/80 dark:border-gray-700;
+    @apply grid gap-2 p-1 bg-mentor-mint dark:bg-gray-900/60 rounded-xl border border-mentor-border dark:border-gray-700;
   }
 
   .segmented-option {
@@ -108,16 +108,16 @@
   }
 
   .segmented-option-inactive {
-    @apply text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200;
+    @apply text-mentor-text-secondary hover:text-mentor-text dark:text-gray-400 dark:hover:text-gray-200;
   }
 
   /* ---- Tabs ---- */
   .tabs {
-    @apply flex items-center gap-1 border-b border-gray-200 dark:border-gray-700;
+    @apply flex items-center gap-1 border-b border-mentor-border dark:border-gray-700;
   }
 
   .tab {
-    @apply px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 border-b-2 border-transparent -mb-px transition-colors;
+    @apply px-4 py-2.5 text-sm font-medium text-mentor-text-secondary hover:text-mentor-text dark:text-gray-400 dark:hover:text-gray-200 border-b-2 border-transparent -mb-px transition-colors;
   }
 
   .tab-active {
@@ -151,11 +151,11 @@
   }
 
   .stat-tile-value {
-    @apply text-2xl font-bold text-gray-900 dark:text-white;
+    @apply text-2xl font-bold text-mentor-text dark:text-white;
   }
 
   .stat-tile-label {
-    @apply mt-1 text-xs font-medium text-gray-500 dark:text-gray-400;
+    @apply mt-1 text-xs font-medium text-mentor-text-muted dark:text-gray-400;
   }
 }
 
