@@ -9,6 +9,9 @@ import InterviewSetupPage from './pages/InterviewSetupPage';
 import InterviewScreen from './pages/InterviewScreen';
 import ReportDashboard from './pages/ReportDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import PricingPage from './pages/PricingPage';
+import ProfilePage from './pages/ProfilePage';
+import SettingsPage from './pages/SettingsPage';
 
 const ComingSoonPage = ({ title }: { title: string }) => (
   <AuthenticatedLayout>
@@ -77,7 +80,31 @@ function App() {
               </ProtectedRoute>
             }
           />
-          
+          <Route
+            path="/pricing"
+            element={
+              <ProtectedRoute>
+                <PricingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <ProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <SettingsPage />
+              </ProtectedRoute>
+            }
+          />
+
           {/* Admin Routes */}
           <Route
             path="/admin"

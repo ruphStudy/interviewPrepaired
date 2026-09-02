@@ -14,6 +14,9 @@ function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/history')) return 'Interview History';
   if (pathname.startsWith('/report')) return 'Interview Report';
   if (pathname.startsWith('/interview')) return 'Mock Interview';
+  if (pathname.startsWith('/pricing')) return 'Pricing';
+  if (pathname.startsWith('/profile')) return 'Profile';
+  if (pathname.startsWith('/settings')) return 'Settings';
   return 'Dashboard';
 }
 
