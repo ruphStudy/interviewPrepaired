@@ -2,9 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import { InterviewService } from '../services/InterviewService';
 import { PDFService } from '../services/PDFService';
 import { questionFileParserService } from '../services/QuestionFileParserService';
-import { ApiError } from '../utils/ApiError';
+import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
 import { successResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
+import { interviewCreditService } from '../services/InterviewCreditService';
 
 interface AuthRequest extends Request {
   user?: {
@@ -54,25 +55,44 @@ export class InterviewController {
     }
 
     console.log('🔵 [InterviewController] Calling startInterview service...');
-    const interview = await this.interviewService.startInterview({
-      userId,
-      topic,
-      difficulty,
-      experienceYears,
-      totalQuestions: totalQuestions || 5,
-      interviewStyle,
-      experienceLevel,
-      interviewMode: isUploadedMode ? 'uploaded' : undefined,
-      uploadedQuestions: isUploadedMode ? questions : undefined,
-      shuffleQuestions: !!shuffleQuestions,
-      interviewLanguage,
-    });
+
+    let interview;
+    try {
+      interview = await this.interviewService.startInterview({
+        userId,
+        topic,
+        difficulty,
+        experienceYears,
+        totalQuestions: totalQuestions || 5,
+        interviewStyle,
+        experienceLevel,
+        interviewMode: isUploadedMode ? 'uploaded' : undefined,
+        uploadedQuestions: isUploadedMode ? questions : undefined,
+        shuffleQuestions: !!shuffleQuestions,
+        interviewLanguage,
+      });
+    } catch (error) {
+      if (error instanceof InsufficientCreditsError) {
+        res.status(402).json({
+          success: false,
+          code: error.code,
+          message: error.message,
+          balance: error.balance,
+        });
+        return;
+      }
+      throw error;
+    }
 
     console.log('✅ [InterviewController] Interview started successfully');
-    
+
     // Get the current question
     const currentQuestionObj = interview.questions[interview.currentQuestion - 1];
-    
+
+    // Additive/optional — lets the client show remaining credits without any
+    // response-shape redesign.
+    const creditsRemaining = await interviewCreditService.getBalance(userId);
+
     res.status(201).json(
       successResponse('Interview started successfully', {
         interview: {
@@ -90,6 +110,7 @@ export class InterviewController {
           createdAt: interview.createdAt,
           interviewLanguage: interview.interviewLanguage,
         },
+        creditsRemaining,
       })
     );
   });

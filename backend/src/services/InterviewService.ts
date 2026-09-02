@@ -8,8 +8,10 @@ import {
   DynamicEvaluationResponse
 } from './OpenAIService';
 import { getAIService } from '../ai';
+import { userSubscriptionService } from './UserSubscriptionService';
+import { interviewCreditService } from './InterviewCreditService';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
-import { ApiError } from '../utils/ApiError';
+import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
 import { blueprintService } from './BlueprintService';
 import { interviewMemoryService } from './InterviewMemoryService';
 import { createEmptyMemory } from '../models/InterviewMemory.model';
@@ -120,6 +122,64 @@ export class InterviewService {
   private aiService = getAIService();
 
   /**
+   * Fast pre-check only, run before any expensive AI work — the
+   * authoritative check is the atomic consume in consumeInterviewCredit().
+   * Also lazily initializes a legacy/existing user's FREE subscription and
+   * credits if they don't have any yet.
+   */
+  private async assertCreditAvailable(userId: string): Promise<void> {
+    await userSubscriptionService.getSubscriptionDetails(userId);
+    const balance = await interviewCreditService.getBalance(userId);
+    if (balance < 1) {
+      throw new InsufficientCreditsError(balance);
+    }
+  }
+
+  /**
+   * Consumes exactly 1 credit for a just-created interview (idempotent per
+   * interviewId, so a retry never double-charges). This is the authoritative
+   * credit check — if the atomic consume fails (e.g. a race lost the last
+   * credit after the fast pre-check passed), the still-empty interview is
+   * deleted so no uncharged interview is ever left accessible.
+   */
+  private async consumeInterviewCredit(userId: string, interview: IInterview): Promise<void> {
+    const interviewId = interview._id.toString();
+    try {
+      await interviewCreditService.consumeCredits({
+        userId,
+        amount: 1,
+        interviewId,
+        idempotencyKey: `interview-consume:${interviewId}`,
+        description: 'Interview started',
+      });
+    } catch (error) {
+      await Interview.deleteOne({ _id: interview._id });
+      const balance = await interviewCreditService.getBalance(userId);
+      throw new InsufficientCreditsError(balance);
+    }
+  }
+
+  /**
+   * Refunds the 1 credit consumed for this interview when first-question
+   * initialization fails before the user ever receives a usable interview.
+   * Idempotent per interviewId. Best-effort — logged, never thrown, so a
+   * refund failure doesn't mask the original initialization error.
+   */
+  private async refundInterviewStartCredit(userId: string, interviewId: string): Promise<void> {
+    try {
+      await interviewCreditService.refundCredits({
+        userId,
+        amount: 1,
+        interviewId,
+        idempotencyKey: `interview-refund-start-failure:${interviewId}`,
+        description: 'Refund: interview failed to initialize',
+      });
+    } catch (refundError) {
+      console.error('[InterviewService] Failed to refund credit after start failure:', refundError);
+    }
+  }
+
+  /**
    * Single source of truth for a question's expected/reference answer.
    * Uploaded reference answers are never overwritten or regenerated; a
    * modelAnswer is only generated via OpenAI when nothing valid exists yet,
@@ -191,6 +251,10 @@ export class InterviewService {
    * 3. Generate first question using blueprint
    */
   async startInterview(params: StartInterviewParams): Promise<IInterview> {
+    // Shared credit gate — applies to both interview modes before any
+    // expensive AI work (or the uploaded-mode document creation) begins.
+    await this.assertCreditAvailable(params.userId);
+
     if (params.interviewMode === 'uploaded') {
       return this.startUploadedInterview(params);
     }
@@ -279,46 +343,61 @@ export class InterviewService {
       // match nothing if the document didn't exist in the DB yet.
       await interview.save();
 
+      // Interview document now exists — consume exactly 1 credit before any
+      // AI question-generation work begins (the authoritative check; the
+      // fast pre-check above is only for quick rejection).
+      await this.consumeInterviewCredit(userId, interview);
+
       // =====================================================================
       // STEP 3: Generate First Question Using Blueprint
       // =====================================================================
-      console.log('🟢 [InterviewService] Generating first question using blueprint...');
-      const sessionConfig = {
-        topic,
-        difficulty: difficulty as DifficultyLevel,
-        experienceLevel: finalExperienceLevel,
-        interviewStyle: finalInterviewStyle,
-        totalQuestions,
-      };
+      try {
+        console.log('🟢 [InterviewService] Generating first question using blueprint...');
+        const sessionConfig = {
+          topic,
+          difficulty: difficulty as DifficultyLevel,
+          experienceLevel: finalExperienceLevel,
+          interviewStyle: finalInterviewStyle,
+          totalQuestions,
+        };
 
-      const questionResult = await this.aiService.generateQuestion(
-        {
-          sessionConfig,
-          // TODO: Pass blueprint context to question generation
-          // This will be used to generate questions targeting specific competencies
-          interviewId: interview._id.toString(),
-          interviewLanguage,
-        },
-        {
-          interviewId: interview._id.toString(),
-          operation: 'question-generation',
-          language: interviewLanguage,
-        }
-      );
-      const questionResponse = questionResult.data;
+        const questionResult = await this.aiService.generateQuestion(
+          {
+            sessionConfig,
+            // TODO: Pass blueprint context to question generation
+            // This will be used to generate questions targeting specific competencies
+            interviewId: interview._id.toString(),
+            interviewLanguage,
+          },
+          {
+            interviewId: interview._id.toString(),
+            operation: 'question-generation',
+            language: interviewLanguage,
+          }
+        );
+        const questionResponse = questionResult.data;
 
-      console.log('🟢 [InterviewService] Question generated:', questionResponse);
-      // Add question to interview with expected points
-      await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType);
+        console.log('🟢 [InterviewService] Question generated:', questionResponse);
+        // Add question to interview with expected points
+        await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType);
 
-      // Save interview
-      console.log('🟢 [InterviewService] Saving interview...');
-      await interview.save();
+        // Save interview
+        console.log('🟢 [InterviewService] Saving interview...');
+        await interview.save();
 
-      console.log('✅ [InterviewService] Interview started successfully with blueprint');
-      return interview;
-      
+        console.log('✅ [InterviewService] Interview started successfully with blueprint');
+        return interview;
+      } catch (initError) {
+        // Credit was already consumed but the interview never became
+        // usable — refund it, then let the outer catch report the failure.
+        await this.refundInterviewStartCredit(userId, interview._id.toString());
+        throw initError;
+      }
+
     } catch (error) {
+      if (error instanceof InsufficientCreditsError) {
+        throw error;
+      }
       console.error('❌ [InterviewService] Error starting interview:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new ApiError(500, `Failed to start interview: ${message}`);
@@ -396,6 +475,12 @@ export class InterviewService {
     });
 
     await interview.save();
+
+    // Interview document (with all uploaded questions) now exists — consume
+    // exactly 1 credit. No AI work follows for this mode, so no refund path
+    // is needed here (unlike AI-generated mode's first-question step).
+    await this.consumeInterviewCredit(userId, interview);
+
     console.log('✅ [InterviewService] Uploaded-question interview started', {
       totalQuestions: effectiveTotal,
       withReferenceAnswer: questions.filter((q) => q.answerSource === 'uploaded').length,
