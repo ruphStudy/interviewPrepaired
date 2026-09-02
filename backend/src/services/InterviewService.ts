@@ -806,8 +806,11 @@ export class InterviewService {
         // Don't fail the interview if difficulty adjustment fails
       }
 
-      // Check if interview is complete
-      const isCompleted = interview.currentQuestion >= interview.totalQuestions;
+      // Check if interview is complete — based on actual persisted answered
+      // questions, never just the currentQuestion pointer (which could drift
+      // from real state and mark completion early/late).
+      const answeredCount = interview.questions.filter((q) => q.answerText).length;
+      const isCompleted = answeredCount >= interview.totalQuestions;
       let nextQuestion: QuestionResponse | undefined;
       let finalInterview = interview; // Track the final interview to return
 
@@ -953,9 +956,22 @@ export class InterviewService {
   }
 
   /**
-   * Generate final report for completed interview
+   * Generate final report for a completed interview. Retry-safe/idempotent:
+   * never calls AI again once a report exists, so a retried submitAnswer or
+   * a later retry from a COMPLETED-but-unreported interview can't cause
+   * duplicate AI cost or overwrite an existing report.
    */
   private async generateFinalReport(interview: IInterview): Promise<void> {
+    if (interview.finalReport) {
+      // Report already exists — repair a status left at COMPLETED by a prior
+      // partial save, but never re-call AI.
+      if (interview.status !== InterviewStatus.EVALUATED) {
+        await Interview.updateOne({ _id: interview._id }, { $set: { status: InterviewStatus.EVALUATED } });
+        interview.status = InterviewStatus.EVALUATED;
+      }
+      return;
+    }
+
     try {
       console.log('[InterviewService] Collecting evaluations for final report...');
       const evaluations = interview.questions
@@ -1149,6 +1165,20 @@ export class InterviewService {
 
     if (!interview) {
       throw new ApiError(404, 'Interview not found');
+    }
+
+    // Retry-safe recovery: a COMPLETED interview with no report means a
+    // prior report-generation attempt never finished (e.g. a crash) — retry
+    // it here, since submitAnswer can never be called again for a COMPLETED
+    // interview. generateFinalReport() itself is the idempotency guard: it
+    // makes no AI call and no-ops (aside from a status repair) if a report
+    // already exists, so this is safe to hit on every report view.
+    if (interview.status === InterviewStatus.COMPLETED) {
+      try {
+        await this.generateFinalReport(interview);
+      } catch (retryError) {
+        console.error('[InterviewService] Retry of final report generation failed (non-critical for report view):', retryError);
+      }
     }
 
     // Calculate statistics

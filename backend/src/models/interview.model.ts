@@ -180,7 +180,8 @@ export interface IInterview extends Document {
     weaknessesOverview?: string[];
     nextSteps?: string[];
   }): Promise<IInterview>;
-  canTransitionTo(newStatus: string): boolean;
+  /** fromStatus optionally overrides the "from" state — used internally by the pre-save hook to validate against the actual original persisted status rather than the already-mutated `this.status`. */
+  canTransitionTo(newStatus: string, fromStatus?: string): boolean;
 }
 
 export interface IInterviewModel extends Model<IInterview> {
@@ -857,7 +858,8 @@ interviewSchema.methods.generateFinalReport = async function (
 
 interviewSchema.methods.canTransitionTo = function (
   this: IInterview,
-  newStatus: string
+  newStatus: string,
+  fromStatus?: string
 ): boolean {
   const validTransitions: { [key: string]: string[] } = {
     [InterviewStatus.CREATED]: [InterviewStatus.IN_PROGRESS],
@@ -867,7 +869,11 @@ interviewSchema.methods.canTransitionTo = function (
     [InterviewStatus.EVALUATED]: [],
   };
 
-  return validTransitions[this.status]?.includes(newStatus) || false;
+  // Bug fix: without an explicit fromStatus, this fell back to `this.status`,
+  // which by call time (e.g. from the pre-save hook, after the in-memory
+  // mutation already happened) is the NEW status, not the original one —
+  // making every transition check compare a status against itself.
+  return validTransitions[fromStatus ?? this.status]?.includes(newStatus) || false;
 };
 
 // ============================================================================
@@ -953,7 +959,7 @@ interviewSchema.pre('save', function (next) {
   // Validate status transition
   if (this.isModified('status') && !this.isNew) {
     const originalStatus = (this as any)._original?.status;
-    if (originalStatus && !this.canTransitionTo(this.status)) {
+    if (originalStatus && !this.canTransitionTo(this.status, originalStatus)) {
       return next(new Error(`Cannot transition from ${originalStatus} to ${this.status}`));
     }
   }
