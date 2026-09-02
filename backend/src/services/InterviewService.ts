@@ -24,6 +24,7 @@ import { contradictionDetectorService } from './ContradictionDetectorService';
 import { starAnalysisService } from './STARAnalysisService';
 import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode } from '../config/languages';
+import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
 
 // Uploaded-mode question count is NOT subject to the AI-generated-interview
 // 1–10 limit; this is only a sensible upper safety bound.
@@ -235,6 +236,46 @@ export class InterviewService {
   }
 
   /**
+   * Defensive, uploaded-mode-only input validation and normalization — runs
+   * before any DB write, credit check, or persistence, same principle as
+   * validateGeneratedInterviewInput. This is the trust boundary for
+   * `uploadedQuestions`: the parse-preview endpoint already returns
+   * normalized data, but a direct/non-HTTP caller could still hand this
+   * service raw structured objects, so normalization is re-applied here
+   * rather than assumed. Returns the normalized, deduplicated question set.
+   */
+  private validateUploadedInterviewInput(params: StartInterviewParams): ParsedQuestion[] {
+    if (!Array.isArray(params.uploadedQuestions) || params.uploadedQuestions.length === 0) {
+      throw new ApiError(400, 'At least 1 uploaded question is required');
+    }
+
+    const normalized = normalizeUploadedQuestions(params.uploadedQuestions);
+    if (normalized.length === 0) {
+      throw new ApiError(400, 'No valid uploaded questions found');
+    }
+
+    const { totalQuestions } = params;
+    if (totalQuestions !== undefined) {
+      if (!Number.isInteger(totalQuestions) || totalQuestions < 1) {
+        throw new ApiError(400, 'Total questions must be a positive integer');
+      }
+      if (totalQuestions > MAX_UPLOADED_QUESTIONS) {
+        throw new ApiError(400, `Total questions must be at most ${MAX_UPLOADED_QUESTIONS}`);
+      }
+      if (totalQuestions > normalized.length) {
+        throw new ApiError(400, 'Total questions cannot exceed the number of available uploaded questions');
+      }
+    } else if (normalized.length > MAX_UPLOADED_QUESTIONS) {
+      // The candidate didn't pick a specific count (implicit "use all"); rather
+      // than silently starting with fewer than the full uploaded set, reject
+      // clearly so the mismatch is visible instead of surprising.
+      throw new ApiError(400, `Uploaded question set exceeds the maximum of ${MAX_UPLOADED_QUESTIONS} questions; select a smaller count`);
+    }
+
+    return normalized;
+  }
+
+  /**
    * Single source of truth for a question's expected/reference answer.
    * Uploaded reference answers are never overwritten or regenerated; a
    * modelAnswer is only generated via OpenAI when nothing valid exists yet,
@@ -306,11 +347,15 @@ export class InterviewService {
    * 3. Generate first question using blueprint
    */
   async startInterview(params: StartInterviewParams): Promise<IInterview> {
-    // Validate generated-mode input before any DB write, credit check, or AI
-    // call. Uploaded mode validates its own input separately inside
-    // startUploadedInterview (unchanged).
+    // Validate mode-specific input before any DB write, credit check, or AI
+    // call — an invalid request must never consume credit or lazily
+    // initialize a subscription/credit record for a request that was never
+    // going to be valid anyway.
+    let normalizedUploadedQuestions: ParsedQuestion[] | undefined;
     if (params.interviewMode !== 'uploaded') {
       this.validateGeneratedInterviewInput(params);
+    } else {
+      normalizedUploadedQuestions = this.validateUploadedInterviewInput(params);
     }
 
     // Shared credit gate — applies to both interview modes before any
@@ -318,7 +363,7 @@ export class InterviewService {
     await this.assertCreditAvailable(params.userId);
 
     if (params.interviewMode === 'uploaded') {
-      return this.startUploadedInterview(params);
+      return this.startUploadedInterview(params, normalizedUploadedQuestions!);
     }
 
     console.log('🟢 [InterviewService] startInterview called with params:', params);
@@ -482,7 +527,7 @@ export class InterviewService {
    * question generation, no blueprint/competency/difficulty tracking (those
    * only exist to drive AI question generation, which uploaded mode skips).
    */
-  private async startUploadedInterview(params: StartInterviewParams): Promise<IInterview> {
+  private async startUploadedInterview(params: StartInterviewParams, normalizedQuestions: ParsedQuestion[]): Promise<IInterview> {
     const {
       userId,
       topic,
@@ -491,16 +536,15 @@ export class InterviewService {
       totalQuestions,
       interviewStyle,
       experienceLevel,
-      uploadedQuestions,
       shuffleQuestions,
     } = params;
     const interviewLanguage = normalizeLanguageCode(params.interviewLanguage);
 
-    if (!uploadedQuestions || uploadedQuestions.length === 0) {
-      throw new ApiError(400, 'At least 1 uploaded question is required');
-    }
-
-    let pool = [...uploadedQuestions];
+    // normalizedQuestions was already validated (non-empty, deduplicated,
+    // within MAX_UPLOADED_QUESTIONS) by validateUploadedInterviewInput
+    // before the credit gate — copy before shuffling so the caller's array
+    // (e.g. a repeated start from the same preview) is never mutated.
+    let pool = [...normalizedQuestions];
     if (shuffleQuestions) {
       for (let i = pool.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -508,14 +552,7 @@ export class InterviewService {
       }
     }
 
-    // Uploaded mode is not subject to the AI-generated-interview 1–10 cap —
-    // the candidate should be able to practice a subset or the full set
-    // (e.g. 25 or 50 uploaded questions), bounded only by a generous safety
-    // limit and however many questions were actually uploaded.
-    const effectiveTotal = Math.min(totalQuestions || pool.length, pool.length, MAX_UPLOADED_QUESTIONS);
-    if (effectiveTotal < 1) {
-      throw new ApiError(400, 'Total questions must be at least 1');
-    }
+    const effectiveTotal = totalQuestions || pool.length;
     pool = pool.slice(0, effectiveTotal);
 
     const finalExperienceLevel = experienceLevel || mapExperienceYearsToLevel(experienceYears);

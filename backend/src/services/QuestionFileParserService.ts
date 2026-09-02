@@ -34,22 +34,46 @@ function normalizeParsedText(text: string): string {
     .replace(/\u00A0/g, ' ');
 }
 
-/** A line/entry consisting only of punctuation/numbering artifacts (e.g. "---", empty after a bare "1.") is not a real question. */
+/**
+ * A line/entry consisting only of punctuation/numbering artifacts (e.g.
+ * "---", empty after a bare "1.") is not a real question. Unicode-aware
+ * (\p{L}/\p{N}) — this platform is multilingual, so a Hindi/Marathi-only
+ * question must not be rejected by an English-only [a-zA-Z0-9] check.
+ */
 function hasRealContent(text: string): boolean {
-  return /[a-zA-Z0-9]/.test(text);
+  return /[\p{L}\p{N}]/u.test(text);
 }
 
-/** Drops punctuation-only artifacts and exact (normalized, case-insensitive) duplicates, keeping the first occurrence. */
-function cleanQuestions(questions: ParsedQuestion[]): ParsedQuestion[] {
-  const seen = new Set<string>();
+/**
+ * Single normalization contract shared by the parser's own output and the
+ * uploaded-interview start path: trims/collapses whitespace, drops
+ * punctuation-only entries (Unicode-aware), normalizes empty answers to
+ * undefined, and deduplicates exact normalized (case-insensitive) duplicate
+ * questions — keeping the first occurrence, except that a later exact
+ * duplicate with a reference answer fills in for an earlier one that had
+ * none. Never mutates the input array/objects.
+ */
+export function normalizeUploadedQuestions(questions: ParsedQuestion[]): ParsedQuestion[] {
+  const indexByKey = new Map<string, number>();
   const results: ParsedQuestion[] = [];
-  for (const q of questions) {
-    if (!hasRealContent(q.questionText)) continue;
-    const key = q.questionText.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    results.push(q);
+
+  for (const raw of questions) {
+    if (!raw || typeof raw.questionText !== 'string') continue;
+    const questionText = raw.questionText.replace(/\s+/g, ' ').trim();
+    if (!questionText || !hasRealContent(questionText)) continue;
+
+    const referenceAnswer = isNonEmpty(raw.referenceAnswer) ? raw.referenceAnswer.trim() : undefined;
+    const key = questionText.toLowerCase();
+
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, results.length);
+      results.push({ questionText, referenceAnswer });
+    } else if (!results[existingIndex].referenceAnswer && referenceAnswer) {
+      results[existingIndex] = { questionText: results[existingIndex].questionText, referenceAnswer };
+    }
   }
+
   return results;
 }
 
@@ -323,7 +347,7 @@ export class QuestionFileParserService {
       questions = parseTextQuestions(normalizeParsedText(text));
     }
 
-    questions = cleanQuestions(questions);
+    questions = normalizeUploadedQuestions(questions);
 
     if (questions.length === 0) {
       throw new ApiError(400, 'No valid questions found in the uploaded file');
