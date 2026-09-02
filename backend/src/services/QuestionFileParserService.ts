@@ -21,6 +21,38 @@ function getExtension(filename: string): string {
   return idx === -1 ? '' : filename.slice(idx).toLowerCase();
 }
 
+/**
+ * Centralized normalization applied to every extracted-text path (TXT,
+ * DOCX/PDF-extracted text, and CSV) before parsing: strips a leading BOM,
+ * normalizes CRLF/lone-CR to LF, and normalizes non-breaking spaces to
+ * regular spaces. Never alters meaningful question/answer content.
+ */
+function normalizeParsedText(text: string): string {
+  return text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00A0/g, ' ');
+}
+
+/** A line/entry consisting only of punctuation/numbering artifacts (e.g. "---", empty after a bare "1.") is not a real question. */
+function hasRealContent(text: string): boolean {
+  return /[a-zA-Z0-9]/.test(text);
+}
+
+/** Drops punctuation-only artifacts and exact (normalized, case-insensitive) duplicates, keeping the first occurrence. */
+function cleanQuestions(questions: ParsedQuestion[]): ParsedQuestion[] {
+  const seen = new Set<string>();
+  const results: ParsedQuestion[] = [];
+  for (const q of questions) {
+    if (!hasRealContent(q.questionText)) continue;
+    const key = q.questionText.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push(q);
+  }
+  return results;
+}
+
 // ============================================================================
 // Flexible question/answer text parser (TXT/DOCX/PDF-extracted plain text)
 // ============================================================================
@@ -95,9 +127,42 @@ function matchAnswerHeading(line: string): { tier: number; trailing: string } | 
   return null;
 }
 
+/** True if any line uses an explicit "Q:"/"Question:" label or a numbered-question marker. When false, the document has no structural markers and the blank-line fallback applies instead. */
+function hasExplicitMarkers(lines: string[]): boolean {
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (Q_LABEL_MARKER.test(line)) return true;
+    const numberedMatch = line.match(NUMBERED_MARKER);
+    if (numberedMatch && looksLikeQuestion(numberedMatch[1] || '')) return true;
+  }
+  return false;
+}
+
+/** Fallback for documents with no Q:/numbered markers at all: each blank-line-separated paragraph is one question, with no answer (there's no marker to detect one). */
+function parseBlankLineQuestions(text: string): ParsedQuestion[] {
+  const paragraphs = text.split(/\n\s*\n+/);
+  const results: ParsedQuestion[] = [];
+  for (const para of paragraphs) {
+    const questionText = para
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (questionText) results.push({ questionText, referenceAnswer: undefined });
+  }
+  return results;
+}
+
 /** Parses TXT/DOCX/PDF-extracted plain text into Q/A entries, tolerant of many real-world question-bank layouts (see class doc). */
 function parseTextQuestions(text: string): ParsedQuestion[] {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const lines = text.split('\n');
+
+  if (!hasExplicitMarkers(lines)) {
+    return parseBlankLineQuestions(text);
+  }
 
   interface RawQuestion {
     questionText: string;
@@ -117,7 +182,7 @@ function parseTextQuestions(text: string): ParsedQuestion[] {
   const finalize = () => {
     if (!current) return;
     const questionText = current.questionText.replace(/\s+/g, ' ').trim();
-    if (questionText) {
+    if (questionText && hasRealContent(questionText)) {
       const bestTier = Math.min(...current.answersByTier.keys());
       const rawAnswer = Number.isFinite(bestTier) ? current.answersByTier.get(bestTier) : undefined;
       const referenceAnswer = isNonEmpty(rawAnswer) ? rawAnswer.replace(/\n{3,}/g, '\n\n').trim() : undefined;
@@ -209,7 +274,9 @@ function parseCSV(text: string): ParsedQuestion[] {
   const rows = parseCSVRows(text);
   if (rows.length === 0) return [];
 
-  const header = rows[0].map((h) => h.trim().toLowerCase());
+  // Strip whitespace/punctuation so "Question Text" and "Reference Answer" match the same way as "questionText".
+  const normalizeHeader = (h: string) => h.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const header = rows[0].map(normalizeHeader);
   const qIdx = header.findIndex((h) => ['question', 'questions', 'questiontext'].includes(h));
   const aIdx = header.findIndex((h) => ['answer', 'answers', 'referenceanswer'].includes(h));
 
@@ -238,12 +305,12 @@ export class QuestionFileParserService {
     let questions: ParsedQuestion[];
 
     if (ext === '.txt') {
-      questions = parseTextQuestions(buffer.toString('utf-8'));
+      questions = parseTextQuestions(normalizeParsedText(buffer.toString('utf-8')));
     } else if (ext === '.csv') {
-      questions = parseCSV(buffer.toString('utf-8'));
+      questions = parseCSV(normalizeParsedText(buffer.toString('utf-8')));
     } else if (ext === '.docx') {
       const { value } = await mammoth.extractRawText({ buffer });
-      questions = parseTextQuestions(value);
+      questions = parseTextQuestions(normalizeParsedText(value));
     } else {
       const data = await pdfParse(buffer);
       const text: string = data?.text || '';
@@ -253,8 +320,10 @@ export class QuestionFileParserService {
           'Scanned/image-only PDF is not supported yet. Please upload TXT, CSV, DOCX, or a text-based PDF.'
         );
       }
-      questions = parseTextQuestions(text);
+      questions = parseTextQuestions(normalizeParsedText(text));
     }
+
+    questions = cleanQuestions(questions);
 
     if (questions.length === 0) {
       throw new ApiError(400, 'No valid questions found in the uploaded file');
