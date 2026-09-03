@@ -9,6 +9,7 @@ import instituteCourseController from '../controllers/InstituteCourseController'
 import instituteOverviewController from '../controllers/InstituteOverviewController';
 import instituteBatchController from '../controllers/InstituteBatchController';
 import instituteStudentController from '../controllers/InstituteStudentController';
+import instituteTrainerController from '../controllers/InstituteTrainerController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -676,6 +677,58 @@ const bulkAssignStudentsValidation = [
   }),
 ];
 
+// ============================================================================
+// Institute trainer validators (12A) — trainer identity is the EXISTING
+// OrganizationMember (role TRAINER); only the optional profile metadata is
+// mutable here. Membership role/status are never accepted on this profile
+// endpoint — that stays the members API's job (8B/8D), not duplicated here.
+// ============================================================================
+
+const trainerMembershipIdValidation = [param('membershipId').isMongoId().withMessage('Invalid membership ID')];
+
+const listTrainersValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(OrganizationMemberStatus)).withMessage('Invalid status'),
+  query('search').optional().isString().trim().isLength({ max: 150 }).withMessage('search must be at most 150 characters'),
+];
+
+const TRAINER_PROFILE_FIELD_KEYS = ['employeeCode', 'designation', 'department', 'specialization', 'bio'];
+
+const updateTrainerProfileValidation = [
+  body('employeeCode')
+    .optional()
+    .isString()
+    .withMessage('employeeCode must be a string')
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('employeeCode must be at most 50 characters'),
+  body('designation').optional().isString().trim().isLength({ max: 150 }).withMessage('designation must be at most 150 characters'),
+  body('department').optional().isString().trim().isLength({ max: 150 }).withMessage('department must be at most 150 characters'),
+  body('specialization').optional().isArray({ max: 30 }).withMessage('specialization must be an array of at most 30 items'),
+  body('specialization.*')
+    .isString()
+    .withMessage('Each specialization must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Each specialization must be between 1 and 100 characters'),
+  body('bio').optional().isString().trim().isLength({ max: 1000 }).withMessage('bio must be at most 1000 characters'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !TRAINER_PROFILE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -1092,6 +1145,39 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteStudentController.unlinkUser
+);
+
+// ---- Institute Trainers (12A) — trainer identity is the EXISTING OrganizationMember (role TRAINER); only optional profile metadata is managed here. Institute-only (400 for a company org). ----
+
+router.get(
+  '/:organizationId/trainers',
+  protect,
+  ...organizationIdValidation,
+  ...listTrainersValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  instituteTrainerController.getTrainers
+);
+
+router.get(
+  '/:organizationId/trainers/:membershipId',
+  protect,
+  ...organizationIdValidation,
+  ...trainerMembershipIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  instituteTrainerController.getTrainer
+);
+
+router.put(
+  '/:organizationId/trainers/:membershipId/profile',
+  protect,
+  ...organizationIdValidation,
+  ...trainerMembershipIdValidation,
+  ...updateTrainerProfileValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  instituteTrainerController.updateTrainerProfile
 );
 
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
