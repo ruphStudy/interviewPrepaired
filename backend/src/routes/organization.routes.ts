@@ -204,6 +204,78 @@ const updateSettingsValidation = [
   }),
 ];
 
+// ============================================================================
+// Institute profile validators (10A) — flat body, no nested `instituteProfile`
+// wrapper (the endpoint itself is already /institute-profile). Only known
+// fields accepted; at least one must be present. instituteCode is
+// deliberately NOT unique — different institutions/states may reuse codes.
+// ============================================================================
+
+const INSTITUTE_PROFILE_FIELD_KEYS = [
+  'instituteKind',
+  'officialName',
+  'instituteCode',
+  'affiliation',
+  'accreditation',
+  'universityName',
+  'establishedYear',
+  'studentCount',
+  'description',
+  'website',
+  'placementEmail',
+  'placementPhone',
+];
+
+const updateInstituteProfileValidation = [
+  body('instituteKind').optional().isIn(Object.values(InstituteKind)).withMessage('Invalid instituteKind'),
+  body('officialName')
+    .optional()
+    .isString()
+    .withMessage('officialName must be a string')
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('officialName must be at most 200 characters'),
+  body('instituteCode')
+    .optional()
+    .isString()
+    .withMessage('instituteCode must be a string')
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('instituteCode must be at most 50 characters'),
+  body('affiliation').optional().isString().trim().isLength({ max: 200 }).withMessage('affiliation must be at most 200 characters'),
+  body('accreditation').optional().isString().trim().isLength({ max: 200 }).withMessage('accreditation must be at most 200 characters'),
+  body('universityName')
+    .optional()
+    .isString()
+    .withMessage('universityName must be a string')
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('universityName must be at most 200 characters'),
+  body('establishedYear')
+    .optional()
+    .isInt({ min: 1800, max: CURRENT_YEAR })
+    .withMessage(`establishedYear must be between 1800 and ${CURRENT_YEAR}`),
+  body('studentCount').optional().isInt({ min: 0 }).withMessage('studentCount must be a non-negative integer'),
+  body('description').optional().isString().trim().isLength({ max: 1500 }).withMessage('description must be at most 1500 characters'),
+  body('website').optional().isString().trim().isLength({ max: 300 }).withMessage('website must be at most 300 characters'),
+  body('placementEmail').optional().isEmail().withMessage('placementEmail must be a valid email').isLength({ max: 254 }),
+  body('placementPhone').optional().isString().trim().isLength({ max: 30 }).withMessage('placementPhone must be at most 30 characters'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !INSTITUTE_PROFILE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown institute profile field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one institute profile field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -342,6 +414,27 @@ router.put(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   organizationController.updateOrganizationSettings
+);
+
+// ---- Institute Profile (10A) — institute-only (400 for a company org). GET = view, PUT = update (PATCH-like merge). ----
+
+router.get(
+  '/:organizationId/institute-profile',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationController.getInstituteProfile
+);
+
+router.put(
+  '/:organizationId/institute-profile',
+  protect,
+  ...organizationIdValidation,
+  ...updateInstituteProfileValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationController.updateInstituteProfile
 );
 
 // ---- Members (8B API, 8D RBAC) ----

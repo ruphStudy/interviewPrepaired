@@ -32,6 +32,15 @@ export interface IInstituteProfile {
   accreditation?: string;
   establishedYear?: number;
   studentCount?: number;
+  // Institute-wide metadata (10A) — deliberately not branch/course-specific;
+  // that belongs to the branch (10B) and course (10C) models.
+  officialName?: string;
+  instituteCode?: string;
+  universityName?: string;
+  description?: string;
+  website?: string;
+  placementEmail?: string;
+  placementPhone?: string;
 }
 
 export interface ICompanyProfile {
@@ -103,6 +112,14 @@ const instituteProfileSchema = new Schema<IInstituteProfile>(
     accreditation: { type: String, trim: true, maxlength: [200, 'Accreditation cannot exceed 200 characters'] },
     establishedYear: { type: Number, min: 1800, validate: establishedYearValidator },
     studentCount: { type: Number, min: [0, 'studentCount cannot be negative'] },
+    officialName: { type: String, trim: true, maxlength: [200, 'officialName cannot exceed 200 characters'] },
+    // Not globally unique — different institutions/states may reuse codes (10A §5).
+    instituteCode: { type: String, trim: true, uppercase: true, maxlength: [50, 'instituteCode cannot exceed 50 characters'] },
+    universityName: { type: String, trim: true, maxlength: [200, 'universityName cannot exceed 200 characters'] },
+    description: { type: String, trim: true, maxlength: [1500, 'description cannot exceed 1500 characters'] },
+    website: { type: String, trim: true, maxlength: [300, 'website cannot exceed 300 characters'] },
+    placementEmail: { type: String, trim: true, lowercase: true, maxlength: [254, 'placementEmail cannot exceed 254 characters'] },
+    placementPhone: { type: String, trim: true, maxlength: [30, 'placementPhone cannot exceed 30 characters'] },
   },
   { _id: false }
 );

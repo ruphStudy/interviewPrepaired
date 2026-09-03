@@ -9,6 +9,7 @@ import {
   OrganizationStatus,
   OrganizationDateFormat,
   OrganizationTimeFormat,
+  InstituteKind,
   DEFAULT_ORGANIZATION_TIMEZONE,
   DEFAULT_ORGANIZATION_LOCALE,
   DEFAULT_ORGANIZATION_DATE_FORMAT,
@@ -71,6 +72,21 @@ interface UpdateSettingsFields {
   dateFormat?: OrganizationDateFormat;
   timeFormat?: OrganizationTimeFormat;
   defaultInterviewLanguage?: SupportedLanguageCode;
+}
+
+interface UpdateInstituteProfileFields {
+  instituteKind?: InstituteKind;
+  officialName?: string;
+  instituteCode?: string;
+  affiliation?: string;
+  accreditation?: string;
+  universityName?: string;
+  establishedYear?: number;
+  studentCount?: number;
+  description?: string;
+  website?: string;
+  placementEmail?: string;
+  placementPhone?: string;
 }
 
 export class OrganizationService {
@@ -248,6 +264,91 @@ export class OrganizationService {
     return this.toEffectiveSettings(organization.settings);
   }
 
+  /**
+   * Trusted — see getOrganizationById. Re-asserts ORGANIZATION_VIEW.
+   * Institute-only (400 for a company organization). Read-only: never
+   * creates/saves a missing instituteProfile — an old institute doc without
+   * one simply returns a profile object of all-optional fields.
+   */
+  async getInstituteProfileTrusted(
+    organizationId: string,
+    actingRole: OrganizationMemberRole
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_VIEW);
+
+    const organization = await Organization.findById(organizationId)
+      .select('name slug status type instituteProfile')
+      .lean();
+    if (!organization) {
+      throw new ApiError(404, 'Organization not found');
+    }
+    this.assertIsInstitute(organization);
+
+    return {
+      organization: {
+        id: organization._id.toString(),
+        name: organization.name,
+        slug: organization.slug,
+        status: organization.status,
+      },
+      profile: this.toInstituteProfileDetail(organization.instituteProfile),
+    };
+  }
+
+  /**
+   * Trusted — see getOrganizationById. Re-asserts ORGANIZATION_UPDATE.
+   * Institute-only (400 for a company organization); rejects an archived
+   * organization (409). PATCH-like merge despite the PUT route: only
+   * supplied fields change, omitted fields keep their current value — the
+   * embedded profile is created from scratch if this is the first update on
+   * an old institute doc that never had one.
+   */
+  async updateInstituteProfileTrusted(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    fields: UpdateInstituteProfileFields
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
+    const organization = await Organization.findById(organizationId);
+    if (!organization) {
+      throw new ApiError(404, 'Organization not found');
+    }
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    const current = organization.instituteProfile ?? {};
+    organization.instituteProfile = {
+      instituteKind: fields.instituteKind !== undefined ? fields.instituteKind : current.instituteKind,
+      officialName: fields.officialName !== undefined ? fields.officialName.trim() || undefined : current.officialName,
+      instituteCode:
+        fields.instituteCode !== undefined ? fields.instituteCode.trim().toUpperCase() || undefined : current.instituteCode,
+      affiliation: fields.affiliation !== undefined ? fields.affiliation.trim() || undefined : current.affiliation,
+      accreditation: fields.accreditation !== undefined ? fields.accreditation.trim() || undefined : current.accreditation,
+      universityName:
+        fields.universityName !== undefined ? fields.universityName.trim() || undefined : current.universityName,
+      establishedYear: fields.establishedYear !== undefined ? fields.establishedYear : current.establishedYear,
+      studentCount: fields.studentCount !== undefined ? fields.studentCount : current.studentCount,
+      description: fields.description !== undefined ? fields.description.trim() || undefined : current.description,
+      website: fields.website !== undefined ? fields.website.trim() || undefined : current.website,
+      placementEmail:
+        fields.placementEmail !== undefined ? fields.placementEmail.trim().toLowerCase() || undefined : current.placementEmail,
+      placementPhone: fields.placementPhone !== undefined ? fields.placementPhone.trim() || undefined : current.placementPhone,
+    };
+
+    await organization.save();
+
+    return {
+      organization: {
+        id: organization._id.toString(),
+        name: organization.name,
+        slug: organization.slug,
+        status: organization.status,
+      },
+      profile: this.toInstituteProfileDetail(organization.instituteProfile),
+    };
+  }
+
   /** Soft archive only — never a physical delete, never cascades to interviews/question sets. Idempotent if already archived. */
   async deleteOrganization(userId: string, organizationId: string): Promise<void> {
     const result = await Organization.updateOne(
@@ -270,6 +371,31 @@ export class OrganizationService {
     if (organization.status === OrganizationStatus.ARCHIVED) {
       throw new ApiError(409, 'Organization is archived');
     }
+  }
+
+  /** Type guard for the institute-profile endpoints — never a silent empty profile for a company org. */
+  private assertIsInstitute(organization: { type: OrganizationType }): void {
+    if (organization.type !== OrganizationType.INSTITUTE) {
+      throw new ApiError(400, 'This organization is not an institute');
+    }
+  }
+
+  /** Single source of truth for the institute-profile response shape — used by both get and update. */
+  private toInstituteProfileDetail(profile?: IInstituteProfile): Record<string, unknown> {
+    return {
+      instituteKind: profile?.instituteKind,
+      officialName: profile?.officialName,
+      instituteCode: profile?.instituteCode,
+      affiliation: profile?.affiliation,
+      accreditation: profile?.accreditation,
+      universityName: profile?.universityName,
+      establishedYear: profile?.establishedYear,
+      studentCount: profile?.studentCount,
+      description: profile?.description,
+      website: profile?.website,
+      placementEmail: profile?.placementEmail,
+      placementPhone: profile?.placementPhone,
+    };
   }
 
   private assertProfileMatchesType(

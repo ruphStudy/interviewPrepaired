@@ -163,6 +163,65 @@ export class OrganizationController {
   });
 
   /**
+   * GET /api/v1/organizations/:organizationId/institute-profile
+   * Requires ORGANIZATION_VIEW. 400 if the organization is not an institute.
+   */
+  public getInstituteProfile = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const result = await organizationService.getInstituteProfileTrusted(context.organizationId, context.role);
+
+    res.status(200).json(successResponse('Institute profile retrieved successfully', result));
+  });
+
+  /**
+   * PUT /api/v1/organizations/:organizationId/institute-profile
+   * Requires ORGANIZATION_UPDATE. PATCH-like merge — omitted fields keep
+   * their current value. 400 if not an institute, 409 if archived.
+   */
+  public updateInstituteProfile = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const {
+      instituteKind,
+      officialName,
+      instituteCode,
+      affiliation,
+      accreditation,
+      universityName,
+      establishedYear,
+      studentCount,
+      description,
+      website,
+      placementEmail,
+      placementPhone,
+    } = req.body;
+
+    const result = await organizationService.updateInstituteProfileTrusted(context.organizationId, context.role, {
+      instituteKind,
+      officialName,
+      instituteCode,
+      affiliation,
+      accreditation,
+      universityName,
+      establishedYear,
+      studentCount,
+      description,
+      website,
+      placementEmail,
+      placementPhone,
+    });
+
+    res.status(200).json(successResponse('Institute profile updated successfully', result));
+  });
+
+  /**
    * DELETE /api/v1/organizations/:id
    * Soft archive only — never a physical delete, no cascade.
    */
