@@ -12,6 +12,7 @@ import instituteStudentController from '../controllers/InstituteStudentControlle
 import instituteTrainerController from '../controllers/InstituteTrainerController';
 import instituteTrainerAssignmentController from '../controllers/InstituteTrainerAssignmentController';
 import instituteInterviewTemplateController from '../controllers/InstituteInterviewTemplateController';
+import instituteStudentInterviewAssignmentController from '../controllers/InstituteStudentInterviewAssignmentController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -30,6 +31,7 @@ import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
+import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
 import { DifficultyLevel } from '../services/OpenAIService';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
@@ -846,6 +848,37 @@ const updateTemplateValidation = [
   }),
 ];
 
+// ============================================================================
+// Student interview assignment validators (12D) — assigns an EXISTING
+// active template to EXISTING active students. `assignedByMembershipId` is
+// never accepted here — it's always the trusted caller's own membership id
+// (organizationContext.member._id), set service-side. Template/student
+// scope-compatibility is enforced service-side, not here.
+// ============================================================================
+
+const ASSIGN_INTERVIEW_MAX_STUDENTS = 200;
+
+const assignInterviewValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('assignedByMembershipId').not().exists().withMessage('assignedByMembershipId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be set'),
+  body('templateId').notEmpty().withMessage('templateId is required').isMongoId().withMessage('templateId must be a valid ID'),
+  body('studentIds')
+    .isArray({ min: 1, max: ASSIGN_INTERVIEW_MAX_STUDENTS })
+    .withMessage(`studentIds must be an array of 1 to ${ASSIGN_INTERVIEW_MAX_STUDENTS} items`),
+  body('studentIds.*').isMongoId().withMessage('Each studentId must be a valid ID'),
+  body('dueAt').optional({ nullable: true }).isISO8601().withMessage('dueAt must be a valid date').toDate(),
+  body('instructions').optional().isString().trim().isLength({ max: 1000 }).withMessage('instructions must be at most 1000 characters'),
+];
+
+const listInterviewAssignmentsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('studentId').optional().isMongoId().withMessage('Invalid student ID'),
+  query('templateId').optional().isMongoId().withMessage('Invalid template ID'),
+  query('status').optional().isIn(Object.values(InstituteStudentInterviewAssignmentStatus)).withMessage('Invalid status'),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -1383,6 +1416,28 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
   instituteInterviewTemplateController.removeTemplate
+);
+
+// ---- Institute Student Interview Assignments (12D) — assigns an EXISTING active template to EXISTING active students. Does NOT create/start an Interview (12E). Institute-only. GET allowed on archived org; POST => 409. ----
+
+router.post(
+  '/:organizationId/interview-assignments',
+  protect,
+  ...organizationIdValidation,
+  ...assignInterviewValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  instituteStudentInterviewAssignmentController.assignInterview
+);
+
+router.get(
+  '/:organizationId/interview-assignments',
+  protect,
+  ...organizationIdValidation,
+  ...listInterviewAssignmentsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_VIEW),
+  instituteStudentInterviewAssignmentController.getAssignments
 );
 
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
