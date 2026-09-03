@@ -2,9 +2,12 @@ import { Types } from 'mongoose';
 import Organization from '../models/Organization.model';
 import Interview from '../models/interview.model';
 import QuestionSet from '../models/QuestionSet.model';
+import OrganizationMember from '../models/OrganizationMember.model';
+import OrganizationInvitation from '../models/OrganizationInvitation.model';
 import { OrganizationType } from '../constants/organization';
-import { OrganizationMemberRole } from '../constants/organizationMember';
-import { OrganizationPermission } from '../constants/organizationPermissions';
+import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
+import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
+import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { InterviewStatus } from '../constants/interview';
 import { ApiError } from '../utils/ApiError';
 
@@ -12,6 +15,23 @@ interface DashboardAccessContext {
   role: OrganizationMemberRole;
   permissions: readonly OrganizationPermission[];
   membershipId: string;
+}
+
+interface MemberSummary {
+  total: number;
+  active: number;
+  inactive: number;
+  byRole: {
+    owner: number;
+    admin: number;
+    trainer: number;
+    recruiter: number;
+    member: number;
+  };
+  // number when the caller also has MEMBERS_MANAGE, otherwise explicitly
+  // null — pending invitation counts are more sensitive than the rest of
+  // the summary and are never included for TRAINER/RECRUITER.
+  pendingInvitations: number | null;
 }
 
 const RECENT_LIMIT = 5;
@@ -25,6 +45,64 @@ const RECENT_LIMIT = 5;
  * than falling back to anything else.
  */
 export class OrganizationDashboardService {
+  /**
+   * Permission-aware member summary (9C). Returns null outright — zero
+   * OrganizationMember/OrganizationInvitation queries — when the caller
+   * lacks MEMBERS_VIEW (e.g. MEMBER role), so member data never leaks to a
+   * caller who only has ORGANIZATION_VIEW. `pendingInvitations` is only
+   * populated when the caller additionally has MEMBERS_MANAGE; otherwise
+   * it stays explicit `null` rather than being omitted or leaked.
+   */
+  private async buildMemberSummary(
+    orgObjectId: Types.ObjectId,
+    context: DashboardAccessContext
+  ): Promise<MemberSummary | null> {
+    if (!hasOrganizationPermission(context.role, OrganizationPermission.MEMBERS_VIEW)) {
+      return null;
+    }
+
+    const [total, active, inactive, owner, admin, trainer, recruiter, member] = await Promise.all([
+      OrganizationMember.countDocuments({ organizationId: orgObjectId }),
+      OrganizationMember.countDocuments({ organizationId: orgObjectId, status: OrganizationMemberStatus.ACTIVE }),
+      OrganizationMember.countDocuments({ organizationId: orgObjectId, status: OrganizationMemberStatus.INACTIVE }),
+      OrganizationMember.countDocuments({ organizationId: orgObjectId, role: OrganizationMemberRole.OWNER }),
+      OrganizationMember.countDocuments({ organizationId: orgObjectId, role: OrganizationMemberRole.ADMIN }),
+      OrganizationMember.countDocuments({ organizationId: orgObjectId, role: OrganizationMemberRole.TRAINER }),
+      OrganizationMember.countDocuments({ organizationId: orgObjectId, role: OrganizationMemberRole.RECRUITER }),
+      OrganizationMember.countDocuments({ organizationId: orgObjectId, role: OrganizationMemberRole.MEMBER }),
+    ]);
+
+    let pendingInvitations: number | null = null;
+
+    if (hasOrganizationPermission(context.role, OrganizationPermission.MEMBERS_MANAGE)) {
+      // Lazily flip stale PENDING invitations to EXPIRED before counting —
+      // one updateMany, no loop/save — mirroring 8E's existing lazy
+      // expiration semantics so an expired-but-still-PENDING row is never
+      // counted as pending.
+      await OrganizationInvitation.updateMany(
+        {
+          organizationId: orgObjectId,
+          status: OrganizationInvitationStatus.PENDING,
+          expiresAt: { $lte: new Date() },
+        },
+        { $set: { status: OrganizationInvitationStatus.EXPIRED } }
+      );
+
+      pendingInvitations = await OrganizationInvitation.countDocuments({
+        organizationId: orgObjectId,
+        status: OrganizationInvitationStatus.PENDING,
+      });
+    }
+
+    return {
+      total,
+      active,
+      inactive,
+      byRole: { owner, admin, trainer, recruiter, member },
+      pendingInvitations,
+    };
+  }
+
   async getDashboard(organizationId: string, context: DashboardAccessContext): Promise<Record<string, unknown>> {
     const organization = await Organization.findById(organizationId).lean();
     if (!organization) {
@@ -40,6 +118,7 @@ export class OrganizationDashboardService {
       totalQuestionSets,
       recentInterviews,
       recentQuestionSets,
+      memberSummary,
     ] = await Promise.all([
       Interview.countDocuments({ organizationId: orgObjectId }),
       Interview.countDocuments({ organizationId: orgObjectId, status: InterviewStatus.IN_PROGRESS }),
@@ -58,6 +137,7 @@ export class OrganizationDashboardService {
         .sort({ createdAt: -1 })
         .limit(RECENT_LIMIT)
         .lean(),
+      this.buildMemberSummary(orgObjectId, context),
     ]);
 
     return {
@@ -85,6 +165,7 @@ export class OrganizationDashboardService {
       questionSets: {
         total: totalQuestionSets,
       },
+      memberSummary,
       recentActivity: {
         recentInterviews: recentInterviews.map((interview) => ({
           id: interview._id.toString(),
