@@ -6,6 +6,7 @@ import organizationInvitationController from '../controllers/OrganizationInvitat
 import organizationDashboardController from '../controllers/OrganizationDashboardController';
 import instituteBranchController from '../controllers/InstituteBranchController';
 import instituteCourseController from '../controllers/InstituteCourseController';
+import instituteOverviewController from '../controllers/InstituteOverviewController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -698,6 +699,17 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteCourseController.removeCourse
+);
+
+// ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
+
+router.get(
+  '/:organizationId/institute-overview',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteOverviewController.getOverview
 );
 
 // ---- Members (8B API, 8D RBAC) ----
