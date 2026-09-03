@@ -101,6 +101,30 @@ export class InstituteStudentController {
   });
 
   /**
+   * POST /api/v1/organizations/:organizationId/students/assign
+   * Requires ORGANIZATION_UPDATE. Bulk-assigns existing students to a
+   * batch/course/branch; processes each studentId independently. Never
+   * touches userId/profile fields/status.
+   */
+  public bulkAssignStudents = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { studentIds, batchId, courseId, branchId } = req.body;
+
+    const result = await instituteStudentService.bulkAssignStudents(context.organizationId, context.role, {
+      studentIds,
+      batchId,
+      courseId,
+      branchId,
+    });
+
+    res.status(200).json(successResponse('Bulk student assignment processed', result));
+  });
+
+  /**
    * PUT /api/v1/organizations/:organizationId/students/:studentId
    * Requires ORGANIZATION_UPDATE. PATCH-like merge; status is never accepted here.
    */

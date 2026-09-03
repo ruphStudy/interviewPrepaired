@@ -643,6 +643,39 @@ const bulkCreateStudentsValidation = [
   body('students.*.branchId').optional().isMongoId().withMessage('branchId must be a valid ID'),
 ];
 
+// ============================================================================
+// Bulk student assignment validators (11E) — one target batch/course/branch
+// applied to many students. `studentIds` uniqueness is handled service-side
+// (deduped, not rejected) — only array shape/format is checked here.
+// ============================================================================
+
+const BULK_ASSIGN_MAX = 200;
+const ASSIGN_FIELD_KEYS = ['studentIds', 'batchId', 'courseId', 'branchId'];
+
+const bulkAssignStudentsValidation = [
+  body('studentIds')
+    .isArray({ min: 1, max: BULK_ASSIGN_MAX })
+    .withMessage(`studentIds must be an array of 1 to ${BULK_ASSIGN_MAX} items`),
+  body('studentIds.*').isMongoId().withMessage('Each studentId must be a valid ID'),
+  body('batchId').optional({ nullable: true }).isMongoId().withMessage('batchId must be a valid ID'),
+  body('courseId').optional({ nullable: true }).isMongoId().withMessage('courseId must be a valid ID'),
+  body('branchId').optional({ nullable: true }).isMongoId().withMessage('branchId must be a valid ID'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !ASSIGN_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (value.batchId === undefined && value.courseId === undefined && value.branchId === undefined) {
+      throw new Error('At least one of batchId, courseId, or branchId is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -993,6 +1026,16 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteStudentController.bulkCreateStudents
+);
+
+router.post(
+  '/:organizationId/students/assign',
+  protect,
+  ...organizationIdValidation,
+  ...bulkAssignStudentsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.bulkAssignStudents
 );
 
 router.get(

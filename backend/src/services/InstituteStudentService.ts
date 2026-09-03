@@ -76,6 +76,19 @@ interface BulkCreateStudentsResult {
   results: BulkCreateResultRow[];
 }
 
+interface BulkAssignResultRow {
+  studentId: string;
+  status: 'assigned' | 'failed';
+  error?: string;
+}
+
+interface BulkAssignStudentsResult {
+  total: number;
+  assigned: number;
+  failed: number;
+  results: BulkAssignResultRow[];
+}
+
 /**
  * Institute student management (11B). Authorization mirrors
  * InstituteBatchService: the `requireOrganizationPermission` middleware
@@ -305,23 +318,7 @@ export class InstituteStudentService {
 
     const relationshipChanged = fields.batchId !== undefined || fields.courseId !== undefined || fields.branchId !== undefined;
     if (relationshipChanged) {
-      // Re-resolve using the FINAL effective batch/course/branch — an
-      // explicitly supplied field wins, otherwise fall back to whatever the
-      // student currently has, so e.g. changing only branchId still
-      // re-validates against the existing batch/course.
-      const effectiveBatchId =
-        fields.batchId !== undefined ? fields.batchId ?? undefined : student.batchId?.toString();
-      const effectiveCourseId =
-        fields.courseId !== undefined ? fields.courseId ?? undefined : student.courseId?.toString();
-      const effectiveBranchId =
-        fields.branchId !== undefined ? fields.branchId ?? undefined : student.branchId?.toString();
-
-      const resolved = await this.resolveRelationships(organization._id, {
-        batchId: effectiveBatchId,
-        courseId: effectiveCourseId,
-        branchId: effectiveBranchId,
-      });
-
+      const resolved = await this.resolveEffectiveRelationships(organization._id, student, fields);
       student.batchId = resolved.batchId;
       student.courseId = resolved.courseId;
       student.branchId = resolved.branchId;
@@ -474,6 +471,113 @@ export class InstituteStudentService {
       throw new ApiError(404, 'User not found');
     }
     return { _id: user._id as Types.ObjectId, email: user.email };
+  }
+
+  /**
+   * Shared by updateStudent and bulkAssignStudents: merges a partial
+   * batch/course/branch assignment onto a student's CURRENT values —
+   * explicitly supplied fields win (including `null` to clear), omitted
+   * fields fall back to whatever the student already has — then resolves
+   * and validates the merged result via resolveRelationships. This is the
+   * one place "supplied replaces, omitted retains, null clears" is defined,
+   * so update and bulk assignment can never drift apart on that semantic.
+   */
+  private async resolveEffectiveRelationships(
+    organizationId: unknown,
+    student: { batchId?: Types.ObjectId; courseId?: Types.ObjectId; branchId?: Types.ObjectId },
+    assignment: { batchId?: string | null; courseId?: string | null; branchId?: string | null },
+    cache?: RelationshipCache
+  ): Promise<ResolvedRelationships> {
+    const effectiveBatchId =
+      assignment.batchId !== undefined ? assignment.batchId ?? undefined : student.batchId?.toString();
+    const effectiveCourseId =
+      assignment.courseId !== undefined ? assignment.courseId ?? undefined : student.courseId?.toString();
+    const effectiveBranchId =
+      assignment.branchId !== undefined ? assignment.branchId ?? undefined : student.branchId?.toString();
+
+    return this.resolveRelationships(
+      organizationId,
+      { batchId: effectiveBatchId, courseId: effectiveCourseId, branchId: effectiveBranchId },
+      cache
+    );
+  }
+
+  private sameObjectId(a?: Types.ObjectId, b?: Types.ObjectId): boolean {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.toString() === b.toString();
+  }
+
+  /**
+   * Bulk assign existing students to a batch/course/branch (11E). Reuses
+   * resolveEffectiveRelationships (same merge/clear/retain semantics as
+   * updateStudent) and the same organization-scoped lookups; processes each
+   * studentId independently so one missing/cross-org student or one
+   * relationship-consistency failure never affects the others. Assigning
+   * the exact relationship a student already has is a no-op save, reported
+   * as a success (idempotent). Never touches userId/profile fields/status.
+   */
+  async bulkAssignStudents(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    input: { studentIds: string[]; batchId?: string | null; courseId?: string | null; branchId?: string | null }
+  ): Promise<BulkAssignStudentsResult> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
+    if (!Array.isArray(input.studentIds) || input.studentIds.length === 0) {
+      throw new ApiError(400, 'studentIds must be a non-empty array');
+    }
+    if (input.studentIds.length > MAX_BULK_STUDENTS) {
+      throw new ApiError(400, `studentIds cannot exceed ${MAX_BULK_STUDENTS} items per request`);
+    }
+    if (input.batchId === undefined && input.courseId === undefined && input.branchId === undefined) {
+      throw new ApiError(400, 'At least one of batchId, courseId, or branchId is required');
+    }
+
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    // Dedupe — the same studentId listed twice is processed (and reported) once.
+    const uniqueStudentIds = Array.from(new Set(input.studentIds));
+    const cache: RelationshipCache = { batches: new Map(), courses: new Map(), branches: new Map() };
+    const results: BulkAssignResultRow[] = [];
+    let assigned = 0;
+    let failed = 0;
+
+    for (const studentId of uniqueStudentIds) {
+      try {
+        // Tenant-scoped: never findById(studentId) alone. A cross-org or
+        // nonexistent student is never modified — it just fails this row.
+        const student = await InstituteStudent.findOne({ _id: studentId, organizationId: organization._id });
+        if (!student) {
+          throw new ApiError(404, 'Student not found');
+        }
+
+        const resolved = await this.resolveEffectiveRelationships(organization._id, student, input, cache);
+
+        const unchanged =
+          this.sameObjectId(student.batchId, resolved.batchId) &&
+          this.sameObjectId(student.courseId, resolved.courseId) &&
+          this.sameObjectId(student.branchId, resolved.branchId);
+
+        if (!unchanged) {
+          student.batchId = resolved.batchId;
+          student.courseId = resolved.courseId;
+          student.branchId = resolved.branchId;
+          await student.save();
+        }
+
+        results.push({ studentId, status: 'assigned' });
+        assigned += 1;
+      } catch (error: any) {
+        const message = error instanceof ApiError ? error.message : 'Failed to assign this student';
+        results.push({ studentId, status: 'failed', error: message });
+        failed += 1;
+      }
+    }
+
+    return { total: uniqueStudentIds.length, assigned, failed, results };
   }
 
   /**
