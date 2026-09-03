@@ -36,6 +36,7 @@ export const InterviewScreen: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [interviewStarted, setInterviewStarted] = useState(false);
   const [avatarState, setAvatarState] = useState<AvatarState>(AvatarState.IDLE);
+  const [loadError, setLoadError] = useState<string>('');
 
   // Handle when question finishes speaking
   const handleQuestionSpoken = useCallback(() => {
@@ -68,21 +69,63 @@ export const InterviewScreen: React.FC = () => {
     }
 
     if (locationState?.interview) {
+      // Fast path: just navigated here from Start/Setup — no recovery call needed.
       const interview = locationState.interview;
       setInterviewData(interview);
-      
+
       const questionText = interview.currentQuestion?.questionText || '';
       const questionNumber = interview.currentQuestion?.questionNumber || 1;
-      
+
       console.log('Interview loaded:', interview);
       console.log('Question:', questionText);
-      
+
       setCurrentQuestion(questionText);
       setCurrentQuestionNumber(questionNumber);
       setTotalQuestions(interview.totalQuestions || 5);
       setPhase('READY'); // Wait for user to click Start
+      return;
     }
-  }, [interviewId, locationState, navigate]);
+
+    // True refresh/reopen — no navigation state. Recover persisted session
+    // state (including interviewLanguage) instead of leaving the screen
+    // stuck on the loading spinner. Read-only: no /start, no AI call, no credit.
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await interviewApi.getInterviewSession(interviewId);
+        if (cancelled) return;
+        const session = response.data;
+
+        if (session.status === 'completed' || session.status === 'evaluated') {
+          navigate(`/report/${interviewId}`, { replace: true });
+          return;
+        }
+
+        if (!session.resumable || !session.currentQuestion) {
+          setLoadError('This interview session cannot be resumed. Please start a new interview.');
+          return;
+        }
+
+        setInterviewData({
+          topic: session.topic,
+          difficulty: session.difficulty,
+          interviewLanguage: session.interviewLanguage,
+        });
+        setCurrentQuestion(session.currentQuestion.questionText);
+        setCurrentQuestionNumber(session.currentQuestionIndex + 1);
+        setTotalQuestions(session.totalQuestions);
+        setPhase('READY'); // Wait for user to click Start — no auto TTS.
+      } catch (err: any) {
+        if (cancelled) return;
+        console.error('Failed to recover interview session:', err);
+        setLoadError(err.message || 'Failed to load interview. Please return to setup and try again.');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [interviewId, locationState?.interview, navigate]);
 
   // Welcome Sequence
   const startWelcomeSequence = useCallback(async (topic: string, questionText: string) => {
@@ -264,6 +307,20 @@ export const InterviewScreen: React.FC = () => {
         return 'badge-info';
     }
   };
+
+  // Recovery failed (409/inconsistent/paused/not found) — do not restart or
+  // show a broken Start state.
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-mentor-bg dark:bg-future-bg flex flex-col items-center justify-center px-4 text-center">
+        <p className="text-base font-semibold text-mentor-text dark:text-future-text mb-1.5">Unable to load interview</p>
+        <p className="text-sm text-mentor-text-muted dark:text-future-muted mb-5 max-w-sm">{loadError}</p>
+        <button onClick={() => navigate('/setup')} className="btn btn-primary">
+          Back to Setup
+        </button>
+      </div>
+    );
+  }
 
   // Show Loading
   if (!interviewData || !currentQuestion) {

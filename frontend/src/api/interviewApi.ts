@@ -201,6 +201,37 @@ export interface GetReportResponse {
   };
 }
 
+/** Matches backend InterviewService.getInterviewSession() — recovery-only, display fields only (no answer/evaluation data). */
+export interface InterviewSession {
+  interviewId: string;
+  status: string;
+  interviewMode?: 'ai-generated' | 'uploaded';
+  topic: string;
+  difficulty: string;
+  interviewLanguage?: string;
+  totalQuestions: number;
+  currentQuestionIndex: number;
+  answeredQuestions: number;
+  resumable: boolean;
+  reportAvailable: boolean;
+  currentQuestion: {
+    questionText: string;
+    expectedPoints?: string[];
+    questionType?: string;
+  } | null;
+  progress: {
+    answered: number;
+    total: number;
+    percentage: number;
+  };
+}
+
+export interface GetInterviewSessionResponse {
+  success: boolean;
+  message: string;
+  data: InterviewSession;
+}
+
 // ============================================================================
 // API Configuration
 // ============================================================================
@@ -290,6 +321,20 @@ class InterviewApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to parse question file');
+    }
+  }
+
+  /**
+   * Recovery only — resume state (incl. persisted interviewLanguage and the
+   * current question) after a refresh/reopen with no navigation state. Reads
+   * only; makes no AI call and starts no interview.
+   */
+  async getInterviewSession(interviewId: string): Promise<GetInterviewSessionResponse> {
+    try {
+      const response = await this.api.get<GetInterviewSessionResponse>(`/interview/${interviewId}/session`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview session');
     }
   }
 
