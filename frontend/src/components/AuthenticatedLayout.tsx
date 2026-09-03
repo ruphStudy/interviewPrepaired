@@ -37,7 +37,7 @@ export default function AuthenticatedLayout({ children }: AuthenticatedLayoutPro
           onClick={closeDrawer}
         />
         <div
-          className={`absolute inset-y-0 left-0 w-[85vw] max-w-[280px] bg-white shadow-card-hover transition-transform duration-200 ease-out ${
+          className={`absolute inset-y-0 left-0 w-[85vw] max-w-[280px] bg-white dark:bg-future-sidebar shadow-card-hover dark:shadow-future-card transition-transform duration-200 ease-out ${
             drawerOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >

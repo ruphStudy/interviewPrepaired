@@ -17,9 +17,9 @@ interface AppShellProps {
  */
 export default function AppShell({ children, sidebar, header }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-mentor-bg dark:bg-gray-900 md:flex">
+    <div className="min-h-screen bg-mentor-bg dark:bg-future-bg md:flex">
       {sidebar && (
-        <div className="hidden md:block md:w-[232px] md:shrink-0 md:sticky md:top-0 md:h-screen md:border-r md:border-mentor-border md:dark:border-gray-700">
+        <div className="hidden md:block md:w-[232px] md:shrink-0 md:sticky md:top-0 md:h-screen md:border-r md:border-mentor-border md:dark:border-future-border">
           {sidebar}
         </div>
       )}

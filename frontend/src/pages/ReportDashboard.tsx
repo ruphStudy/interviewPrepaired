@@ -708,7 +708,7 @@ const ReportDashboard: React.FC = () => {
                       </div>
                     )}
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div className="stat-tile bg-white">
+                      <div className="stat-tile bg-white dark:bg-future-elevated">
                         <div className="flex items-center justify-center gap-1">
                           <Coins size={12} className="text-mentor-text-muted" />
                           <p className="stat-tile-value">{formatCostUsd(aiCost.totalCostUsd)}</p>
@@ -716,23 +716,23 @@ const ReportDashboard: React.FC = () => {
                         <p className="text-xs text-mentor-text-muted mt-0.5">≈ {formatCostInr(aiCost.totalCostUsd)}</p>
                         <p className="stat-tile-label">AI Cost</p>
                       </div>
-                      <div className="stat-tile bg-white">
+                      <div className="stat-tile bg-white dark:bg-future-elevated">
                         <p className="stat-tile-value">{aiCost.totalTokens.toLocaleString()}</p>
                         <p className="stat-tile-label">Total Tokens</p>
                       </div>
-                      <div className="stat-tile bg-white">
+                      <div className="stat-tile bg-white dark:bg-future-elevated">
                         <p className="stat-tile-value">{aiCost.callCount}</p>
                         <p className="stat-tile-label">AI Calls</p>
                       </div>
-                      <div className="stat-tile bg-white">
+                      <div className="stat-tile bg-white dark:bg-future-elevated">
                         <p className="stat-tile-value">{aiCost.inputTokens.toLocaleString()}</p>
                         <p className="stat-tile-label">Input Tokens</p>
                       </div>
-                      <div className="stat-tile bg-white">
+                      <div className="stat-tile bg-white dark:bg-future-elevated">
                         <p className="stat-tile-value">{aiCost.outputTokens.toLocaleString()}</p>
                         <p className="stat-tile-label">Output Tokens</p>
                       </div>
-                      <div className="stat-tile bg-white">
+                      <div className="stat-tile bg-white dark:bg-future-elevated">
                         <p className="stat-tile-value">{aiCost.cachedInputTokens.toLocaleString()}</p>
                         <p className="stat-tile-label">Cached Input Tokens</p>
                       </div>
@@ -874,20 +874,20 @@ const ReportDashboard: React.FC = () => {
                             </thead>
                             <tbody>
                               {question.evaluation.pointComparison.map((point, i) => (
-                                <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-mentor-surface/60'}>
-                                  <td className="px-4 py-3 text-sm text-mentor-text border-b border-mentor-border">{point.expectedPoint}</td>
-                                  <td className="px-4 py-3 text-sm border-b border-mentor-border">
+                                <tr key={i} className={i % 2 === 0 ? 'bg-white dark:bg-future-card' : 'bg-mentor-surface/60 dark:bg-future-elevated/60'}>
+                                  <td className="px-4 py-3 text-sm text-mentor-text dark:text-future-text border-b border-mentor-border dark:border-future-border">{point.expectedPoint}</td>
+                                  <td className="px-4 py-3 text-sm border-b border-mentor-border dark:border-future-border">
                                     <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
-                                      point.status === 'covered' ? 'bg-mentor-mint text-mentor-success' :
-                                      point.status === 'partial' ? 'bg-amber-50 text-mentor-warning' :
-                                      point.status === 'missing' ? 'bg-gray-100 text-mentor-text-muted' :
-                                      'bg-mentor-error/10 text-mentor-error'
+                                      point.status === 'covered' ? 'bg-mentor-mint text-mentor-success dark:bg-future-success/10 dark:text-future-success' :
+                                      point.status === 'partial' ? 'bg-amber-50 text-mentor-warning dark:bg-future-warning/10 dark:text-future-warning' :
+                                      point.status === 'missing' ? 'bg-gray-100 text-mentor-text-muted dark:bg-future-elevated dark:text-future-muted' :
+                                      'bg-mentor-error/10 text-mentor-error dark:bg-future-error/10 dark:text-future-error'
                                     }`}>
                                       {point.status}
                                     </span>
                                   </td>
-                                  <td className="px-4 py-3 text-sm text-mentor-text-secondary border-b border-mentor-border">
-                                    {point.candidateEvidence || <span className="italic text-mentor-text-muted">No evidence found</span>}
+                                  <td className="px-4 py-3 text-sm text-mentor-text-secondary dark:text-future-secondary border-b border-mentor-border dark:border-future-border">
+                                    {point.candidateEvidence || <span className="italic text-mentor-text-muted dark:text-future-muted">No evidence found</span>}
                                   </td>
                                   <td className="px-4 py-3 text-sm text-mentor-text-secondary border-b border-mentor-border">{point.improvementPoint}</td>
                                 </tr>

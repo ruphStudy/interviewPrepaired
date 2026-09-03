@@ -165,9 +165,9 @@ const DashboardPage: React.FC = () => {
           </div>
 
           {/* AI Coach / Next Action */}
-          <div className="card bg-mentor-mint lg:col-span-1 flex flex-col">
-            <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center mb-4">
-              <Sparkles size={20} className="text-primary-600" />
+          <div className="card bg-mentor-mint dark:bg-future-card lg:col-span-1 flex flex-col">
+            <div className="w-10 h-10 rounded-lg bg-white dark:bg-future-elevated flex items-center justify-center mb-4">
+              <Sparkles size={20} className="text-primary-600 dark:text-future-violet" />
             </div>
             <h3 className="section-title mb-1.5">
               {hasCompletedInterview ? 'Keep your momentum going' : 'Start your first practice interview'}

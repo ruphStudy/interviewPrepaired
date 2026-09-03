@@ -61,15 +61,17 @@ const PricingPage: React.FC = () => {
               <div
                 key={plan.name}
                 className={`relative card flex flex-col ${
-                  plan.highlighted ? 'border-primary-600 bg-mentor-soft' : ''
+                  plan.highlighted
+                    ? 'border-primary-600 bg-mentor-soft dark:border-future-violet dark:bg-future-card dark:shadow-future-glow'
+                    : ''
                 }`}
               >
                 {plan.highlighted && (
                   <span className="absolute -top-3 left-1/2 -translate-x-1/2 badge badge-info">Most Popular</span>
                 )}
 
-                <div className="w-11 h-11 rounded-lg bg-white flex items-center justify-center mb-4 shadow-soft">
-                  <Icon size={20} className="text-primary-600" />
+                <div className="w-11 h-11 rounded-lg bg-white dark:bg-future-elevated flex items-center justify-center mb-4 shadow-soft dark:shadow-none">
+                  <Icon size={20} className="text-primary-600 dark:text-future-violet" />
                 </div>
 
                 <h3 className="text-lg font-semibold text-mentor-text mb-1">{plan.name}</h3>

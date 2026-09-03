@@ -59,27 +59,27 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
         onClick={onNavigate}
         className={`flex items-center gap-3 h-11 px-3 rounded-lg text-sm transition-colors ${
           active
-            ? 'bg-mentor-soft text-primary-600 font-semibold'
-            : 'text-mentor-text-secondary hover:bg-mentor-surface hover:text-primary-700'
+            ? 'bg-mentor-soft text-primary-600 font-semibold dark:bg-future-violet/10 dark:text-future-violet dark:border dark:border-future-violet/20'
+            : 'text-mentor-text-secondary hover:bg-mentor-surface hover:text-primary-700 dark:text-slate-400 dark:hover:bg-future-elevated dark:hover:text-future-cyan'
         }`}
       >
-        <Icon size={19} />
+        <Icon size={19} className={active ? 'dark:text-future-violet' : ''} />
         <span>{label}</span>
       </Link>
     );
   };
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-white dark:bg-future-sidebar">
       {/* Brand */}
-      <div className="flex items-center gap-3 h-[72px] px-5 shrink-0 border-b border-mentor-border">
+      <div className="flex items-center gap-3 h-[72px] px-5 shrink-0 border-b border-mentor-border dark:border-future-border">
         <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="w-9 h-9 rounded-[10px] bg-primary-600 text-white flex items-center justify-center text-sm font-bold shrink-0">
+          <div className="w-9 h-9 rounded-[10px] bg-primary-600 dark:bg-gradient-to-br dark:from-future-violet dark:to-future-cyan text-white flex items-center justify-center text-sm font-bold shrink-0">
             AI
           </div>
           <div className="min-w-0 leading-tight">
-            <div className="text-sm font-bold text-mentor-text truncate">Interview</div>
-            <div className="text-sm font-bold text-mentor-text truncate -mt-0.5">Prepared Pro</div>
+            <div className="text-sm font-bold text-mentor-text dark:text-future-text truncate">Interview</div>
+            <div className="text-sm font-bold text-mentor-text dark:text-future-text truncate -mt-0.5">Prepared Pro</div>
           </div>
         </Link>
         {onClose && (
@@ -87,7 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
             type="button"
             onClick={onClose}
             aria-label="Close menu"
-            className="shrink-0 p-1.5 rounded-lg text-mentor-text-secondary hover:bg-mentor-surface hover:text-mentor-text"
+            className="shrink-0 p-1.5 rounded-lg text-mentor-text-secondary hover:bg-mentor-surface hover:text-mentor-text dark:text-future-muted dark:hover:bg-future-elevated dark:hover:text-future-text"
           >
             <X size={20} />
           </button>
@@ -98,7 +98,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
       <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-1">
         {MAIN_NAV_ITEMS.map(renderNavLink)}
 
-        <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted">
+        <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
           Account
         </p>
         {ACCOUNT_NAV_ITEMS.map(renderNavLink)}
@@ -107,14 +107,14 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
       </nav>
 
       {/* User card */}
-      <div className="shrink-0 border-t border-mentor-border px-4 py-4">
+      <div className="shrink-0 border-t border-mentor-border dark:border-future-border px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-primary-600 text-white flex items-center justify-center text-sm font-semibold shrink-0">
+          <div className="w-9 h-9 rounded-full bg-primary-600 dark:bg-gradient-to-br dark:from-future-violet dark:to-future-cyan text-white flex items-center justify-center text-sm font-semibold shrink-0">
             {user ? getInitials(user.name) : 'U'}
           </div>
           <div className="min-w-0 leading-tight">
-            <div className="text-sm font-medium text-mentor-text truncate">{user?.name}</div>
-            <div className="text-xs text-mentor-text-muted truncate">{isAdmin ? 'Admin' : 'User'}</div>
+            <div className="text-sm font-medium text-mentor-text dark:text-future-text truncate">{user?.name}</div>
+            <div className="text-xs text-mentor-text-muted dark:text-future-muted truncate">{isAdmin ? 'Admin' : 'User'}</div>
           </div>
         </div>
       </div>

@@ -268,10 +268,10 @@ export const InterviewScreen: React.FC = () => {
   // Show Loading
   if (!interviewData || !currentQuestion) {
     return (
-      <div className="min-h-screen bg-mentor-bg flex flex-col items-center justify-center px-4">
-        <Loader2 className="w-10 h-10 text-primary-600 animate-spin mb-4" />
-        <p className="text-base font-semibold text-mentor-text mb-1">Loading interview...</p>
-        <p className="text-sm text-mentor-text-muted">Preparing your interview experience</p>
+      <div className="min-h-screen bg-mentor-bg dark:bg-future-bg flex flex-col items-center justify-center px-4">
+        <Loader2 className="w-10 h-10 text-primary-600 dark:text-future-violet animate-spin mb-4" />
+        <p className="text-base font-semibold text-mentor-text dark:text-future-text mb-1">Loading interview...</p>
+        <p className="text-sm text-mentor-text-muted dark:text-future-muted">Preparing your interview experience</p>
       </div>
     );
   }
@@ -279,9 +279,9 @@ export const InterviewScreen: React.FC = () => {
   const showQuestion = phase !== 'READY' && phase !== 'WELCOME' && phase !== 'COMPLETED' && !!currentQuestion;
 
   return (
-    <div className="relative min-h-screen bg-mentor-bg flex flex-col">
+    <div className="relative min-h-screen bg-mentor-bg dark:bg-future-bg flex flex-col">
       {/* Header */}
-      <header className="w-full bg-white border-b border-mentor-border px-4 py-4 md:px-8 md:py-5 flex items-center justify-between gap-4 shrink-0">
+      <header className="w-full bg-white dark:bg-future-header border-b border-mentor-border dark:border-future-border px-4 py-4 md:px-8 md:py-5 flex items-center justify-between gap-4 shrink-0">
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1.5">
             <div className="w-5 h-5 rounded-md bg-primary-600 text-white flex items-center justify-center text-[9px] font-bold shrink-0">

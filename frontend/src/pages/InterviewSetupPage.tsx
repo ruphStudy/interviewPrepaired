@@ -301,17 +301,17 @@ export const InterviewSetupPage: React.FC = () => {
                     onClick={() => setMode('ai-generated')}
                     className={`text-left rounded-xl border p-4 transition-colors ${
                       mode === 'ai-generated'
-                        ? 'border-primary-600 bg-mentor-soft shadow-soft'
-                        : 'border-mentor-border bg-white hover:bg-mentor-surface'
+                        ? 'border-primary-600 bg-mentor-soft shadow-soft dark:border-future-violet dark:bg-future-violet/10 dark:shadow-none'
+                        : 'border-mentor-border bg-white hover:bg-mentor-surface dark:border-future-border dark:bg-future-surface dark:hover:bg-future-elevated'
                     }`}
                   >
                     <div className="flex items-center gap-2.5 mb-1.5">
-                      <Sparkles size={18} className={mode === 'ai-generated' ? 'text-primary-700' : 'text-mentor-text-secondary'} />
-                      <span className={`text-sm font-semibold ${mode === 'ai-generated' ? 'text-primary-700' : 'text-mentor-text'}`}>
+                      <Sparkles size={18} className={mode === 'ai-generated' ? 'text-primary-700 dark:text-future-violet' : 'text-mentor-text-secondary dark:text-future-muted'} />
+                      <span className={`text-sm font-semibold ${mode === 'ai-generated' ? 'text-primary-700 dark:text-future-violet' : 'text-mentor-text dark:text-future-text'}`}>
                         AI Generated
                       </span>
                     </div>
-                    <p className={`text-xs leading-snug ${mode === 'ai-generated' ? 'text-primary-700/80' : 'text-mentor-text-muted'}`}>
+                    <p className={`text-xs leading-snug ${mode === 'ai-generated' ? 'text-primary-700/80 dark:text-future-secondary' : 'text-mentor-text-muted dark:text-future-muted'}`}>
                       AI creates questions based on your role and level.
                     </p>
                   </button>
@@ -321,17 +321,17 @@ export const InterviewSetupPage: React.FC = () => {
                     onClick={() => setMode('uploaded')}
                     className={`text-left rounded-xl border p-4 transition-colors ${
                       mode === 'uploaded'
-                        ? 'border-primary-600 bg-mentor-soft shadow-soft'
-                        : 'border-mentor-border bg-white hover:bg-mentor-surface'
+                        ? 'border-primary-600 bg-mentor-soft shadow-soft dark:border-future-violet dark:bg-future-violet/10 dark:shadow-none'
+                        : 'border-mentor-border bg-white hover:bg-mentor-surface dark:border-future-border dark:bg-future-surface dark:hover:bg-future-elevated'
                     }`}
                   >
                     <div className="flex items-center gap-2.5 mb-1.5">
-                      <FileText size={18} className={mode === 'uploaded' ? 'text-primary-700' : 'text-mentor-text-secondary'} />
-                      <span className={`text-sm font-semibold ${mode === 'uploaded' ? 'text-primary-700' : 'text-mentor-text'}`}>
+                      <FileText size={18} className={mode === 'uploaded' ? 'text-primary-700 dark:text-future-violet' : 'text-mentor-text-secondary dark:text-future-muted'} />
+                      <span className={`text-sm font-semibold ${mode === 'uploaded' ? 'text-primary-700 dark:text-future-violet' : 'text-mentor-text dark:text-future-text'}`}>
                         Practice From My Questions
                       </span>
                     </div>
-                    <p className={`text-xs leading-snug ${mode === 'uploaded' ? 'text-primary-700/80' : 'text-mentor-text-muted'}`}>
+                    <p className={`text-xs leading-snug ${mode === 'uploaded' ? 'text-primary-700/80 dark:text-future-secondary' : 'text-mentor-text-muted dark:text-future-muted'}`}>
                       Upload your own question set and practice it.
                     </p>
                   </button>
@@ -568,7 +568,7 @@ export const InterviewSetupPage: React.FC = () => {
                           <p className="text-sm font-semibold text-mentor-text">Question Preview</p>
                           <span className="text-xs text-mentor-text-muted">{parsedQuestions.length} questions</span>
                         </div>
-                        <div className="max-h-48 overflow-y-auto space-y-2 bg-white rounded-lg border border-mentor-border p-3">
+                        <div className="max-h-48 overflow-y-auto space-y-2 bg-white dark:bg-future-surface rounded-lg border border-mentor-border dark:border-future-border p-3">
                           {parsedQuestions.map((q, i) => (
                             <div key={i} className="flex items-start justify-between gap-3 py-1">
                               <span className="text-sm text-mentor-text-secondary leading-snug">
