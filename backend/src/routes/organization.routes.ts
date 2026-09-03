@@ -2,12 +2,14 @@ import { Router } from 'express';
 import { body, param, query } from 'express-validator';
 import organizationController from '../controllers/OrganizationController';
 import organizationMemberController from '../controllers/OrganizationMemberController';
+import organizationInvitationController from '../controllers/OrganizationInvitationController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
 import { OrganizationType, OrganizationStatus, InstituteKind, CompanySize } from '../constants/organization';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationPermission } from '../constants/organizationPermissions';
+import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
 
 // Client-assignable roles — OWNER can never be assigned via this API; it
 // only ever mirrors Organization.ownerUserId (see ensureOwnerMembership).
@@ -192,6 +194,27 @@ const updateMemberValidation = [
 ];
 
 // ============================================================================
+// Invitation validators (8E) — MEMBERS_MANAGE-gated, same as member mutation.
+// ============================================================================
+
+const invitationIdValidation = [param('invitationId').isMongoId().withMessage('Invalid invitation ID')];
+
+const createInvitationValidation = [
+  body('email').notEmpty().withMessage('email is required').isEmail().withMessage('email must be valid').isLength({ max: 254 }),
+  body('role')
+    .notEmpty()
+    .withMessage('role is required')
+    .isIn(ASSIGNABLE_MEMBER_ROLES)
+    .withMessage(`role must be one of: ${ASSIGNABLE_MEMBER_ROLES.join(', ')}`),
+];
+
+const listInvitationsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(OrganizationInvitationStatus)).withMessage('Invalid status'),
+];
+
+// ============================================================================
 // Routes — POST/GET (list) stay owner-created-only (unchanged from 7D/8B).
 // GET/PUT :id and all member routes are RBAC-protected (8D): trusted
 // organization context is resolved from the route param only, never
@@ -265,6 +288,38 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   organizationMemberController.removeMember
+);
+
+// ---- Invitations (8E) — administrative, so MEMBERS_MANAGE for reads too (not MEMBERS_VIEW). ----
+
+router.post(
+  '/:organizationId/invitations',
+  protect,
+  ...organizationIdValidation,
+  ...createInvitationValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  organizationInvitationController.createInvitation
+);
+
+router.get(
+  '/:organizationId/invitations',
+  protect,
+  ...organizationIdValidation,
+  ...listInvitationsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  organizationInvitationController.getInvitations
+);
+
+router.delete(
+  '/:organizationId/invitations/:invitationId',
+  protect,
+  ...organizationIdValidation,
+  ...invitationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  organizationInvitationController.revokeInvitation
 );
 
 export default router;
