@@ -83,6 +83,24 @@ export class InstituteStudentController {
   });
 
   /**
+   * POST /api/v1/organizations/:organizationId/students/bulk
+   * Requires ORGANIZATION_UPDATE. Processes each row independently — one
+   * invalid row never fails the whole batch. Never creates/links User
+   * accounts or OrganizationMember rows.
+   */
+  public bulkCreateStudents = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { students } = req.body;
+    const result = await instituteStudentService.bulkCreateStudents(context.organizationId, context.role, students);
+
+    res.status(200).json(successResponse('Bulk student import processed', result));
+  });
+
+  /**
    * PUT /api/v1/organizations/:organizationId/students/:studentId
    * Requires ORGANIZATION_UPDATE. PATCH-like merge; status is never accepted here.
    */

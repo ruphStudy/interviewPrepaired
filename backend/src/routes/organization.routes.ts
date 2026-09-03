@@ -603,6 +603,46 @@ const updateStudentValidation = [
   }),
 ];
 
+// ============================================================================
+// Bulk student import validators (11D) — a lightweight, type/format-only
+// outer layer; the real relationship resolution, normalization, and
+// duplicate handling all happen service-side per row (reused from the
+// single-create path), so this deliberately doesn't re-derive that logic.
+// ============================================================================
+
+const BULK_STUDENTS_MAX = 200;
+
+const bulkCreateStudentsValidation = [
+  body('students')
+    .isArray({ min: 1, max: BULK_STUDENTS_MAX })
+    .withMessage(`students must be an array of 1 to ${BULK_STUDENTS_MAX} items`),
+  body('students.*.organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('students.*.status').not().exists().withMessage('status cannot be set'),
+  body('students.*.userId').not().exists().withMessage('userId cannot be set via bulk import'),
+  body('students.*.firstName')
+    .exists({ checkFalsy: true })
+    .withMessage('firstName is required')
+    .isString()
+    .withMessage('firstName must be a string')
+    .isLength({ max: 100 })
+    .withMessage('firstName must be at most 100 characters'),
+  body('students.*.lastName').optional().isString().isLength({ max: 100 }).withMessage('lastName must be at most 100 characters'),
+  body('students.*.email').optional().isEmail().withMessage('email must be a valid email').isLength({ max: 254 }),
+  body('students.*.phone').optional().isString().isLength({ max: 30 }).withMessage('phone must be at most 30 characters'),
+  body('students.*.enrollmentNumber')
+    .optional()
+    .isString()
+    .isLength({ max: 100 })
+    .withMessage('enrollmentNumber must be at most 100 characters'),
+  body('students.*.graduationYear')
+    .optional()
+    .isInt({ min: 1900, max: CURRENT_YEAR + 10 })
+    .withMessage(`graduationYear must be between 1900 and ${CURRENT_YEAR + 10}`),
+  body('students.*.batchId').optional().isMongoId().withMessage('batchId must be a valid ID'),
+  body('students.*.courseId').optional().isMongoId().withMessage('courseId must be a valid ID'),
+  body('students.*.branchId').optional().isMongoId().withMessage('branchId must be a valid ID'),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -943,6 +983,16 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteStudentController.createStudent
+);
+
+router.post(
+  '/:organizationId/students/bulk',
+  protect,
+  ...organizationIdValidation,
+  ...bulkCreateStudentsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.bulkCreateStudents
 );
 
 router.get(

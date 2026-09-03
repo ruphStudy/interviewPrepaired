@@ -53,6 +53,29 @@ interface StudentFields {
   branchId?: string | null;
 }
 
+/** Per-request memoization for bulkCreateStudents (11D) — many rows commonly share the same batch/course/branch, so this avoids re-fetching the same referenced document on every row. Unused (undefined) by the single-row create/update paths, which are unaffected. */
+interface RelationshipCache {
+  batches: Map<string, BatchRef>;
+  courses: Map<string, { _id: Types.ObjectId }>;
+  branches: Map<string, { _id: Types.ObjectId }>;
+}
+
+const MAX_BULK_STUDENTS = 200;
+
+interface BulkCreateResultRow {
+  index: number;
+  status: 'created' | 'failed';
+  studentId?: string;
+  error?: string;
+}
+
+interface BulkCreateStudentsResult {
+  total: number;
+  created: number;
+  failed: number;
+  results: BulkCreateResultRow[];
+}
+
 /**
  * Institute student management (11B). Authorization mirrors
  * InstituteBatchService: the `requireOrganizationPermission` middleware
@@ -137,11 +160,91 @@ export class InstituteStudentService {
     this.assertIsInstitute(organization);
     this.assertOrganizationMutable(organization);
 
-    const resolved = await this.resolveRelationships(organization._id, {
-      batchId: fields.batchId ?? undefined,
-      courseId: fields.courseId ?? undefined,
-      branchId: fields.branchId ?? undefined,
-    });
+    return this.createStudentRow(organization, fields);
+  }
+
+  /**
+   * Bulk import (11D) — reuses createStudentRow (single-row validation,
+   * relationship resolution, normalization, and 11000 handling) for every
+   * row, so this adds no parallel logic. The organization is loaded and
+   * validated exactly once; batch/course/branch lookups are memoized across
+   * rows via a per-request cache. Rows are processed strictly sequentially:
+   * this makes "first occurrence wins, later duplicates in the same request
+   * conflict" well-defined, and keeps each row's failure fully isolated from
+   * every other row (one bad row never aborts the batch).
+   */
+  async bulkCreateStudents(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    rows: StudentFields[]
+  ): Promise<BulkCreateStudentsResult> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new ApiError(400, 'students must be a non-empty array');
+    }
+    if (rows.length > MAX_BULK_STUDENTS) {
+      throw new ApiError(400, `students cannot exceed ${MAX_BULK_STUDENTS} rows per request`);
+    }
+
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    const cache: RelationshipCache = { batches: new Map(), courses: new Map(), branches: new Map() };
+    // Tracks enrollment numbers that have ALREADY been successfully created
+    // in this request — populated only after a row succeeds, so a row that
+    // fails for an unrelated reason never blocks a later row from reusing
+    // the same enrollment number.
+    const seenEnrollmentNumbers = new Set<string>();
+
+    const results: BulkCreateResultRow[] = [];
+    let created = 0;
+    let failed = 0;
+
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index] || {};
+      const enrollmentNumber = row.enrollmentNumber?.trim();
+
+      try {
+        if (enrollmentNumber && seenEnrollmentNumbers.has(enrollmentNumber)) {
+          throw new ApiError(409, 'Duplicate enrollmentNumber within this request');
+        }
+
+        const student = await this.createStudentRow(organization, row, cache);
+        if (enrollmentNumber) seenEnrollmentNumbers.add(enrollmentNumber);
+        results.push({ index, status: 'created', studentId: student.id as string });
+        created += 1;
+      } catch (error: any) {
+        const message = error instanceof ApiError ? error.message : 'Failed to create this row';
+        results.push({ index, status: 'failed', error: message });
+        failed += 1;
+      }
+    }
+
+    return { total: rows.length, created, failed, results };
+  }
+
+  /** Single-row creation shared by createStudent and bulkCreateStudents — caller has already loaded/validated the organization (institute type, not archived). */
+  private async createStudentRow(
+    organization: IOrganization,
+    fields: StudentFields,
+    cache?: RelationshipCache
+  ): Promise<Record<string, unknown>> {
+    const firstName = fields.firstName?.trim();
+    if (!firstName) {
+      throw new ApiError(400, 'firstName is required');
+    }
+
+    const resolved = await this.resolveRelationships(
+      organization._id,
+      {
+        batchId: fields.batchId ?? undefined,
+        courseId: fields.courseId ?? undefined,
+        branchId: fields.branchId ?? undefined,
+      },
+      cache
+    );
 
     try {
       const student = await InstituteStudent.create({
@@ -381,11 +484,15 @@ export class InstituteStudentService {
    * otherwise). Without a batchId, courseId/branchId are independent,
    * individually organization-scoped references.
    */
-  private async resolveRelationships(organizationId: unknown, input: RelationshipInput): Promise<ResolvedRelationships> {
+  private async resolveRelationships(
+    organizationId: unknown,
+    input: RelationshipInput,
+    cache?: RelationshipCache
+  ): Promise<ResolvedRelationships> {
     if (!input.batchId) {
       const [course, branch] = await Promise.all([
-        input.courseId ? this.loadCourseInOrganization(organizationId, input.courseId) : undefined,
-        input.branchId ? this.loadBranchInOrganization(organizationId, input.branchId) : undefined,
+        input.courseId ? this.loadCourseCached(organizationId, input.courseId, cache) : undefined,
+        input.branchId ? this.loadBranchCached(organizationId, input.branchId, cache) : undefined,
       ]);
       return {
         courseId: course?._id as Types.ObjectId | undefined,
@@ -393,7 +500,7 @@ export class InstituteStudentService {
       };
     }
 
-    const batch = await this.loadBatchInOrganization(organizationId, input.batchId);
+    const batch = await this.loadBatchCached(organizationId, input.batchId, cache);
 
     if (input.courseId && input.courseId !== batch.courseId.toString()) {
       throw new ApiError(400, "courseId does not match the selected batch's course");
@@ -406,11 +513,35 @@ export class InstituteStudentService {
     if (!batch.branchId && input.branchId) {
       // The batch itself isn't branch-scoped — an independently supplied
       // branch is allowed, still validated against the same organization.
-      const branch = await this.loadBranchInOrganization(organizationId, input.branchId);
+      const branch = await this.loadBranchCached(organizationId, input.branchId, cache);
       branchId = branch._id as Types.ObjectId;
     }
 
     return { batchId: batch._id, courseId: batch.courseId, branchId };
+  }
+
+  private async loadBatchCached(organizationId: unknown, batchId: string, cache?: RelationshipCache): Promise<BatchRef> {
+    const cached = cache?.batches.get(batchId);
+    if (cached) return cached;
+    const batch = await this.loadBatchInOrganization(organizationId, batchId);
+    cache?.batches.set(batchId, batch);
+    return batch;
+  }
+
+  private async loadCourseCached(organizationId: unknown, courseId: string, cache?: RelationshipCache) {
+    const cached = cache?.courses.get(courseId);
+    if (cached) return cached;
+    const course = await this.loadCourseInOrganization(organizationId, courseId);
+    cache?.courses.set(courseId, course);
+    return course;
+  }
+
+  private async loadBranchCached(organizationId: unknown, branchId: string, cache?: RelationshipCache) {
+    const cached = cache?.branches.get(branchId);
+    if (cached) return cached;
+    const branch = await this.loadBranchInOrganization(organizationId, branchId);
+    cache?.branches.set(branchId, branch);
+    return branch;
   }
 
   /** A supplied batchId must belong to the SAME organization — a cross-org or nonexistent batch both return 404, never a distinguishable leak. */
