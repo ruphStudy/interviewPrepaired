@@ -17,6 +17,41 @@ interface DashboardAccessContext {
   membershipId: string;
 }
 
+interface UsageAggregate {
+  tracked: number;
+  callCount: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputCostUsd: number;
+  cachedInputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+  pricingCompleteCallCount: number;
+}
+
+interface UsageSummary {
+  interviews: {
+    total: number;
+    tracked: number;
+    untracked: number;
+    trackingComplete: boolean;
+  };
+  ai: {
+    callCount: number;
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    inputCostUsd: number;
+    cachedInputCostUsd: number;
+    outputCostUsd: number;
+    totalCostUsd: number;
+    pricingComplete: boolean;
+  };
+}
+
 interface MemberSummary {
   total: number;
   active: number;
@@ -103,6 +138,71 @@ export class OrganizationDashboardService {
     };
   }
 
+  /**
+   * Permission-aware AI usage/cost aggregate (9D). Returns null outright —
+   * zero Interview aggregation queries — when the caller lacks
+   * ANALYTICS_VIEW (MEMBER role). Sums only the persisted `aiUsage.totals`
+   * on organization-scoped interviews that actually have an `aiUsage`
+   * subdocument — an interview predating usage tracking is "untracked", not
+   * "tracked with zero cost", so it's excluded from these sums entirely
+   * (the caller combines this with the already-known total interview count
+   * to report the untracked count, avoiding a duplicate total query here).
+   */
+  private async buildUsageAggregate(
+    orgObjectId: Types.ObjectId,
+    context: DashboardAccessContext
+  ): Promise<UsageAggregate | null> {
+    if (!hasOrganizationPermission(context.role, OrganizationPermission.ANALYTICS_VIEW)) {
+      return null;
+    }
+
+    const [result] = await Interview.aggregate<{
+      tracked: number;
+      callCount: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      inputCostUsd: number;
+      cachedInputCostUsd: number;
+      outputCostUsd: number;
+      totalCostUsd: number;
+      pricingCompleteCallCount: number;
+    }>([
+      { $match: { organizationId: orgObjectId, aiUsage: { $exists: true } } },
+      {
+        $group: {
+          _id: null,
+          tracked: { $sum: 1 },
+          callCount: { $sum: { $ifNull: ['$aiUsage.totals.callCount', 0] } },
+          inputTokens: { $sum: { $ifNull: ['$aiUsage.totals.inputTokens', 0] } },
+          cachedInputTokens: { $sum: { $ifNull: ['$aiUsage.totals.cachedInputTokens', 0] } },
+          outputTokens: { $sum: { $ifNull: ['$aiUsage.totals.outputTokens', 0] } },
+          totalTokens: { $sum: { $ifNull: ['$aiUsage.totals.totalTokens', 0] } },
+          inputCostUsd: { $sum: { $ifNull: ['$aiUsage.totals.inputCostUsd', 0] } },
+          cachedInputCostUsd: { $sum: { $ifNull: ['$aiUsage.totals.cachedInputCostUsd', 0] } },
+          outputCostUsd: { $sum: { $ifNull: ['$aiUsage.totals.outputCostUsd', 0] } },
+          totalCostUsd: { $sum: { $ifNull: ['$aiUsage.totals.totalCostUsd', 0] } },
+          pricingCompleteCallCount: { $sum: { $ifNull: ['$aiUsage.totals.pricingCompleteCallCount', 0] } },
+        },
+      },
+    ]);
+
+    return {
+      tracked: result?.tracked ?? 0,
+      callCount: result?.callCount ?? 0,
+      inputTokens: result?.inputTokens ?? 0,
+      cachedInputTokens: result?.cachedInputTokens ?? 0,
+      outputTokens: result?.outputTokens ?? 0,
+      totalTokens: result?.totalTokens ?? 0,
+      inputCostUsd: result?.inputCostUsd ?? 0,
+      cachedInputCostUsd: result?.cachedInputCostUsd ?? 0,
+      outputCostUsd: result?.outputCostUsd ?? 0,
+      totalCostUsd: result?.totalCostUsd ?? 0,
+      pricingCompleteCallCount: result?.pricingCompleteCallCount ?? 0,
+    };
+  }
+
   async getDashboard(organizationId: string, context: DashboardAccessContext): Promise<Record<string, unknown>> {
     const organization = await Organization.findById(organizationId).lean();
     if (!organization) {
@@ -119,6 +219,7 @@ export class OrganizationDashboardService {
       recentInterviews,
       recentQuestionSets,
       memberSummary,
+      usageAggregate,
     ] = await Promise.all([
       Interview.countDocuments({ organizationId: orgObjectId }),
       Interview.countDocuments({ organizationId: orgObjectId, status: InterviewStatus.IN_PROGRESS }),
@@ -138,7 +239,44 @@ export class OrganizationDashboardService {
         .limit(RECENT_LIMIT)
         .lean(),
       this.buildMemberSummary(orgObjectId, context),
+      this.buildUsageAggregate(orgObjectId, context),
     ]);
+
+    // Assembled here (not inside buildUsageAggregate) so `interviews.total`
+    // reuses the count already produced above instead of issuing a second,
+    // duplicate Interview.countDocuments({ organizationId }) query.
+    const usageSummary: UsageSummary | null = usageAggregate
+      ? (() => {
+          const untracked = Math.max(0, totalInterviews - usageAggregate.tracked);
+          return {
+            interviews: {
+              total: totalInterviews,
+              tracked: usageAggregate.tracked,
+              untracked,
+              trackingComplete: untracked === 0,
+            },
+            ai: {
+              callCount: usageAggregate.callCount,
+              inputTokens: usageAggregate.inputTokens,
+              cachedInputTokens: usageAggregate.cachedInputTokens,
+              outputTokens: usageAggregate.outputTokens,
+              totalTokens: usageAggregate.totalTokens,
+              inputCostUsd: usageAggregate.inputCostUsd,
+              cachedInputCostUsd: usageAggregate.cachedInputCostUsd,
+              outputCostUsd: usageAggregate.outputCostUsd,
+              totalCostUsd: usageAggregate.totalCostUsd,
+              // Matches the existing buildAICostReport/getInterviewUsage semantic
+              // (callCount === pricingCompleteCallCount) for callCount > 0, with
+              // the explicit zero-calls special case: no calls means no unpriced
+              // calls exist, so pricing is trivially complete.
+              pricingComplete:
+                usageAggregate.callCount === 0
+                  ? true
+                  : usageAggregate.callCount === usageAggregate.pricingCompleteCallCount,
+            },
+          };
+        })()
+      : null;
 
     return {
       organization: {
@@ -166,6 +304,7 @@ export class OrganizationDashboardService {
         total: totalQuestionSets,
       },
       memberSummary,
+      usageSummary,
       recentActivity: {
         recentInterviews: recentInterviews.map((interview) => ({
           id: interview._id.toString(),
