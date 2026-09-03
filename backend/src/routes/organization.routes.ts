@@ -7,6 +7,7 @@ import organizationDashboardController from '../controllers/OrganizationDashboar
 import instituteBranchController from '../controllers/InstituteBranchController';
 import instituteCourseController from '../controllers/InstituteCourseController';
 import instituteOverviewController from '../controllers/InstituteOverviewController';
+import instituteBatchController from '../controllers/InstituteBatchController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -23,6 +24,7 @@ import { OrganizationPermission } from '../constants/organizationPermissions';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
 import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
+import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 
 // Client-assignable roles — OWNER can never be assigned via this API; it
@@ -434,6 +436,81 @@ const updateCourseValidation = [
   }),
 ];
 
+// ============================================================================
+// Institute batch validators (11A) — institute-only sub-resource, mirrors
+// the course validators. `status` is never body-mutable (DELETE is the only
+// status transition); `branchId` accepts `null` to clear the association.
+// courseId/branchId relationship consistency (same-org, and branch must
+// match a branch-scoped course) is enforced service-side, not here.
+// ============================================================================
+
+const batchIdValidation = [param('batchId').isMongoId().withMessage('Invalid batch ID')];
+
+const listBatchesValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(InstituteBatchStatus)).withMessage('Invalid status'),
+  query('courseId').optional().isMongoId().withMessage('Invalid course ID'),
+  query('branchId').optional().isMongoId().withMessage('Invalid branch ID'),
+];
+
+const BATCH_FIELD_KEYS = ['name', 'courseId', 'branchId', 'code', 'academicYear', 'startDate', 'endDate', 'capacity'];
+
+const rejectBatchImmutableFieldsValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use DELETE to deactivate a batch'),
+];
+
+const batchOptionalFieldValidators = [
+  body('branchId').optional({ nullable: true }).isMongoId().withMessage('branchId must be a valid ID'),
+  body('code').optional().isString().withMessage('code must be a string').trim().isLength({ max: 50 }).withMessage('code must be at most 50 characters'),
+  body('academicYear').optional().isString().withMessage('academicYear must be a string').trim().isLength({ max: 20 }).withMessage('academicYear must be at most 20 characters'),
+  body('startDate').optional({ nullable: true }).isISO8601().withMessage('startDate must be a valid date').toDate(),
+  body('endDate').optional({ nullable: true }).isISO8601().withMessage('endDate must be a valid date').toDate(),
+  body('capacity').optional().isInt({ min: 1 }).withMessage('capacity must be a positive integer'),
+];
+
+const createBatchValidation = [
+  ...rejectBatchImmutableFieldsValidation,
+  body('name')
+    .notEmpty()
+    .withMessage('name is required')
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  body('courseId').notEmpty().withMessage('courseId is required').isMongoId().withMessage('courseId must be a valid ID'),
+  ...batchOptionalFieldValidators,
+];
+
+const updateBatchValidation = [
+  ...rejectBatchImmutableFieldsValidation,
+  body('name')
+    .optional()
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  body('courseId').optional().isMongoId().withMessage('courseId must be a valid ID'),
+  ...batchOptionalFieldValidators,
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !BATCH_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown batch field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -699,6 +776,59 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteCourseController.removeCourse
+);
+
+// ---- Institute Batches (11A) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
+
+router.get(
+  '/:organizationId/batches',
+  protect,
+  ...organizationIdValidation,
+  ...listBatchesValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteBatchController.getBatches
+);
+
+router.post(
+  '/:organizationId/batches',
+  protect,
+  ...organizationIdValidation,
+  ...createBatchValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteBatchController.createBatch
+);
+
+router.get(
+  '/:organizationId/batches/:batchId',
+  protect,
+  ...organizationIdValidation,
+  ...batchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteBatchController.getBatch
+);
+
+router.put(
+  '/:organizationId/batches/:batchId',
+  protect,
+  ...organizationIdValidation,
+  ...batchIdValidation,
+  ...updateBatchValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteBatchController.updateBatch
+);
+
+router.delete(
+  '/:organizationId/batches/:batchId',
+  protect,
+  ...organizationIdValidation,
+  ...batchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteBatchController.removeBatch
 );
 
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
