@@ -19,6 +19,7 @@ interface ListInvitationsParams {
   page: number;
   limit: number;
   status?: OrganizationInvitationStatus;
+  role?: OrganizationMemberRole;
 }
 
 /**
@@ -107,8 +108,19 @@ export class OrganizationInvitationService {
     this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_MANAGE);
     await this.getOrganizationById(organizationId);
 
-    const filter: Record<string, unknown> = { organizationId: new Types.ObjectId(organizationId) };
+    const orgObjectId = new Types.ObjectId(organizationId);
+
+    // Lazily settle stale PENDING rows before listing/counting — one bulk
+    // update rather than a save-per-row. History (list on an archived org)
+    // stays allowed; this is a read-path correction, not a mutation gate.
+    await OrganizationInvitation.updateMany(
+      { organizationId: orgObjectId, status: OrganizationInvitationStatus.PENDING, expiresAt: { $lte: new Date() } },
+      { $set: { status: OrganizationInvitationStatus.EXPIRED } }
+    );
+
+    const filter: Record<string, unknown> = { organizationId: orgObjectId };
     if (params.status) filter.status = params.status;
+    if (params.role) filter.role = params.role;
     const skip = (params.page - 1) * params.limit;
 
     const [invitations, total] = await Promise.all([
@@ -222,14 +234,32 @@ export class OrganizationInvitationService {
 
     // Only the first concurrent winner flips PENDING -> ACCEPTED; a loser
     // re-reads the now-accepted row rather than erroring or double-writing.
-    const claimed = await OrganizationInvitation.findOneAndUpdate(
+    await OrganizationInvitation.findOneAndUpdate(
       { _id: invitation._id, status: OrganizationInvitationStatus.PENDING },
-      { $set: { status: OrganizationInvitationStatus.ACCEPTED, acceptedByUserId: userObjectId, acceptedAt: new Date() } },
-      { new: true }
+      { $set: { status: OrganizationInvitationStatus.ACCEPTED, acceptedByUserId: userObjectId, acceptedAt: new Date() } }
     );
-    const finalInvitation = claimed ?? (await OrganizationInvitation.findById(invitation._id));
 
-    return this.toDetail(finalInvitation!);
+    // Re-read the final membership rather than trusting the branch taken
+    // above — a concurrent request may have created/reactivated it instead.
+    const finalMembership = await OrganizationMember.findOne({ organizationId: organization._id, userId: userObjectId });
+    if (!finalMembership) {
+      throw new ApiError(500, 'Membership was not created');
+    }
+
+    return {
+      organization: {
+        id: organization._id.toString(),
+        name: organization.name,
+        slug: organization.slug,
+        type: organization.type,
+      },
+      membership: {
+        id: finalMembership._id.toString(),
+        role: finalMembership.role,
+        status: finalMembership.status,
+        joinedAt: finalMembership.joinedAt,
+      },
+    };
   }
 
   /** Org-scoped lookup only (`{_id, organizationId}`), never a bare `findById` — never physically deletes. */
@@ -240,9 +270,12 @@ export class OrganizationInvitationService {
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_MANAGE);
 
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertOrganizationMutable(organization);
+
     const invitation = await OrganizationInvitation.findOne({
       _id: invitationId,
-      organizationId: new Types.ObjectId(organizationId),
+      organizationId: organization._id,
     });
     if (!invitation) {
       throw new ApiError(404, 'Invitation not found');

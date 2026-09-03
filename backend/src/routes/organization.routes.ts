@@ -212,6 +212,8 @@ const listInvitationsValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
   query('status').optional().isIn(Object.values(OrganizationInvitationStatus)).withMessage('Invalid status'),
+  // Owner is deliberately excluded — invitations can never target the owner role.
+  query('role').optional().isIn(ASSIGNABLE_MEMBER_ROLES).withMessage(`role must be one of: ${ASSIGNABLE_MEMBER_ROLES.join(', ')}`),
 ];
 
 // ============================================================================

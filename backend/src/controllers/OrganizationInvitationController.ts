@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { OrganizationAuthRequest } from '../middleware/organizationAccess';
 import { organizationInvitationService } from '../services/OrganizationInvitationService';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
+import { OrganizationMemberRole } from '../constants/organizationMember';
 import { ApiError } from '../utils/ApiError';
 import { successResponse, createdResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
@@ -45,11 +46,13 @@ export class OrganizationInvitationController {
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
     const status = req.query.status as OrganizationInvitationStatus | undefined;
+    const role = req.query.role as OrganizationMemberRole | undefined;
 
     const result = await organizationInvitationService.getInvitations(context.organizationId, context.role, {
       page,
       limit,
       status,
+      role,
     });
 
     res.status(200).json(successResponse('Invitations retrieved successfully', result));
@@ -98,9 +101,9 @@ export class OrganizationInvitationController {
     }
 
     const { token } = req.params;
-    const invitation = await organizationInvitationService.acceptInvitation(token, userId, userEmail);
+    const result = await organizationInvitationService.acceptInvitation(token, userId, userEmail);
 
-    res.status(200).json(successResponse('Invitation accepted successfully', { invitation }));
+    res.status(200).json(successResponse('Invitation accepted successfully', result));
   });
 }
 
