@@ -4,6 +4,7 @@ import organizationController from '../controllers/OrganizationController';
 import organizationMemberController from '../controllers/OrganizationMemberController';
 import organizationInvitationController from '../controllers/OrganizationInvitationController';
 import organizationDashboardController from '../controllers/OrganizationDashboardController';
+import instituteBranchController from '../controllers/InstituteBranchController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -18,6 +19,7 @@ import {
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationPermission } from '../constants/organizationPermissions';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
+import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 
 // Client-assignable roles — OWNER can never be assigned via this API; it
@@ -276,6 +278,90 @@ const updateInstituteProfileValidation = [
   }),
 ];
 
+// ============================================================================
+// Institute branch validators (10B) — institute-only sub-resource. `status`
+// is never a body-mutable field (rejected explicitly on create/update) —
+// DELETE is the only status transition (soft deactivate); `status` remains a
+// valid list-query filter.
+// ============================================================================
+
+const branchIdValidation = [param('branchId').isMongoId().withMessage('Invalid branch ID')];
+
+const listBranchesValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(InstituteBranchStatus)).withMessage('Invalid status'),
+];
+
+const BRANCH_FIELD_KEYS = [
+  'name',
+  'code',
+  'addressLine1',
+  'addressLine2',
+  'city',
+  'state',
+  'country',
+  'postalCode',
+  'contactEmail',
+  'contactPhone',
+];
+
+const rejectBranchImmutableFieldsValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use DELETE to deactivate a branch'),
+];
+
+const branchOptionalFieldValidators = [
+  body('code').optional().isString().withMessage('code must be a string').trim().isLength({ max: 50 }).withMessage('code must be at most 50 characters'),
+  body('addressLine1').optional().isString().trim().isLength({ max: 200 }).withMessage('addressLine1 must be at most 200 characters'),
+  body('addressLine2').optional().isString().trim().isLength({ max: 200 }).withMessage('addressLine2 must be at most 200 characters'),
+  body('city').optional().isString().trim().isLength({ max: 100 }).withMessage('city must be at most 100 characters'),
+  body('state').optional().isString().trim().isLength({ max: 100 }).withMessage('state must be at most 100 characters'),
+  body('country').optional().isString().trim().isLength({ max: 100 }).withMessage('country must be at most 100 characters'),
+  body('postalCode').optional().isString().trim().isLength({ max: 20 }).withMessage('postalCode must be at most 20 characters'),
+  body('contactEmail').optional().isEmail().withMessage('contactEmail must be a valid email').isLength({ max: 254 }),
+  body('contactPhone').optional().isString().trim().isLength({ max: 30 }).withMessage('contactPhone must be at most 30 characters'),
+];
+
+const createBranchValidation = [
+  ...rejectBranchImmutableFieldsValidation,
+  body('name')
+    .notEmpty()
+    .withMessage('name is required')
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  ...branchOptionalFieldValidators,
+];
+
+const updateBranchValidation = [
+  ...rejectBranchImmutableFieldsValidation,
+  body('name')
+    .optional()
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  ...branchOptionalFieldValidators,
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !BRANCH_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown branch field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -435,6 +521,59 @@ router.put(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   organizationController.updateInstituteProfile
+);
+
+// ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
+
+router.get(
+  '/:organizationId/branches',
+  protect,
+  ...organizationIdValidation,
+  ...listBranchesValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteBranchController.getBranches
+);
+
+router.post(
+  '/:organizationId/branches',
+  protect,
+  ...organizationIdValidation,
+  ...createBranchValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteBranchController.createBranch
+);
+
+router.get(
+  '/:organizationId/branches/:branchId',
+  protect,
+  ...organizationIdValidation,
+  ...branchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteBranchController.getBranch
+);
+
+router.put(
+  '/:organizationId/branches/:branchId',
+  protect,
+  ...organizationIdValidation,
+  ...branchIdValidation,
+  ...updateBranchValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteBranchController.updateBranch
+);
+
+router.delete(
+  '/:organizationId/branches/:branchId',
+  protect,
+  ...organizationIdValidation,
+  ...branchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteBranchController.removeBranch
 );
 
 // ---- Members (8B API, 8D RBAC) ----
