@@ -81,7 +81,7 @@ export class InstituteInterviewTemplateService {
     ]);
 
     const questionSetIds = templates.map((t) => t.questionSetId);
-    const questionSets = await QuestionSet.find({ _id: { $in: questionSetIds } })
+    const questionSets = await QuestionSet.find({ _id: { $in: questionSetIds }, organizationId: organization._id })
       .select('_id name questions')
       .lean();
     const questionSetById = new Map(questionSets.map((qs) => [qs._id.toString(), qs]));
@@ -107,7 +107,9 @@ export class InstituteInterviewTemplateService {
       throw new ApiError(404, 'Template not found');
     }
 
-    const questionSet = await QuestionSet.findById(template.questionSetId).select('_id name questions').lean();
+    const questionSet = await QuestionSet.findOne({ _id: template.questionSetId, organizationId: organization._id })
+      .select('_id name questions')
+      .lean();
     return this.toDetail(template, questionSet ?? undefined);
   }
 
@@ -209,7 +211,9 @@ export class InstituteInterviewTemplateService {
     await template.save();
 
     if (!questionSet) {
-      questionSet = await QuestionSet.findById(template.questionSetId).select('_id name questions').lean();
+      questionSet = await QuestionSet.findOne({ _id: template.questionSetId, organizationId: organization._id })
+        .select('_id name questions')
+        .lean();
     }
 
     return this.toDetail(template.toObject(), questionSet ?? undefined);
