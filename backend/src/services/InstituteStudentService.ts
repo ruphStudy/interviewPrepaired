@@ -312,7 +312,19 @@ export class InstituteStudentService {
     }
 
     student.userId = targetUser._id;
-    await student.save();
+    try {
+      await student.save();
+    } catch (error: any) {
+      // The findOne check above is a race: two concurrent linkUser calls for
+      // the same target user can both pass it before either saves. The
+      // unique {organizationId,userId} index (partial, only when userId is
+      // set) is the actual source of truth — a duplicate-key error here
+      // means someone else linked this user first.
+      if (error?.code === 11000) {
+        throw new ApiError(409, 'This user account is already linked to a different student in this organization');
+      }
+      throw error;
+    }
 
     return this.toDetail(student.toObject());
   }
