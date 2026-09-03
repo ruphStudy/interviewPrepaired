@@ -8,6 +8,7 @@ import instituteBranchController from '../controllers/InstituteBranchController'
 import instituteCourseController from '../controllers/InstituteCourseController';
 import instituteOverviewController from '../controllers/InstituteOverviewController';
 import instituteBatchController from '../controllers/InstituteBatchController';
+import instituteStudentController from '../controllers/InstituteStudentController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -25,6 +26,7 @@ import { OrganizationInvitationStatus } from '../constants/organizationInvitatio
 import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
+import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 
 // Client-assignable roles — OWNER can never be assigned via this API; it
@@ -511,6 +513,96 @@ const updateBatchValidation = [
   }),
 ];
 
+// ============================================================================
+// Institute student validators (11B) — institute-only sub-resource, mirrors
+// the batch validators. `status` is never body-mutable (DELETE is the only
+// status transition); `batchId`/`courseId`/`branchId` each accept `null` to
+// clear. Cross-reference consistency (same-org, and batch-derived
+// course/branch matching) is enforced service-side, not here.
+// ============================================================================
+
+const studentIdValidation = [param('studentId').isMongoId().withMessage('Invalid student ID')];
+
+const listStudentsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(InstituteStudentStatus)).withMessage('Invalid status'),
+  query('batchId').optional().isMongoId().withMessage('Invalid batch ID'),
+  query('courseId').optional().isMongoId().withMessage('Invalid course ID'),
+  query('branchId').optional().isMongoId().withMessage('Invalid branch ID'),
+  query('search').optional().isString().trim().isLength({ max: 150 }).withMessage('search must be at most 150 characters'),
+];
+
+const STUDENT_FIELD_KEYS = [
+  'firstName',
+  'lastName',
+  'email',
+  'phone',
+  'enrollmentNumber',
+  'graduationYear',
+  'batchId',
+  'courseId',
+  'branchId',
+];
+
+const rejectStudentImmutableFieldsValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use DELETE to deactivate a student'),
+];
+
+const studentOptionalFieldValidators = [
+  body('lastName').optional().isString().trim().isLength({ max: 100 }).withMessage('lastName must be at most 100 characters'),
+  body('email').optional().isEmail().withMessage('email must be a valid email').isLength({ max: 254 }),
+  body('phone').optional().isString().trim().isLength({ max: 30 }).withMessage('phone must be at most 30 characters'),
+  body('enrollmentNumber').optional().isString().withMessage('enrollmentNumber must be a string').trim().isLength({ max: 100 }).withMessage('enrollmentNumber must be at most 100 characters'),
+  body('graduationYear')
+    .optional()
+    .isInt({ min: 1900, max: CURRENT_YEAR + 10 })
+    .withMessage(`graduationYear must be between 1900 and ${CURRENT_YEAR + 10}`),
+  body('batchId').optional({ nullable: true }).isMongoId().withMessage('batchId must be a valid ID'),
+  body('courseId').optional({ nullable: true }).isMongoId().withMessage('courseId must be a valid ID'),
+  body('branchId').optional({ nullable: true }).isMongoId().withMessage('branchId must be a valid ID'),
+];
+
+const createStudentValidation = [
+  ...rejectStudentImmutableFieldsValidation,
+  body('firstName')
+    .notEmpty()
+    .withMessage('firstName is required')
+    .isString()
+    .withMessage('firstName must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('firstName must be between 1 and 100 characters'),
+  ...studentOptionalFieldValidators,
+];
+
+const updateStudentValidation = [
+  ...rejectStudentImmutableFieldsValidation,
+  body('firstName')
+    .optional()
+    .isString()
+    .withMessage('firstName must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('firstName must be between 1 and 100 characters'),
+  ...studentOptionalFieldValidators,
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !STUDENT_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown student field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -829,6 +921,59 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteBatchController.removeBatch
+);
+
+// ---- Institute Students (11B) — institute-only (400 for a company org). Roster/profile data only. DELETE is soft/idempotent. ----
+
+router.get(
+  '/:organizationId/students',
+  protect,
+  ...organizationIdValidation,
+  ...listStudentsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteStudentController.getStudents
+);
+
+router.post(
+  '/:organizationId/students',
+  protect,
+  ...organizationIdValidation,
+  ...createStudentValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.createStudent
+);
+
+router.get(
+  '/:organizationId/students/:studentId',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteStudentController.getStudent
+);
+
+router.put(
+  '/:organizationId/students/:studentId',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  ...updateStudentValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.updateStudent
+);
+
+router.delete(
+  '/:organizationId/students/:studentId',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.removeStudent
 );
 
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
