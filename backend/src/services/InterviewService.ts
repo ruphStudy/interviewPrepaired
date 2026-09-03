@@ -734,6 +734,7 @@ export class InterviewService {
           answer,
           interviewStyle: interviewStyle as InterviewStyle,
           interviewId: interview._id.toString(),
+          interviewLanguage: interview.interviewLanguage,
         });
         
         if (starAnalysis) {

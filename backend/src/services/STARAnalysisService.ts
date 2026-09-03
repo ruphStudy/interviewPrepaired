@@ -1,5 +1,6 @@
 import { ISTARAnalysis, shouldAnalyzeSTAR, getSTARCoachingTips } from '../models/STARAnalysis.model';
 import { getAIService } from '../ai';
+import { getLanguageInstruction, getMaxTokensForLanguage } from '../config/languages';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -10,6 +11,7 @@ interface AnalyzeSTARParams {
   answer: string;
   interviewStyle: string;
   interviewId?: string;
+  interviewLanguage?: string;
 }
 
 // ============================================================================
@@ -21,7 +23,7 @@ class STARAnalysisService {
    * Analyze answer using STAR framework
    */
   async analyzeSTAR(params: AnalyzeSTARParams): Promise<ISTARAnalysis | null> {
-    const { question, answer, interviewStyle, interviewId } = params;
+    const { question, answer, interviewStyle, interviewId, interviewLanguage } = params;
 
     // Only analyze for behavioral/leadership/situational interviews
     if (!shouldAnalyzeSTAR(interviewStyle)) {
@@ -29,7 +31,7 @@ class STARAnalysisService {
     }
 
     try {
-      const analysis = await this.performSTARAnalysis({ question, answer, interviewId });
+      const analysis = await this.performSTARAnalysis({ question, answer, interviewId, interviewLanguage });
       
       console.log(`[STARAnalysis] Completed. Overall score: ${analysis.overallSTARScore.toFixed(1)}/10, Complete: ${analysis.hasCompleteSTAR}`);
       
@@ -48,10 +50,14 @@ class STARAnalysisService {
     question: string;
     answer: string;
     interviewId?: string;
+    interviewLanguage?: string;
   }): Promise<ISTARAnalysis> {
-    const { question, answer, interviewId } = params;
-    
+    const { question, answer, interviewId, interviewLanguage } = params;
+
     const systemPrompt = `You are an expert in behavioral interview coaching and STAR framework analysis.
+
+${getLanguageInstruction(interviewLanguage)}
+The candidate's answer may be in this language, English, or a natural code-mix of both. Write "coachingFeedback" entries in the selected language. Scores and "missingComponents" values (situation/task/action/result) stay exactly as specified in English — they are not display text.
 
 STAR FRAMEWORK:
 - **Situation**: Context, background, setting
@@ -98,7 +104,7 @@ Analyze this answer using the STAR framework.`;
     try {
       const prompt = `${systemPrompt}\n\n${userPrompt}`;
       const result = await getAIService().generateStructured<any>(
-        { prompt, temperature: 0.3, maxTokens: 800 },
+        { prompt, temperature: 0.3, maxTokens: getMaxTokensForLanguage(800, interviewLanguage) },
         { interviewId, operation: 'star-analysis' }
       );
 
