@@ -119,6 +119,10 @@ export interface IFinalReport {
 
 export interface IInterview extends Document {
   userId: Types.ObjectId;
+  // Absent = personal/B2C interview. Present = organization-scoped. No
+  // default, never set from an HTTP payload yet — trusted org context only
+  // arrives once Sprint 8 membership/RBAC exists.
+  organizationId?: Types.ObjectId;
   topic: string;
   difficulty: 'beginner' | 'intermediate' | 'advanced' | 'expert';
   experienceYears: number;
@@ -505,6 +509,12 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       required: [true, 'User ID is required'],
       index: true,
     },
+    // Optional, no default — absent means personal/B2C.
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Organization',
+      required: false,
+    },
     topic: {
       type: String,
       required: [true, 'Topic is required'],
@@ -649,6 +659,10 @@ interviewSchema.index({ topic: 1, difficulty: 1 });
 interviewSchema.index({ status: 1, createdAt: -1 });
 interviewSchema.index({ createdAt: -1 });
 interviewSchema.index({ 'finalReport.overallScore': -1 });
+// Tenant-aware — for future organization-scoped queries only; do not
+// duplicate the existing personal `userId`/`status` indexes above.
+interviewSchema.index({ organizationId: 1, userId: 1, createdAt: -1 });
+interviewSchema.index({ organizationId: 1, status: 1, createdAt: -1 });
 
 // Text index for searching
 interviewSchema.index({ topic: 'text' });

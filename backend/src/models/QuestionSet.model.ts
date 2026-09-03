@@ -7,6 +7,9 @@ export interface IQuestionSetQuestion {
 
 export interface IQuestionSet extends Document {
   userId: Types.ObjectId;
+  // Absent = personal saved set. Present = organization-scoped. No default;
+  // not accepted from HTTP payloads yet (Sprint 8 supplies trusted context).
+  organizationId?: Types.ObjectId;
   name: string;
   description?: string;
   questions: IQuestionSetQuestion[];
@@ -29,6 +32,8 @@ const questionSetQuestionSchema = new Schema<IQuestionSetQuestion>(
 const questionSetSchema = new Schema<IQuestionSet>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    // Optional, no default — absent means a personal saved set.
+    organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: false },
     name: { type: String, required: true, trim: true, maxlength: 100 },
     description: { type: String, trim: true, maxlength: 500 },
     questions: { type: [questionSetQuestionSchema], required: true, default: [] },
@@ -42,5 +47,9 @@ const questionSetSchema = new Schema<IQuestionSet>(
 
 questionSetSchema.index({ userId: 1, updatedAt: -1 });
 questionSetSchema.index({ userId: 1, name: 1 });
+// Tenant-aware — for future organization-scoped queries only. Not unique:
+// organization names are not required to be unique per organization.
+questionSetSchema.index({ organizationId: 1, updatedAt: -1 });
+questionSetSchema.index({ organizationId: 1, name: 1 });
 
 export default mongoose.model<IQuestionSet>('QuestionSet', questionSetSchema);

@@ -3,6 +3,7 @@ import QuestionSet, { IQuestionSetQuestion } from '../models/QuestionSet.model';
 import { normalizeUploadedQuestions, ParsedQuestion } from './QuestionFileParserService';
 import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { ApiError } from '../utils/ApiError';
+import { buildTenantOwnerFilter } from '../utils/tenantScope';
 
 interface CreateQuestionSetParams {
   userId: string;
@@ -83,7 +84,9 @@ export class QuestionSetService {
     pagination: { page: number; limit: number; total: number; pages: number };
   }> {
     const { userId, page, limit } = params;
-    const filter = { userId: new Types.ObjectId(userId) };
+    // Personal scope only — explicit, so this can never start returning
+    // organization-scoped sets for the same user once those exist.
+    const filter = buildTenantOwnerFilter({ userId });
     const skip = (page - 1) * limit;
 
     const [sets, total] = await Promise.all([
@@ -109,7 +112,7 @@ export class QuestionSetService {
   }
 
   async getQuestionSet(userId: string, questionSetId: string) {
-    const questionSet = await QuestionSet.findOne({ _id: questionSetId, userId: new Types.ObjectId(userId) }).lean();
+    const questionSet = await QuestionSet.findOne({ _id: questionSetId, ...buildTenantOwnerFilter({ userId }) }).lean();
     if (!questionSet) {
       throw new ApiError(404, 'Question set not found');
     }
@@ -119,7 +122,7 @@ export class QuestionSetService {
   async updateQuestionSet(params: UpdateQuestionSetParams) {
     const { userId, questionSetId, name, description, questions } = params;
 
-    const questionSet = await QuestionSet.findOne({ _id: questionSetId, userId: new Types.ObjectId(userId) });
+    const questionSet = await QuestionSet.findOne({ _id: questionSetId, ...buildTenantOwnerFilter({ userId }) });
     if (!questionSet) {
       throw new ApiError(404, 'Question set not found');
     }
@@ -135,7 +138,7 @@ export class QuestionSetService {
   }
 
   async deleteQuestionSet(userId: string, questionSetId: string): Promise<void> {
-    const result = await QuestionSet.deleteOne({ _id: questionSetId, userId: new Types.ObjectId(userId) });
+    const result = await QuestionSet.deleteOne({ _id: questionSetId, ...buildTenantOwnerFilter({ userId }) });
     if (result.deletedCount === 0) {
       throw new ApiError(404, 'Question set not found');
     }
