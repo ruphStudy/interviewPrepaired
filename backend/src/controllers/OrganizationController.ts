@@ -1,5 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
+import { OrganizationAuthRequest } from '../middleware/organizationAccess';
 import { organizationService } from '../services/OrganizationService';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { ApiError } from '../utils/ApiError';
@@ -70,31 +71,31 @@ export class OrganizationController {
 
   /**
    * GET /api/v1/organizations/:id
-   * Owner-scoped detail — includes only the profile matching the org's type.
+   * Requires ORGANIZATION_VIEW — any active member, not just the owner (8D).
+   * Detail includes only the profile matching the org's type.
    */
-  public getOrganization = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new ApiError(401, 'Authentication required');
+  public getOrganization = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
     }
 
-    const { id } = req.params;
-    const organization = await organizationService.getOrganization(userId, id);
+    const organization = await organizationService.getOrganizationById(context.organizationId, context.role);
 
     res.status(200).json(successResponse('Organization retrieved successfully', { organization }));
   });
 
   /**
    * PUT /api/v1/organizations/:id
-   * Owner-scoped update. ownerUserId/slug/type/status are immutable here.
+   * Requires ORGANIZATION_UPDATE (owner/admin). ownerUserId/slug/type/status
+   * remain immutable here.
    */
-  public updateOrganization = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new ApiError(401, 'Authentication required');
+  public updateOrganization = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
     }
 
-    const { id } = req.params;
     const {
       name,
       description,
@@ -107,9 +108,7 @@ export class OrganizationController {
       companyProfile,
     } = req.body;
 
-    const organization = await organizationService.updateOrganization({
-      userId,
-      organizationId: id,
+    const organization = await organizationService.updateOrganizationTrusted(context.organizationId, context.role, {
       name,
       description,
       website,

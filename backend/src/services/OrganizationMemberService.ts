@@ -3,6 +3,7 @@ import Organization, { IOrganization } from '../models/Organization.model';
 import OrganizationMember, { IOrganizationMember } from '../models/OrganizationMember.model';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationStatus } from '../constants/organization';
+import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { User } from '../models/user.model';
 import { ApiError } from '../utils/ApiError';
 
@@ -24,9 +25,13 @@ interface UpdateMemberParams {
 }
 
 /**
- * Owner-only organization member management (Sprint 8 / 8B). Authorization
- * here is exclusively `Organization.ownerUserId === authenticated userId` —
- * OrganizationMember.role is NOT yet an authorization source (8C/8D).
+ * Organization member management. Authorization is performed by the
+ * `requireOrganizationPermission` middleware (8D), which resolves the
+ * caller's trusted role and attaches it to the request; these methods take
+ * that already-trusted `organizationId`/`actingRole` rather than an
+ * `actingUserId` + re-deriving ownership. Each method still re-asserts the
+ * relevant permission via the same centralized 8C matrix as defense in
+ * depth — never a hardcoded role check, never duplicated matrix logic.
  */
 export class OrganizationMemberService {
   /**
@@ -50,14 +55,15 @@ export class OrganizationMemberService {
   }
 
   async getMembers(
-    userId: string,
     organizationId: string,
+    actingRole: OrganizationMemberRole,
     params: ListMembersParams
   ): Promise<{
     members: Array<Record<string, unknown>>;
     pagination: { page: number; limit: number; total: number; pages: number };
   }> {
-    const organization = await this.getOwnedOrganization(userId, organizationId);
+    this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_VIEW);
+    const organization = await this.getOrganizationById(organizationId);
     // Reads are allowed on an archived org (history) — sync is harmless either way.
     await this.ensureOwnerMembership(organizationId, organization.ownerUserId.toString());
 
@@ -83,15 +89,16 @@ export class OrganizationMemberService {
   }
 
   async addMember(
-    actingUserId: string,
     organizationId: string,
+    actingRole: OrganizationMemberRole,
     params: AddMemberParams
   ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_MANAGE);
     if (params.role === OrganizationMemberRole.OWNER) {
       throw new ApiError(400, 'Cannot assign the owner role directly');
     }
 
-    const organization = await this.getOwnedOrganization(actingUserId, organizationId);
+    const organization = await this.getOrganizationById(organizationId);
     this.assertOrganizationMutable(organization);
     await this.ensureOwnerMembership(organizationId, organization.ownerUserId.toString());
 
@@ -138,11 +145,12 @@ export class OrganizationMemberService {
   }
 
   async updateMember(
-    actingUserId: string,
     organizationId: string,
+    actingRole: OrganizationMemberRole,
     memberId: string,
     params: UpdateMemberParams
   ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_MANAGE);
     if (params.role === undefined && params.status === undefined) {
       throw new ApiError(400, 'At least one of role or status is required');
     }
@@ -150,7 +158,7 @@ export class OrganizationMemberService {
       throw new ApiError(400, 'Cannot assign the owner role directly');
     }
 
-    const organization = await this.getOwnedOrganization(actingUserId, organizationId);
+    const organization = await this.getOrganizationById(organizationId);
     this.assertOrganizationMutable(organization);
     await this.ensureOwnerMembership(organizationId, organization.ownerUserId.toString());
 
@@ -176,8 +184,9 @@ export class OrganizationMemberService {
   }
 
   /** Soft deactivate only — never a physical delete. Idempotent if already inactive. */
-  async removeMember(actingUserId: string, organizationId: string, memberId: string): Promise<void> {
-    const organization = await this.getOwnedOrganization(actingUserId, organizationId);
+  async removeMember(organizationId: string, actingRole: OrganizationMemberRole, memberId: string): Promise<void> {
+    this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_MANAGE);
+    const organization = await this.getOrganizationById(organizationId);
     this.assertOrganizationMutable(organization);
     await this.ensureOwnerMembership(organizationId, organization.ownerUserId.toString());
 
@@ -193,16 +202,20 @@ export class OrganizationMemberService {
     }
   }
 
-  /** Ownership check happens in the DB query itself, never fetch-then-compare. */
-  private async getOwnedOrganization(userId: string, organizationId: string): Promise<IOrganization> {
-    const organization = await Organization.findOne({
-      _id: organizationId,
-      ownerUserId: new Types.ObjectId(userId),
-    });
+  /** Access is already verified by the RBAC middleware — this just loads by ID (trusted organizationId). */
+  private async getOrganizationById(organizationId: string): Promise<IOrganization> {
+    const organization = await Organization.findById(organizationId);
     if (!organization) {
       throw new ApiError(404, 'Organization not found');
     }
     return organization;
+  }
+
+  /** Defense in depth — the middleware already checked this; never duplicates the 8C matrix, just reuses it. */
+  private assertHasPermission(role: OrganizationMemberRole, permission: OrganizationPermission): void {
+    if (!hasOrganizationPermission(role, permission)) {
+      throw new ApiError(403, 'You do not have permission to perform this action');
+    }
   }
 
   private assertOrganizationMutable(organization: IOrganization): void {

@@ -5,6 +5,8 @@ import Organization, {
   ICompanyProfile,
 } from '../models/Organization.model';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
+import { OrganizationMemberRole } from '../constants/organizationMember';
+import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { slugifyOrganizationName } from '../utils/slug';
 import { ApiError } from '../utils/ApiError';
 
@@ -33,9 +35,7 @@ interface ListOrganizationsParams {
   status?: OrganizationStatus;
 }
 
-interface UpdateOrganizationParams {
-  userId: string;
-  organizationId: string;
+interface UpdateOrganizationFields {
   name?: string;
   description?: string;
   website?: string;
@@ -110,22 +110,31 @@ export class OrganizationService {
     };
   }
 
-  async getOrganization(userId: string, organizationId: string): Promise<Record<string, unknown>> {
-    const organization = await Organization.findOne({
-      _id: organizationId,
-      ownerUserId: new Types.ObjectId(userId),
-    }).lean();
+  /**
+   * Trusted — `organizationId` and `actingRole` come from the
+   * `requireOrganizationPermission` RBAC middleware (8D), which already
+   * verified the caller has an ACTIVE membership. This re-asserts
+   * ORGANIZATION_VIEW as defense in depth via the same 8C matrix.
+   */
+  async getOrganizationById(organizationId: string, actingRole: OrganizationMemberRole): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_VIEW);
 
+    const organization = await Organization.findById(organizationId).lean();
     if (!organization) {
       throw new ApiError(404, 'Organization not found');
     }
     return this.toDetail(organization);
   }
 
-  async updateOrganization(params: UpdateOrganizationParams): Promise<Record<string, unknown>> {
+  /** Trusted — see getOrganizationById. Re-asserts ORGANIZATION_UPDATE. */
+  async updateOrganizationTrusted(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    fields: UpdateOrganizationFields
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
     const {
-      userId,
-      organizationId,
       name,
       description,
       website,
@@ -135,12 +144,9 @@ export class OrganizationService {
       settings,
       instituteProfile,
       companyProfile,
-    } = params;
+    } = fields;
 
-    const organization = await Organization.findOne({
-      _id: organizationId,
-      ownerUserId: new Types.ObjectId(userId),
-    });
+    const organization = await Organization.findById(organizationId);
     if (!organization) {
       throw new ApiError(404, 'Organization not found');
     }
@@ -174,6 +180,13 @@ export class OrganizationService {
     );
     if (result.matchedCount === 0) {
       throw new ApiError(404, 'Organization not found');
+    }
+  }
+
+  /** Defense in depth — the RBAC middleware already checked this; never duplicates the 8C matrix, just reuses it. */
+  private assertHasPermission(role: OrganizationMemberRole, permission: OrganizationPermission): void {
+    if (!hasOrganizationPermission(role, permission)) {
+      throw new ApiError(403, 'You do not have permission to perform this action');
     }
   }
 

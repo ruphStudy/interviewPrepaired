@@ -3,9 +3,11 @@ import { body, param, query } from 'express-validator';
 import organizationController from '../controllers/OrganizationController';
 import organizationMemberController from '../controllers/OrganizationMemberController';
 import { protect } from '../middleware/auth';
+import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
 import { OrganizationType, OrganizationStatus, InstituteKind, CompanySize } from '../constants/organization';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
+import { OrganizationPermission } from '../constants/organizationPermissions';
 
 // Client-assignable roles — OWNER can never be assigned via this API; it
 // only ever mirrors Organization.ownerUserId (see ensureOwnerMembership).
@@ -190,20 +192,39 @@ const updateMemberValidation = [
 ];
 
 // ============================================================================
-// Routes — all owner-scoped; no membership/RBAC yet (Sprint 8)
+// Routes — POST/GET (list) stay owner-created-only (unchanged from 7D/8B).
+// GET/PUT :id and all member routes are RBAC-protected (8D): trusted
+// organization context is resolved from the route param only, never
+// body/query/header. DELETE :id stays owner-only on purpose (archival is an
+// owner lifecycle action, not covered by ORGANIZATION_UPDATE).
 // ============================================================================
 
 router.post('/', protect, ...createValidation, validate, organizationController.createOrganization);
 
 router.get('/', protect, ...listValidation, validate, organizationController.getOrganizations);
 
-router.get('/:id', protect, ...idValidation, validate, organizationController.getOrganization);
+router.get(
+  '/:id',
+  protect,
+  ...idValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW, { paramName: 'id' }),
+  organizationController.getOrganization
+);
 
-router.put('/:id', protect, ...idValidation, ...updateValidation, validate, organizationController.updateOrganization);
+router.put(
+  '/:id',
+  protect,
+  ...idValidation,
+  ...updateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE, { paramName: 'id' }),
+  organizationController.updateOrganization
+);
 
 router.delete('/:id', protect, ...idValidation, validate, organizationController.deleteOrganization);
 
-// ---- Members (8B) ----
+// ---- Members (8B API, 8D RBAC) ----
 
 router.get(
   '/:organizationId/members',
@@ -211,6 +232,7 @@ router.get(
   ...organizationIdValidation,
   ...listMembersValidation,
   validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
   organizationMemberController.getMembers
 );
 
@@ -220,6 +242,7 @@ router.post(
   ...organizationIdValidation,
   ...addMemberValidation,
   validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   organizationMemberController.addMember
 );
 
@@ -230,6 +253,7 @@ router.put(
   ...memberIdValidation,
   ...updateMemberValidation,
   validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   organizationMemberController.updateMember
 );
 
@@ -239,6 +263,7 @@ router.delete(
   ...organizationIdValidation,
   ...memberIdValidation,
   validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   organizationMemberController.removeMember
 );
 
