@@ -5,17 +5,21 @@ const CURRENT_YEAR = new Date().getFullYear();
 
 /**
  * A student record under an institute organization (11B) — profile/roster
- * data only, no registration/auth/login (that's 11C), no bulk import (11D),
+ * data only, no registration/auth/login flow (that's 11C's job — 11C only
+ * links an EXISTING User account, never creates one), no bulk import (11D),
  * no assignment logic (11E). Always scoped to exactly one `organizationId`;
- * `batchId`/`courseId`/`branchId`, when present, are service-validated to
- * belong to that same organization and to be mutually consistent with each
- * other (never trusted from the request alone).
+ * `batchId`/`courseId`/`branchId`/`userId`, when present, are
+ * service-validated to belong to that same organization (`userId` linkage
+ * is unique per organization, not globally — the same user may be linked to
+ * a student in a different organization) and to be mutually consistent with
+ * each other (never trusted from the request alone).
  */
 export interface IInstituteStudent extends Document {
   organizationId: Types.ObjectId;
   batchId?: Types.ObjectId;
   courseId?: Types.ObjectId;
   branchId?: Types.ObjectId;
+  userId?: Types.ObjectId;
   firstName: string;
   lastName?: string;
   email?: string;
@@ -37,6 +41,9 @@ const instituteStudentSchema = new Schema<IInstituteStudent>(
     batchId: { type: Schema.Types.ObjectId, ref: 'InstituteBatch' },
     courseId: { type: Schema.Types.ObjectId, ref: 'InstituteCourse' },
     branchId: { type: Schema.Types.ObjectId, ref: 'InstituteBranch' },
+    // 11C: links this student record to an existing User account. Never
+    // auto-created here — set only via the explicit link-user endpoint.
+    userId: { type: Schema.Types.ObjectId, ref: 'User' },
     firstName: {
       type: String,
       required: [true, 'firstName is required'],
@@ -86,5 +93,12 @@ instituteStudentSchema.index(
 );
 // Not unique — supports lookup/search by email within an organization only.
 instituteStudentSchema.index({ organizationId: 1, email: 1 });
+// Partial unique index (11C): a given user account can be linked to at most
+// one student record per organization — never a document with no `userId`,
+// so unlinked students never collide on this index.
+instituteStudentSchema.index(
+  { organizationId: 1, userId: 1 },
+  { unique: true, partialFilterExpression: { userId: { $exists: true } } }
+);
 
 export default mongoose.model<IInstituteStudent>('InstituteStudent', instituteStudentSchema);

@@ -976,6 +976,31 @@ router.delete(
   instituteStudentController.removeStudent
 );
 
+// ---- Student <-> User linkage (11C) — links to an EXISTING active User only; never creates one. ----
+
+const linkStudentUserValidation = [body('userId').optional().isMongoId().withMessage('userId must be a valid ID')];
+
+router.post(
+  '/:organizationId/students/:studentId/link-user',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  ...linkStudentUserValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.linkUser
+);
+
+router.delete(
+  '/:organizationId/students/:studentId/link-user',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.unlinkUser
+);
+
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
 
 router.get(

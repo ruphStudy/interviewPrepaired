@@ -4,6 +4,7 @@ import InstituteBranch from '../models/InstituteBranch.model';
 import InstituteCourse from '../models/InstituteCourse.model';
 import InstituteBatch from '../models/InstituteBatch.model';
 import InstituteStudent from '../models/InstituteStudent.model';
+import { User } from '../models/user.model';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
@@ -254,6 +255,113 @@ export class InstituteStudentService {
   }
 
   /**
+   * Links this student record to an EXISTING, active User account (11C) —
+   * never creates a User, never touches User.role, never creates an
+   * OrganizationMember row. Resolution: an explicit `userId` is looked up
+   * directly; otherwise the student's own email is matched against
+   * User.email (normalized lowercase). Idempotent if already linked to the
+   * same user; a mismatch with an existing different link, an email
+   * mismatch, or a user already linked to another student in this
+   * organization all fail with 409 rather than silently reassigning.
+   */
+  async linkUser(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    studentId: string,
+    userId?: string
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    const student = await InstituteStudent.findOne({ _id: studentId, organizationId: organization._id });
+    if (!student) {
+      throw new ApiError(404, 'Student not found');
+    }
+
+    const targetUser = userId
+      ? await this.loadActiveUserById(userId)
+      : await this.loadActiveUserByEmail(student.email);
+
+    // Email safety: if the student has an email on file, the linked user's
+    // email must match it exactly (normalized) — never a silent mismatch.
+    if (student.email && student.email.trim().toLowerCase() !== targetUser.email.trim().toLowerCase()) {
+      throw new ApiError(409, "Linked user's email does not match the student's email");
+    }
+
+    // Idempotent: already linked to this exact user.
+    if (student.userId && student.userId.toString() === targetUser._id.toString()) {
+      return this.toDetail(student.toObject());
+    }
+
+    // Already linked to a DIFFERENT user — no silent reassignment.
+    if (student.userId) {
+      throw new ApiError(409, 'This student is already linked to a different user account');
+    }
+
+    // Same org + user cannot be linked to two student records.
+    const existingLinkForUser = await InstituteStudent.findOne({
+      organizationId: organization._id,
+      userId: targetUser._id,
+      _id: { $ne: student._id },
+    }).select('_id');
+    if (existingLinkForUser) {
+      throw new ApiError(409, 'This user account is already linked to a different student in this organization');
+    }
+
+    student.userId = targetUser._id;
+    await student.save();
+
+    return this.toDetail(student.toObject());
+  }
+
+  /** Unlinks only — never deletes/deactivates the User account. Idempotent if already unlinked. */
+  async unlinkUser(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    studentId: string
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    const student = await InstituteStudent.findOne({ _id: studentId, organizationId: organization._id });
+    if (!student) {
+      throw new ApiError(404, 'Student not found');
+    }
+
+    if (student.userId !== undefined) {
+      student.userId = undefined;
+      await student.save();
+    }
+
+    return this.toDetail(student.toObject());
+  }
+
+  private async loadActiveUserById(userId: string): Promise<{ _id: Types.ObjectId; email: string }> {
+    const user = await User.findOne({ _id: userId, isActive: true }).select('_id email');
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+    return { _id: user._id as Types.ObjectId, email: user.email };
+  }
+
+  private async loadActiveUserByEmail(email?: string): Promise<{ _id: Types.ObjectId; email: string }> {
+    if (!email) {
+      throw new ApiError(400, 'Provide userId — this student has no email to match against');
+    }
+    const user = await User.findOne({ email: email.trim().toLowerCase(), isActive: true }).select('_id email');
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+    return { _id: user._id as Types.ObjectId, email: user.email };
+  }
+
+  /**
    * Single source of truth for batch/course/branch consistency. When a
    * batchId is supplied, its own courseId/branchId are authoritative —
    * derived onto the result — and an independently supplied courseId/
@@ -360,6 +468,8 @@ export class InstituteStudentService {
       batchId: student.batchId ? student.batchId.toString() : undefined,
       courseId: student.courseId ? student.courseId.toString() : undefined,
       branchId: student.branchId ? student.branchId.toString() : undefined,
+      userId: student.userId ? student.userId.toString() : undefined,
+      accountLinked: !!student.userId,
       firstName: student.firstName,
       lastName: student.lastName,
       email: student.email,

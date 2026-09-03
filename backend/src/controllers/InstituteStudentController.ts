@@ -125,6 +125,40 @@ export class InstituteStudentController {
 
     res.status(200).json(successResponse('Institute student removed successfully', null));
   });
+
+  /**
+   * POST /api/v1/organizations/:organizationId/students/:studentId/link-user
+   * Requires ORGANIZATION_UPDATE. Links to an EXISTING active User — never creates one.
+   */
+  public linkUser = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { studentId } = req.params;
+    const { userId } = req.body;
+
+    const student = await instituteStudentService.linkUser(context.organizationId, context.role, studentId, userId);
+
+    res.status(200).json(successResponse('Student linked to user account successfully', { student }));
+  });
+
+  /**
+   * DELETE /api/v1/organizations/:organizationId/students/:studentId/link-user
+   * Requires ORGANIZATION_UPDATE. Unlinks only — never deletes/deactivates the User.
+   */
+  public unlinkUser = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { studentId } = req.params;
+    const student = await instituteStudentService.unlinkUser(context.organizationId, context.role, studentId);
+
+    res.status(200).json(successResponse('Student unlinked from user account successfully', { student }));
+  });
 }
 
 export default new InstituteStudentController();
