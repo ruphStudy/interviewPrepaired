@@ -11,6 +11,7 @@ import instituteBatchController from '../controllers/InstituteBatchController';
 import instituteStudentController from '../controllers/InstituteStudentController';
 import instituteTrainerController from '../controllers/InstituteTrainerController';
 import instituteTrainerAssignmentController from '../controllers/InstituteTrainerAssignmentController';
+import instituteInterviewTemplateController from '../controllers/InstituteInterviewTemplateController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -28,6 +29,8 @@ import { OrganizationInvitationStatus } from '../constants/organizationInvitatio
 import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
+import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
+import { DifficultyLevel } from '../services/OpenAIService';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 
@@ -759,6 +762,90 @@ const createTrainerAssignmentValidation = [
   }),
 ];
 
+// ============================================================================
+// Institute interview template validators (12C) — references an EXISTING
+// QuestionSet by id only; question content is never accepted here.
+// courseId/batchId relationship consistency (same-org, batch's own courseId
+// authoritative) is enforced service-side, not here. `status` is never
+// body-mutable (DELETE is the only status transition).
+// ============================================================================
+
+const templateIdValidation = [param('templateId').isMongoId().withMessage('Invalid template ID')];
+
+const listTemplatesValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(InstituteInterviewTemplateStatus)).withMessage('Invalid status'),
+  query('courseId').optional().isMongoId().withMessage('Invalid course ID'),
+  query('batchId').optional().isMongoId().withMessage('Invalid batch ID'),
+];
+
+const TEMPLATE_FIELD_KEYS = ['name', 'description', 'questionSetId', 'courseId', 'batchId', 'interviewConfig'];
+
+const rejectTemplateImmutableFieldsValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use DELETE to deactivate a template'),
+];
+
+const templateOptionalFieldValidators = [
+  body('description').optional().isString().trim().isLength({ max: 1000 }).withMessage('description must be at most 1000 characters'),
+  body('courseId').optional({ nullable: true }).isMongoId().withMessage('courseId must be a valid ID'),
+  body('batchId').optional({ nullable: true }).isMongoId().withMessage('batchId must be a valid ID'),
+  body('interviewConfig').optional({ nullable: true }).isObject().withMessage('interviewConfig must be an object'),
+  body('interviewConfig.difficulty').optional().isIn(Object.values(DifficultyLevel)).withMessage('Invalid difficulty'),
+  body('interviewConfig.style').optional().isString().trim().isLength({ max: 100 }).withMessage('style must be at most 100 characters'),
+  body('interviewConfig.language').optional().isIn(SUPPORTED_LANGUAGE_CODES).withMessage('Invalid language'),
+  body('interviewConfig.questionLimit')
+    .optional()
+    .isInt({ min: 1, max: 50 })
+    .withMessage('questionLimit must be between 1 and 50'),
+];
+
+const createTemplateValidation = [
+  ...rejectTemplateImmutableFieldsValidation,
+  body('name')
+    .notEmpty()
+    .withMessage('name is required')
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  body('questionSetId')
+    .notEmpty()
+    .withMessage('questionSetId is required')
+    .isMongoId()
+    .withMessage('questionSetId must be a valid ID'),
+  ...templateOptionalFieldValidators,
+];
+
+const updateTemplateValidation = [
+  ...rejectTemplateImmutableFieldsValidation,
+  body('name')
+    .optional()
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  body('questionSetId').optional().isMongoId().withMessage('questionSetId must be a valid ID'),
+  ...templateOptionalFieldValidators,
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !TEMPLATE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -1243,6 +1330,59 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   instituteTrainerAssignmentController.deleteAssignment
+);
+
+// ---- Institute Interview Templates (12C) — references an EXISTING QuestionSet by id only. Institute-only (400 for a company org). ----
+
+router.get(
+  '/:organizationId/interview-templates',
+  protect,
+  ...organizationIdValidation,
+  ...listTemplatesValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  instituteInterviewTemplateController.getTemplates
+);
+
+router.post(
+  '/:organizationId/interview-templates',
+  protect,
+  ...organizationIdValidation,
+  ...createTemplateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  instituteInterviewTemplateController.createTemplate
+);
+
+router.get(
+  '/:organizationId/interview-templates/:templateId',
+  protect,
+  ...organizationIdValidation,
+  ...templateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  instituteInterviewTemplateController.getTemplate
+);
+
+router.put(
+  '/:organizationId/interview-templates/:templateId',
+  protect,
+  ...organizationIdValidation,
+  ...templateIdValidation,
+  ...updateTemplateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  instituteInterviewTemplateController.updateTemplate
+);
+
+router.delete(
+  '/:organizationId/interview-templates/:templateId',
+  protect,
+  ...organizationIdValidation,
+  ...templateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  instituteInterviewTemplateController.removeTemplate
 );
 
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
