@@ -879,6 +879,8 @@ const listInterviewAssignmentsValidation = [
   query('status').optional().isIn(Object.values(InstituteStudentInterviewAssignmentStatus)).withMessage('Invalid status'),
 ];
 
+const assignmentIdValidation = [param('assignmentId').isMongoId().withMessage('Invalid assignment ID')];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -1438,6 +1440,38 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_VIEW),
   instituteStudentInterviewAssignmentController.getAssignments
+);
+
+// ---- Institute Interview Assignment Lifecycle (12E) — start creates a real Interview (no B2C credit involvement); cancel only before completion. Institute-only. Mutations => 409 on archived org; GET allowed. ----
+
+router.get(
+  '/:organizationId/interview-assignments/:assignmentId',
+  protect,
+  ...organizationIdValidation,
+  ...assignmentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_VIEW),
+  instituteStudentInterviewAssignmentController.getAssignment
+);
+
+router.post(
+  '/:organizationId/interview-assignments/:assignmentId/start',
+  protect,
+  ...organizationIdValidation,
+  ...assignmentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  instituteStudentInterviewAssignmentController.startAssignment
+);
+
+router.post(
+  '/:organizationId/interview-assignments/:assignmentId/cancel',
+  protect,
+  ...organizationIdValidation,
+  ...assignmentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  instituteStudentInterviewAssignmentController.cancelAssignment
 );
 
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----

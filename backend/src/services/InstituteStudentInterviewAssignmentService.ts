@@ -3,6 +3,7 @@ import Organization, { IOrganization } from '../models/Organization.model';
 import InstituteStudent, { IInstituteStudent } from '../models/InstituteStudent.model';
 import InstituteInterviewTemplate, { IInstituteInterviewTemplate } from '../models/InstituteInterviewTemplate.model';
 import InstituteStudentInterviewAssignment from '../models/InstituteStudentInterviewAssignment.model';
+import QuestionSet from '../models/QuestionSet.model';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
@@ -10,6 +11,12 @@ import { OrganizationType, OrganizationStatus } from '../constants/organization'
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { ApiError } from '../utils/ApiError';
+import { normalizeUploadedQuestions } from './QuestionFileParserService';
+import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
+import { InterviewService } from './InterviewService';
+
+// Matches InterviewController's convention: import the class, instantiate once here.
+const interviewService = new InterviewService();
 
 const MAX_ASSIGN_STUDENTS = 200;
 
@@ -173,6 +180,195 @@ export class InstituteStudentInterviewAssignmentService {
       assignments: assignments.map((a) => this.toDetail(a)),
       pagination: { page: params.page, limit: params.limit, total, pages: Math.ceil(total / params.limit) },
     };
+  }
+
+  /**
+   * Starts an assignment (12E): atomically claims it (ASSIGNED ->
+   * IN_PROGRESS) so two concurrent start requests can never both create an
+   * Interview, then validates student/template/questionSet (all re-scoped
+   * to this organization) and creates a real uploaded-mode Interview via
+   * InterviewService.createInstituteUploadedInterview — which deliberately
+   * never touches personal credits/subscriptions. If anything fails after
+   * the claim, the assignment is safely reverted to ASSIGNED (only if still
+   * owned by this failed start, i.e. still IN_PROGRESS with no interviewId
+   * yet). A repeated call after a successful start is idempotent: it
+   * returns the same assignment/interviewId instead of creating a second
+   * Interview.
+   */
+  async startAssignment(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    assignmentId: string
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    // Sole atomic claim mechanism — only one concurrent caller can win this
+    // exact status transition.
+    const claimed = await InstituteStudentInterviewAssignment.findOneAndUpdate(
+      { _id: assignmentId, organizationId: organization._id, status: InstituteStudentInterviewAssignmentStatus.ASSIGNED },
+      { $set: { status: InstituteStudentInterviewAssignmentStatus.IN_PROGRESS } },
+      { new: true }
+    );
+
+    if (!claimed) {
+      const current = await InstituteStudentInterviewAssignment.findOne({
+        _id: assignmentId,
+        organizationId: organization._id,
+      }).lean();
+      if (!current) {
+        throw new ApiError(404, 'Assignment not found');
+      }
+      if (current.interviewId) {
+        // Already started successfully — idempotent return, no new Interview.
+        return this.toDetail(current);
+      }
+      if (current.status === InstituteStudentInterviewAssignmentStatus.IN_PROGRESS) {
+        throw new ApiError(409, 'Assignment is already being started');
+      }
+      if (current.status === InstituteStudentInterviewAssignmentStatus.CANCELLED) {
+        throw new ApiError(409, 'Assignment has been cancelled');
+      }
+      if (current.status === InstituteStudentInterviewAssignmentStatus.COMPLETED) {
+        throw new ApiError(409, 'Assignment is already completed');
+      }
+      throw new ApiError(409, 'Assignment cannot be started');
+    }
+
+    try {
+      const student = await InstituteStudent.findOne({ _id: claimed.studentId, organizationId: organization._id });
+      if (!student) {
+        throw new ApiError(404, 'Student not found');
+      }
+      if (student.status !== InstituteStudentStatus.ACTIVE) {
+        throw new ApiError(400, 'Student is not active');
+      }
+      if (!student.userId) {
+        throw new ApiError(400, 'Student is not linked to a user account');
+      }
+
+      const template = await InstituteInterviewTemplate.findOne({ _id: claimed.templateId, organizationId: organization._id });
+      if (!template) {
+        throw new ApiError(404, 'Template not found');
+      }
+      if (template.status !== InstituteInterviewTemplateStatus.ACTIVE) {
+        throw new ApiError(400, 'Template is not active');
+      }
+
+      this.assertTemplateScopeMatchesStudent(template, student);
+
+      const questionSet = await QuestionSet.findOne({ _id: template.questionSetId, organizationId: organization._id }).select(
+        'questions'
+      );
+      if (!questionSet) {
+        throw new ApiError(404, 'Question set not found');
+      }
+
+      const normalized = normalizeUploadedQuestions(questionSet.questions);
+      if (normalized.length === 0) {
+        throw new ApiError(400, 'Question set has no valid questions');
+      }
+
+      const questionLimit = template.interviewConfig?.questionLimit;
+      const effectiveCount = Math.min(
+        questionLimit && questionLimit > 0 ? questionLimit : normalized.length,
+        normalized.length,
+        MAX_UPLOADED_QUESTIONS
+      );
+      const selectedQuestions = normalized.slice(0, effectiveCount);
+
+      const interview = await interviewService.createInstituteUploadedInterview({
+        userId: student.userId.toString(),
+        organizationId: organization._id.toString(),
+        topic: template.name,
+        difficulty: template.interviewConfig?.difficulty || 'intermediate',
+        experienceYears: 0,
+        interviewStyle: template.interviewConfig?.style,
+        interviewLanguage: template.interviewConfig?.language,
+        questions: selectedQuestions,
+      });
+
+      const finalAssignment = await InstituteStudentInterviewAssignment.findOneAndUpdate(
+        { _id: claimed._id, organizationId: organization._id },
+        { $set: { interviewId: interview._id } },
+        { new: true }
+      ).lean();
+
+      return this.toDetail(finalAssignment);
+    } catch (error) {
+      // Only restore if still owned by this failed start (claimed but never
+      // reached the interviewId write) — a safe no-op otherwise.
+      await InstituteStudentInterviewAssignment.updateOne(
+        {
+          _id: assignmentId,
+          organizationId: organization._id,
+          status: InstituteStudentInterviewAssignmentStatus.IN_PROGRESS,
+          interviewId: { $exists: false },
+        },
+        { $set: { status: InstituteStudentInterviewAssignmentStatus.ASSIGNED } }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Cancels an assignment (12E) — only ever before completion. ASSIGNED ->
+   * CANCELLED is the only real transition; already-CANCELLED is idempotent;
+   * IN_PROGRESS/COMPLETED are rejected with 409 (an active or already-run
+   * interview is never silently cancelled here).
+   */
+  async cancelAssignment(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    assignmentId: string
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    const cancelled = await InstituteStudentInterviewAssignment.findOneAndUpdate(
+      { _id: assignmentId, organizationId: organization._id, status: InstituteStudentInterviewAssignmentStatus.ASSIGNED },
+      { $set: { status: InstituteStudentInterviewAssignmentStatus.CANCELLED } },
+      { new: true }
+    ).lean();
+    if (cancelled) {
+      return this.toDetail(cancelled);
+    }
+
+    const current = await InstituteStudentInterviewAssignment.findOne({
+      _id: assignmentId,
+      organizationId: organization._id,
+    }).lean();
+    if (!current) {
+      throw new ApiError(404, 'Assignment not found');
+    }
+    if (current.status === InstituteStudentInterviewAssignmentStatus.CANCELLED) {
+      return this.toDetail(current);
+    }
+    throw new ApiError(409, `Assignment cannot be cancelled while ${current.status}`);
+  }
+
+  /** GET detail (12E) — assignment fields plus interviewId/status only, no answer/evaluation leakage. */
+  async getAssignmentById(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    assignmentId: string
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_VIEW);
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+
+    const assignment = await InstituteStudentInterviewAssignment.findOne({
+      _id: assignmentId,
+      organizationId: organization._id,
+    }).lean();
+    if (!assignment) {
+      throw new ApiError(404, 'Assignment not found');
+    }
+    return this.toDetail(assignment);
   }
 
   /**

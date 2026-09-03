@@ -57,6 +57,67 @@ export class InstituteStudentInterviewAssignmentController {
 
     res.status(200).json(successResponse('Interview assignments retrieved successfully', result));
   });
+
+  /**
+   * POST /api/v1/organizations/:organizationId/interview-assignments/:assignmentId/start
+   * Requires INTERVIEWS_MANAGE. Creates the real Interview (no B2C credit
+   * involvement) and transitions the assignment to IN_PROGRESS.
+   */
+  public startAssignment = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { assignmentId } = req.params;
+    const assignment = await instituteStudentInterviewAssignmentService.startAssignment(
+      context.organizationId,
+      context.role,
+      assignmentId
+    );
+
+    res.status(200).json(successResponse('Interview assignment started successfully', { assignment }));
+  });
+
+  /**
+   * POST /api/v1/organizations/:organizationId/interview-assignments/:assignmentId/cancel
+   * Requires INTERVIEWS_MANAGE.
+   */
+  public cancelAssignment = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { assignmentId } = req.params;
+    const assignment = await instituteStudentInterviewAssignmentService.cancelAssignment(
+      context.organizationId,
+      context.role,
+      assignmentId
+    );
+
+    res.status(200).json(successResponse('Interview assignment cancelled successfully', { assignment }));
+  });
+
+  /**
+   * GET /api/v1/organizations/:organizationId/interview-assignments/:assignmentId
+   * Requires INTERVIEWS_VIEW.
+   */
+  public getAssignment = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { assignmentId } = req.params;
+    const assignment = await instituteStudentInterviewAssignmentService.getAssignmentById(
+      context.organizationId,
+      context.role,
+      assignmentId
+    );
+
+    res.status(200).json(successResponse('Interview assignment retrieved successfully', { assignment }));
+  });
 }
 
 export default new InstituteStudentInterviewAssignmentController();

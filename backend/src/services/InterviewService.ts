@@ -26,6 +26,8 @@ import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode } from '../config/languages';
 import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
 import { questionSetService } from './QuestionSetService';
+import InstituteStudentInterviewAssignment from '../models/InstituteStudentInterviewAssignment.model';
+import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
 
 /** Same validity rule the frontend/report/PDF must all agree on — never treat a stringified "undefined"/"null"/placeholder/empty value as a real expected answer. */
 function isValidModelAnswer(value: unknown): value is string {
@@ -602,16 +604,7 @@ export class InterviewService {
     const finalExperienceLevel = experienceLevel || mapExperienceYearsToLevel(experienceYears);
     const finalInterviewStyle = interviewStyle || inferInterviewStyle(topic);
 
-    const questions: IQuestion[] = pool.map((q) => {
-      const hasReferenceAnswer = isValidModelAnswer(q.referenceAnswer);
-      return {
-        questionText: q.questionText,
-        questionSource: 'uploaded',
-        referenceAnswer: hasReferenceAnswer ? q.referenceAnswer!.trim() : undefined,
-        answerSource: hasReferenceAnswer ? 'uploaded' : undefined,
-        expectedPoints: [],
-      } as IQuestion;
-    });
+    const questions: IQuestion[] = this.buildUploadedQuestions(pool);
 
     const interview = new Interview({
       userId: new Types.ObjectId(userId),
@@ -644,6 +637,95 @@ export class InterviewService {
     });
 
     return interview;
+  }
+
+  /** Pure ParsedQuestion[] -> IQuestion[] mapping shared by personal and institute uploaded-mode starts. */
+  private buildUploadedQuestions(pool: ParsedQuestion[]): IQuestion[] {
+    return pool.map((q) => {
+      const hasReferenceAnswer = isValidModelAnswer(q.referenceAnswer);
+      return {
+        questionText: q.questionText,
+        questionSource: 'uploaded',
+        referenceAnswer: hasReferenceAnswer ? q.referenceAnswer!.trim() : undefined,
+        answerSource: hasReferenceAnswer ? 'uploaded' : undefined,
+        expectedPoints: [],
+      } as IQuestion;
+    });
+  }
+
+  /**
+   * Institute-assignment start (12E): creates a real uploaded-mode Interview
+   * scoped to an organization, from questions already selected/validated by
+   * the caller (InstituteStudentInterviewAssignmentService). Deliberately
+   * does NOT call assertCreditAvailable/consumeInterviewCredit or touch
+   * personal subscriptions — institute billing is a future sprint (15), and
+   * this path must never affect the B2C credit ledger.
+   */
+  async createInstituteUploadedInterview(params: {
+    userId: string;
+    organizationId: string;
+    topic: string;
+    difficulty: string;
+    experienceYears: number;
+    interviewStyle?: string;
+    interviewLanguage?: string;
+    questions: ParsedQuestion[];
+  }): Promise<IInterview> {
+    const interviewLanguage = normalizeLanguageCode(params.interviewLanguage);
+    const finalInterviewStyle = params.interviewStyle || inferInterviewStyle(params.topic);
+    const finalExperienceLevel = mapExperienceYearsToLevel(params.experienceYears);
+
+    const questions: IQuestion[] = this.buildUploadedQuestions(params.questions);
+
+    const interview = new Interview({
+      userId: new Types.ObjectId(params.userId),
+      organizationId: new Types.ObjectId(params.organizationId),
+      topic: params.topic,
+      difficulty: params.difficulty,
+      experienceYears: params.experienceYears,
+      experienceLevel: finalExperienceLevel,
+      interviewStyle: finalInterviewStyle,
+      interviewMode: 'uploaded',
+      interviewLanguage,
+      totalQuestions: questions.length,
+      status: InterviewStatus.IN_PROGRESS,
+      currentQuestion: 1,
+      questions,
+    });
+
+    await interview.save();
+
+    console.log('✅ [InterviewService] Institute-assignment uploaded interview started', {
+      organizationId: params.organizationId,
+      totalQuestions: questions.length,
+    });
+
+    return interview;
+  }
+
+  /**
+   * Institute completion sync (12E): when an institute-linked interview
+   * (organizationId set) reaches COMPLETED, flips its matching
+   * IN_PROGRESS assignment to COMPLETED. No-op for personal/B2C interviews
+   * (organizationId absent) and non-critical on failure — mirrors the
+   * file's existing pattern for best-effort side effects.
+   */
+  private async syncInstituteAssignmentOnCompletion(interview: IInterview): Promise<void> {
+    if (!interview.organizationId) {
+      return;
+    }
+    try {
+      await InstituteStudentInterviewAssignment.updateOne(
+        {
+          interviewId: interview._id,
+          organizationId: interview.organizationId,
+          status: InstituteStudentInterviewAssignmentStatus.IN_PROGRESS,
+        },
+        { $set: { status: InstituteStudentInterviewAssignmentStatus.COMPLETED } }
+      );
+    } catch (error) {
+      console.error('[InterviewService] Failed to sync institute assignment on completion (non-critical):', error);
+    }
   }
 
   /**
@@ -903,7 +985,8 @@ export class InterviewService {
         interview.completedAt = new Date();
         await interview.save();
         console.log('[InterviewService] Interview saved with status: completed');
-        
+        await this.syncInstituteAssignmentOnCompletion(interview);
+
         // Reload the interview to refresh the _original tracking
         let reloadedInterview = await Interview.findById(interview._id);
         if (!reloadedInterview) {
