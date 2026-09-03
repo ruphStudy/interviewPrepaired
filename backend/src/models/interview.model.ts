@@ -5,7 +5,7 @@ import { IDifficultyTracking, difficultyTrackingSchema } from './DifficultyTrack
 import { IClaimVerificationTracking, claimVerificationTrackingSchema, initializeClaimTracking } from './ClaimVerification.model';
 import { IContradictionTracking, contradictionTrackingSchema, initializeContradictionTracking } from './ContradictionTracking.model';
 import { ISTARAnalysis } from './STARAnalysis.model';
-import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE } from '../config/languages';
+import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
 import { InterviewStatus } from '../constants/interview';
 
 // ============================================================================
@@ -137,7 +137,7 @@ export interface IInterview extends Document {
   interviewMode?: 'ai-generated' | 'uploaded';
   // Absent on interviews created before this feature — schema `default` below
   // makes those hydrate as 'en-IN', so no migration/backfill is needed.
-  interviewLanguage?: string;
+  interviewLanguage?: SupportedLanguageCode;
   questions: IQuestion[];
   finalReport?: IFinalReport;
   // Absent entirely for interviews that predate this feature — never defaulted, so

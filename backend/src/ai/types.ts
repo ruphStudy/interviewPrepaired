@@ -17,6 +17,7 @@ import type {
   BlueprintGenerationRequest,
   BlueprintGenerationResponse,
 } from '../services/OpenAIService';
+import type { SupportedLanguageCode } from '../config/languages';
 
 export type {
   QuestionRequest,
@@ -60,7 +61,7 @@ export interface AIRequestContext {
   organizationId?: string;
   operation?: string;
   questionIndex?: number;
-  language?: string;
+  language?: SupportedLanguageCode;
   /** Optional resolved-route model override — provider-neutral, set by AIService's model routing, not an OpenAI-specific concept. */
   model?: string;
 }

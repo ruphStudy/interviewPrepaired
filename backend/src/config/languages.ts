@@ -9,22 +9,28 @@ export interface SupportedLanguage {
   label: string;
 }
 
-export const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
+export const SUPPORTED_LANGUAGES = [
   { code: 'en-IN', label: 'English' },
   { code: 'hi-IN', label: 'Hindi' },
   { code: 'mr-IN', label: 'Marathi' },
+] as const satisfies readonly SupportedLanguage[];
+
+/** The authoritative language-code type — derived from SUPPORTED_LANGUAGES so it can never drift out of sync. */
+export type SupportedLanguageCode = (typeof SUPPORTED_LANGUAGES)[number]['code'];
+
+export const SUPPORTED_LANGUAGE_CODES = SUPPORTED_LANGUAGES.map((l) => l.code) as [
+  SupportedLanguageCode,
+  ...SupportedLanguageCode[]
 ];
 
-export const SUPPORTED_LANGUAGE_CODES = SUPPORTED_LANGUAGES.map((l) => l.code) as [string, ...string[]];
+export const DEFAULT_LANGUAGE_CODE: SupportedLanguageCode = 'en-IN';
 
-export const DEFAULT_LANGUAGE_CODE = 'en-IN';
-
-export function isSupportedLanguageCode(value: unknown): value is string {
-  return typeof value === 'string' && SUPPORTED_LANGUAGE_CODES.includes(value);
+export function isSupportedLanguageCode(value: unknown): value is SupportedLanguageCode {
+  return typeof value === 'string' && (SUPPORTED_LANGUAGE_CODES as readonly string[]).includes(value);
 }
 
 /** Normalizes to a supported code, falling back to English for missing/unknown values — never throws. */
-export function normalizeLanguageCode(value: unknown): string {
+export function normalizeLanguageCode(value: unknown): SupportedLanguageCode {
   return isSupportedLanguageCode(value) ? value : DEFAULT_LANGUAGE_CODE;
 }
 
