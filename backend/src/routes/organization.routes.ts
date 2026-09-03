@@ -5,6 +5,7 @@ import organizationMemberController from '../controllers/OrganizationMemberContr
 import organizationInvitationController from '../controllers/OrganizationInvitationController';
 import organizationDashboardController from '../controllers/OrganizationDashboardController';
 import instituteBranchController from '../controllers/InstituteBranchController';
+import instituteCourseController from '../controllers/InstituteCourseController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -20,6 +21,7 @@ import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/o
 import { OrganizationPermission } from '../constants/organizationPermissions';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
 import { InstituteBranchStatus } from '../constants/instituteBranch';
+import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 
 // Client-assignable roles — OWNER can never be assigned via this API; it
@@ -362,6 +364,75 @@ const updateBranchValidation = [
   }),
 ];
 
+// ============================================================================
+// Institute course validators (10C) — institute-only sub-resource, mirrors
+// the branch validators. `status` is never body-mutable (DELETE is the only
+// status transition); `branchId` accepts `null` to clear the association —
+// service-side revalidates any non-null branchId against the same organization.
+// ============================================================================
+
+const courseIdValidation = [param('courseId').isMongoId().withMessage('Invalid course ID')];
+
+const listCoursesValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(InstituteCourseStatus)).withMessage('Invalid status'),
+  query('branchId').optional().isMongoId().withMessage('Invalid branch ID'),
+];
+
+const COURSE_FIELD_KEYS = ['name', 'branchId', 'code', 'description', 'durationMonths'];
+
+const rejectCourseImmutableFieldsValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use DELETE to deactivate a course'),
+];
+
+const courseOptionalFieldValidators = [
+  body('branchId').optional({ nullable: true }).isMongoId().withMessage('branchId must be a valid ID'),
+  body('code').optional().isString().withMessage('code must be a string').trim().isLength({ max: 50 }).withMessage('code must be at most 50 characters'),
+  body('description').optional().isString().trim().isLength({ max: 1000 }).withMessage('description must be at most 1000 characters'),
+  body('durationMonths').optional().isInt({ min: 1 }).withMessage('durationMonths must be a positive integer'),
+];
+
+const createCourseValidation = [
+  ...rejectCourseImmutableFieldsValidation,
+  body('name')
+    .notEmpty()
+    .withMessage('name is required')
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  ...courseOptionalFieldValidators,
+];
+
+const updateCourseValidation = [
+  ...rejectCourseImmutableFieldsValidation,
+  body('name')
+    .optional()
+    .isString()
+    .withMessage('name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 150 })
+    .withMessage('name must be between 1 and 150 characters'),
+  ...courseOptionalFieldValidators,
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !COURSE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown course field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -574,6 +645,59 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteBranchController.removeBranch
+);
+
+// ---- Institute Courses (10C) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
+
+router.get(
+  '/:organizationId/courses',
+  protect,
+  ...organizationIdValidation,
+  ...listCoursesValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteCourseController.getCourses
+);
+
+router.post(
+  '/:organizationId/courses',
+  protect,
+  ...organizationIdValidation,
+  ...createCourseValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteCourseController.createCourse
+);
+
+router.get(
+  '/:organizationId/courses/:courseId',
+  protect,
+  ...organizationIdValidation,
+  ...courseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteCourseController.getCourse
+);
+
+router.put(
+  '/:organizationId/courses/:courseId',
+  protect,
+  ...organizationIdValidation,
+  ...courseIdValidation,
+  ...updateCourseValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteCourseController.updateCourse
+);
+
+router.delete(
+  '/:organizationId/courses/:courseId',
+  protect,
+  ...organizationIdValidation,
+  ...courseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteCourseController.removeCourse
 );
 
 // ---- Members (8B API, 8D RBAC) ----
