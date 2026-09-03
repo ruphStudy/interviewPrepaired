@@ -10,6 +10,7 @@ import instituteOverviewController from '../controllers/InstituteOverviewControl
 import instituteBatchController from '../controllers/InstituteBatchController';
 import instituteStudentController from '../controllers/InstituteStudentController';
 import instituteTrainerController from '../controllers/InstituteTrainerController';
+import instituteTrainerAssignmentController from '../controllers/InstituteTrainerAssignmentController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -729,6 +730,35 @@ const updateTrainerProfileValidation = [
   }),
 ];
 
+// ============================================================================
+// Trainer assignment validators (12B) — links a trainer to exactly one
+// target (courseId XOR batchId). Same-org ownership of the target and the
+// trainer's ACTIVE status are enforced service-side, not here.
+// ============================================================================
+
+const trainerAssignmentIdValidation = [param('assignmentId').isMongoId().withMessage('Invalid assignment ID')];
+
+const listTrainerAssignmentsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+];
+
+const createTrainerAssignmentValidation = [
+  body('courseId').optional().isMongoId().withMessage('courseId must be a valid ID'),
+  body('batchId').optional().isMongoId().withMessage('batchId must be a valid ID'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const hasCourse = value.courseId !== undefined && value.courseId !== null;
+    const hasBatch = value.batchId !== undefined && value.batchId !== null;
+    if (hasCourse === hasBatch) {
+      throw new Error('Provide exactly one of courseId or batchId');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -1178,6 +1208,41 @@ router.put(
   validate,
   requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   instituteTrainerController.updateTrainerProfile
+);
+
+// ---- Trainer Assignments (12B) — links a trainer to exactly one course XOR batch. Institute-only. GET allowed on archived org; mutations => 409. ----
+
+router.get(
+  '/:organizationId/trainers/:membershipId/assignments',
+  protect,
+  ...organizationIdValidation,
+  ...trainerMembershipIdValidation,
+  ...listTrainerAssignmentsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  instituteTrainerAssignmentController.getAssignments
+);
+
+router.post(
+  '/:organizationId/trainers/:membershipId/assignments',
+  protect,
+  ...organizationIdValidation,
+  ...trainerMembershipIdValidation,
+  ...createTrainerAssignmentValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  instituteTrainerAssignmentController.createAssignment
+);
+
+router.delete(
+  '/:organizationId/trainers/:membershipId/assignments/:assignmentId',
+  protect,
+  ...organizationIdValidation,
+  ...trainerMembershipIdValidation,
+  ...trainerAssignmentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  instituteTrainerAssignmentController.deleteAssignment
 );
 
 // ---- Institute Overview (10D) — read-only, combines profile + branch/course counts. Institute-only (400 for a company org); archived org readable. ----
