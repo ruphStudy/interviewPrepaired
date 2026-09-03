@@ -124,6 +124,45 @@ export class OrganizationController {
   });
 
   /**
+   * GET /api/v1/organizations/:organizationId/settings
+   * Requires ORGANIZATION_VIEW. Read-only — returns effective settings
+   * (stored values merged with defaults for anything missing).
+   */
+  public getOrganizationSettings = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const settings = await organizationService.getSettingsTrusted(context.organizationId, context.role);
+
+    res.status(200).json(successResponse('Organization settings retrieved successfully', { settings }));
+  });
+
+  /**
+   * PUT /api/v1/organizations/:organizationId/settings
+   * Requires ORGANIZATION_UPDATE. PATCH-like merge — omitted fields keep
+   * their current effective value.
+   */
+  public updateOrganizationSettings = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { timezone, locale, dateFormat, timeFormat, defaultInterviewLanguage } = req.body;
+    const settings = await organizationService.updateSettingsTrusted(context.organizationId, context.role, {
+      timezone,
+      locale,
+      dateFormat,
+      timeFormat,
+      defaultInterviewLanguage,
+    });
+
+    res.status(200).json(successResponse('Organization settings updated successfully', { settings }));
+  });
+
+  /**
    * DELETE /api/v1/organizations/:id
    * Soft archive only — never a physical delete, no cascade.
    */

@@ -4,9 +4,19 @@ import Organization, {
   IInstituteProfile,
   ICompanyProfile,
 } from '../models/Organization.model';
-import { OrganizationType, OrganizationStatus } from '../constants/organization';
+import {
+  OrganizationType,
+  OrganizationStatus,
+  OrganizationDateFormat,
+  OrganizationTimeFormat,
+  DEFAULT_ORGANIZATION_TIMEZONE,
+  DEFAULT_ORGANIZATION_LOCALE,
+  DEFAULT_ORGANIZATION_DATE_FORMAT,
+  DEFAULT_ORGANIZATION_TIME_FORMAT,
+} from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
+import { DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
 import { slugifyOrganizationName } from '../utils/slug';
 import { ApiError } from '../utils/ApiError';
 
@@ -45,6 +55,22 @@ interface UpdateOrganizationFields {
   settings?: IOrganizationSettings;
   instituteProfile?: IInstituteProfile;
   companyProfile?: ICompanyProfile;
+}
+
+interface OrganizationSettingsDetail {
+  timezone: string;
+  locale: string;
+  dateFormat: OrganizationDateFormat;
+  timeFormat: OrganizationTimeFormat;
+  defaultInterviewLanguage: SupportedLanguageCode;
+}
+
+interface UpdateSettingsFields {
+  timezone?: string;
+  locale?: string;
+  dateFormat?: OrganizationDateFormat;
+  timeFormat?: OrganizationTimeFormat;
+  defaultInterviewLanguage?: SupportedLanguageCode;
 }
 
 export class OrganizationService {
@@ -172,6 +198,56 @@ export class OrganizationService {
     return this.toDetail(organization.toObject());
   }
 
+  /**
+   * Trusted — see getOrganizationById. Re-asserts ORGANIZATION_VIEW.
+   * Read-only: never mutates/saves, even when the stored document is
+   * missing newly-added fields — old docs are backfilled with defaults only
+   * in the returned value, never in the database.
+   */
+  async getSettingsTrusted(organizationId: string, actingRole: OrganizationMemberRole): Promise<OrganizationSettingsDetail> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_VIEW);
+
+    const organization = await Organization.findById(organizationId).select('settings').lean();
+    if (!organization) {
+      throw new ApiError(404, 'Organization not found');
+    }
+
+    return this.toEffectiveSettings(organization.settings);
+  }
+
+  /**
+   * Trusted — see getOrganizationById. Re-asserts ORGANIZATION_UPDATE.
+   * PATCH-like merge despite the PUT route: only supplied fields change,
+   * omitted fields keep their current effective value — a client can never
+   * accidentally reset unrelated settings by sending a partial body.
+   */
+  async updateSettingsTrusted(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    fields: UpdateSettingsFields
+  ): Promise<OrganizationSettingsDetail> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
+    const organization = await Organization.findById(organizationId);
+    if (!organization) {
+      throw new ApiError(404, 'Organization not found');
+    }
+    this.assertOrganizationMutable(organization);
+
+    const effective = this.toEffectiveSettings(organization.settings);
+    organization.settings = {
+      timezone: fields.timezone !== undefined ? fields.timezone : effective.timezone,
+      locale: fields.locale !== undefined ? fields.locale : effective.locale,
+      dateFormat: fields.dateFormat !== undefined ? fields.dateFormat : effective.dateFormat,
+      timeFormat: fields.timeFormat !== undefined ? fields.timeFormat : effective.timeFormat,
+      defaultInterviewLanguage:
+        fields.defaultInterviewLanguage !== undefined ? fields.defaultInterviewLanguage : effective.defaultInterviewLanguage,
+    };
+
+    await organization.save();
+    return this.toEffectiveSettings(organization.settings);
+  }
+
   /** Soft archive only — never a physical delete, never cascades to interviews/question sets. Idempotent if already archived. */
   async deleteOrganization(userId: string, organizationId: string): Promise<void> {
     const result = await Organization.updateOne(
@@ -190,6 +266,12 @@ export class OrganizationService {
     }
   }
 
+  private assertOrganizationMutable(organization: { status: OrganizationStatus }): void {
+    if (organization.status === OrganizationStatus.ARCHIVED) {
+      throw new ApiError(409, 'Organization is archived');
+    }
+  }
+
   private assertProfileMatchesType(
     type: OrganizationType,
     instituteProfile?: IInstituteProfile,
@@ -201,6 +283,17 @@ export class OrganizationService {
     if (type === OrganizationType.COMPANY && instituteProfile !== undefined) {
       throw new ApiError(400, 'instituteProfile is not allowed when organization type is "company"');
     }
+  }
+
+  /** Single source of truth for "settings with defaults applied" — used by both getSettingsTrusted (read-only) and updateSettingsTrusted (merge base). */
+  private toEffectiveSettings(settings?: IOrganizationSettings): OrganizationSettingsDetail {
+    return {
+      timezone: settings?.timezone ?? DEFAULT_ORGANIZATION_TIMEZONE,
+      locale: settings?.locale ?? DEFAULT_ORGANIZATION_LOCALE,
+      dateFormat: settings?.dateFormat ?? DEFAULT_ORGANIZATION_DATE_FORMAT,
+      timeFormat: settings?.timeFormat ?? DEFAULT_ORGANIZATION_TIME_FORMAT,
+      defaultInterviewLanguage: settings?.defaultInterviewLanguage ?? DEFAULT_LANGUAGE_CODE,
+    };
   }
 
   private async generateUniqueSlug(name: string): Promise<string> {

@@ -7,10 +7,18 @@ import organizationDashboardController from '../controllers/OrganizationDashboar
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
-import { OrganizationType, OrganizationStatus, InstituteKind, CompanySize } from '../constants/organization';
+import {
+  OrganizationType,
+  OrganizationStatus,
+  InstituteKind,
+  CompanySize,
+  OrganizationDateFormat,
+  OrganizationTimeFormat,
+} from '../constants/organization';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationPermission } from '../constants/organizationPermissions';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
+import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 
 // Client-assignable roles — OWNER can never be assigned via this API; it
 // only ever mirrors Organization.ownerUserId (see ensureOwnerMembership).
@@ -142,6 +150,60 @@ const updateValidation = [
 
 const idValidation = [param('id').isMongoId().withMessage('Invalid organization ID')];
 
+// ============================================================================
+// Settings validators (9B) — flat body, no nested `settings` wrapper (the
+// endpoint itself is already /settings). Only known fields accepted; at
+// least one must be present.
+// ============================================================================
+
+const SETTINGS_FIELD_KEYS = ['timezone', 'locale', 'dateFormat', 'timeFormat', 'defaultInterviewLanguage'];
+
+const updateSettingsValidation = [
+  body('timezone')
+    .optional()
+    .isString()
+    .withMessage('timezone must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('timezone must be between 1 and 100 characters')
+    .custom((value: string) => {
+      try {
+        // eslint-disable-next-line no-new
+        new Intl.DateTimeFormat(undefined, { timeZone: value });
+        return true;
+      } catch {
+        throw new Error('Invalid timezone');
+      }
+    }),
+  body('locale').optional().isString().withMessage('locale must be a string').trim().isLength({ min: 1, max: 20 }).withMessage('locale must be between 1 and 20 characters'),
+  body('dateFormat')
+    .optional()
+    .isIn(Object.values(OrganizationDateFormat))
+    .withMessage(`dateFormat must be one of: ${Object.values(OrganizationDateFormat).join(', ')}`),
+  body('timeFormat')
+    .optional()
+    .isIn(Object.values(OrganizationTimeFormat))
+    .withMessage(`timeFormat must be one of: ${Object.values(OrganizationTimeFormat).join(', ')}`),
+  body('defaultInterviewLanguage')
+    .optional()
+    .isIn(SUPPORTED_LANGUAGE_CODES)
+    .withMessage(`defaultInterviewLanguage must be one of: ${SUPPORTED_LANGUAGE_CODES.join(', ')}`),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !SETTINGS_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown setting field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one setting field is required');
+    }
+    return true;
+  }),
+];
+
 const listValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -259,6 +321,27 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   organizationDashboardController.getDashboard
+);
+
+// ---- Settings (9B) — generic, foundational only. GET = view, PUT = update. ----
+
+router.get(
+  '/:organizationId/settings',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationController.getOrganizationSettings
+);
+
+router.put(
+  '/:organizationId/settings',
+  protect,
+  ...organizationIdValidation,
+  ...updateSettingsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationController.updateOrganizationSettings
 );
 
 // ---- Members (8B API, 8D RBAC) ----

@@ -1,5 +1,17 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
-import { OrganizationStatus, OrganizationType, InstituteKind, CompanySize } from '../constants/organization';
+import {
+  OrganizationStatus,
+  OrganizationType,
+  InstituteKind,
+  CompanySize,
+  OrganizationDateFormat,
+  OrganizationTimeFormat,
+  DEFAULT_ORGANIZATION_TIMEZONE,
+  DEFAULT_ORGANIZATION_LOCALE,
+  DEFAULT_ORGANIZATION_DATE_FORMAT,
+  DEFAULT_ORGANIZATION_TIME_FORMAT,
+} from '../constants/organization';
+import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
 
 /**
  * Generic tenant/account root aggregate — deliberately not coupled to
@@ -8,6 +20,10 @@ import { OrganizationStatus, OrganizationType, InstituteKind, CompanySize } from
  */
 export interface IOrganizationSettings {
   timezone?: string;
+  locale?: string;
+  dateFormat?: OrganizationDateFormat;
+  timeFormat?: OrganizationTimeFormat;
+  defaultInterviewLanguage?: SupportedLanguageCode;
 }
 
 export interface IInstituteProfile {
@@ -47,7 +63,23 @@ export interface IOrganization extends Document {
 const organizationSettingsSchema = new Schema<IOrganizationSettings>(
   {
     // India-first product — a sensible default, not a hard requirement.
-    timezone: { type: String, trim: true, default: 'Asia/Kolkata' },
+    timezone: { type: String, trim: true, maxlength: [100, 'Timezone cannot exceed 100 characters'], default: DEFAULT_ORGANIZATION_TIMEZONE },
+    locale: { type: String, trim: true, maxlength: [20, 'Locale cannot exceed 20 characters'], default: DEFAULT_ORGANIZATION_LOCALE },
+    dateFormat: {
+      type: String,
+      enum: { values: Object.values(OrganizationDateFormat), message: '{VALUE} is not a valid date format' },
+      default: DEFAULT_ORGANIZATION_DATE_FORMAT,
+    },
+    timeFormat: {
+      type: String,
+      enum: { values: Object.values(OrganizationTimeFormat), message: '{VALUE} is not a valid time format' },
+      default: DEFAULT_ORGANIZATION_TIME_FORMAT,
+    },
+    defaultInterviewLanguage: {
+      type: String,
+      enum: { values: SUPPORTED_LANGUAGE_CODES, message: '{VALUE} is not a supported interview language' },
+      default: DEFAULT_LANGUAGE_CODE,
+    },
   },
   { _id: false }
 );
