@@ -1,9 +1,20 @@
 import { Router } from 'express';
 import { body, param, query } from 'express-validator';
 import organizationController from '../controllers/OrganizationController';
+import organizationMemberController from '../controllers/OrganizationMemberController';
 import { protect } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 import { OrganizationType, OrganizationStatus, InstituteKind, CompanySize } from '../constants/organization';
+import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
+
+// Client-assignable roles — OWNER can never be assigned via this API; it
+// only ever mirrors Organization.ownerUserId (see ensureOwnerMembership).
+const ASSIGNABLE_MEMBER_ROLES = [
+  OrganizationMemberRole.ADMIN,
+  OrganizationMemberRole.TRAINER,
+  OrganizationMemberRole.RECRUITER,
+  OrganizationMemberRole.MEMBER,
+];
 
 const router = Router();
 
@@ -134,6 +145,51 @@ const listValidation = [
 ];
 
 // ============================================================================
+// Member validators (8B) — owner-only management, no invitations/RBAC yet
+// ============================================================================
+
+const organizationIdValidation = [param('organizationId').isMongoId().withMessage('Invalid organization ID')];
+const memberIdValidation = [param('memberId').isMongoId().withMessage('Invalid member ID')];
+
+const listMembersValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  // Full role enum (including owner) is fine for filtering a list.
+  query('role').optional().isIn(Object.values(OrganizationMemberRole)).withMessage('Invalid role'),
+  query('status').optional().isIn(Object.values(OrganizationMemberStatus)).withMessage('Invalid status'),
+];
+
+const addMemberValidation = [
+  body('userId').notEmpty().withMessage('userId is required').isMongoId().withMessage('userId must be a valid ID'),
+  body('role')
+    .notEmpty()
+    .withMessage('role is required')
+    .isIn(ASSIGNABLE_MEMBER_ROLES)
+    .withMessage(`role must be one of: ${ASSIGNABLE_MEMBER_ROLES.join(', ')}`),
+];
+
+const updateMemberValidation = [
+  // Identity fields are never accepted on update — reject, don't silently ignore.
+  body('userId').not().exists().withMessage('userId cannot be changed'),
+  body('organizationId').not().exists().withMessage('organizationId cannot be changed'),
+  body('joinedAt').not().exists().withMessage('joinedAt cannot be set directly'),
+  body('role')
+    .optional()
+    .isIn(ASSIGNABLE_MEMBER_ROLES)
+    .withMessage(`role must be one of: ${ASSIGNABLE_MEMBER_ROLES.join(', ')}`),
+  body('status')
+    .optional()
+    .isIn(Object.values(OrganizationMemberStatus))
+    .withMessage(`status must be one of: ${Object.values(OrganizationMemberStatus).join(', ')}`),
+  body().custom((value) => {
+    if (value?.role === undefined && value?.status === undefined) {
+      throw new Error('At least one of role or status is required');
+    }
+    return true;
+  }),
+];
+
+// ============================================================================
 // Routes — all owner-scoped; no membership/RBAC yet (Sprint 8)
 // ============================================================================
 
@@ -146,5 +202,44 @@ router.get('/:id', protect, ...idValidation, validate, organizationController.ge
 router.put('/:id', protect, ...idValidation, ...updateValidation, validate, organizationController.updateOrganization);
 
 router.delete('/:id', protect, ...idValidation, validate, organizationController.deleteOrganization);
+
+// ---- Members (8B) ----
+
+router.get(
+  '/:organizationId/members',
+  protect,
+  ...organizationIdValidation,
+  ...listMembersValidation,
+  validate,
+  organizationMemberController.getMembers
+);
+
+router.post(
+  '/:organizationId/members',
+  protect,
+  ...organizationIdValidation,
+  ...addMemberValidation,
+  validate,
+  organizationMemberController.addMember
+);
+
+router.put(
+  '/:organizationId/members/:memberId',
+  protect,
+  ...organizationIdValidation,
+  ...memberIdValidation,
+  ...updateMemberValidation,
+  validate,
+  organizationMemberController.updateMember
+);
+
+router.delete(
+  '/:organizationId/members/:memberId',
+  protect,
+  ...organizationIdValidation,
+  ...memberIdValidation,
+  validate,
+  organizationMemberController.removeMember
+);
 
 export default router;
