@@ -3,6 +3,7 @@ import { body, param, query } from 'express-validator';
 import organizationController from '../controllers/OrganizationController';
 import organizationMemberController from '../controllers/OrganizationMemberController';
 import organizationInvitationController from '../controllers/OrganizationInvitationController';
+import organizationDashboardController from '../controllers/OrganizationDashboardController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -248,6 +249,17 @@ router.put(
 );
 
 router.delete('/:id', protect, ...idValidation, validate, organizationController.deleteOrganization);
+
+// ---- Dashboard (9A) — read-only, persisted-data snapshot. Any active member with ORGANIZATION_VIEW. ----
+
+router.get(
+  '/:organizationId/dashboard',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationDashboardController.getDashboard
+);
 
 // ---- Members (8B API, 8D RBAC) ----
 
