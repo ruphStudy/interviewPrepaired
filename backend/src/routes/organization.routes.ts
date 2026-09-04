@@ -1367,6 +1367,22 @@ router.post(
   employerJobController.updateJobStatus
 );
 
+const listJobStatusHistoryValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+];
+
+router.get(
+  '/:organizationId/jobs/:jobId/status-history',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...listJobStatusHistoryValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobController.getJobStatusHistory
+);
+
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
 
 router.get(

@@ -5,12 +5,15 @@ import { useOrganization } from '../../contexts/OrganizationContext';
 import employerApi, {
   EmployerJob,
   EmployerJobStatus,
+  EmployerJobStatusHistoryRow,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
 } from '../../api/employerApi';
 import { EMPTY_JOB_FORM, JobFormState, jobFormToPayload, jobToFormState } from './jobFormUtils';
-import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2, ChevronRight, History as HistoryIcon } from 'lucide-react';
+
+const HISTORY_PAGE_LIMIT = 20;
 
 const STATUS_LABELS: Record<EmployerJobStatus, string> = {
   draft: 'Draft',
@@ -43,6 +46,7 @@ function actionLabel(currentStatus: EmployerJobStatus, targetStatus: EmployerJob
 const workplaceLabel = (value?: string) => EMPLOYER_JOB_WORKPLACE_TYPES.find((w) => w.value === value)?.label || value;
 const employmentLabel = (value?: string) => EMPLOYER_JOB_EMPLOYMENT_TYPES.find((e) => e.value === value)?.label || value;
 const formatDate = (value?: string) => (value ? new Date(value).toLocaleDateString() : '—');
+const formatDateTime = (value: string) => new Date(value).toLocaleString();
 const formatSalary = (job: EmployerJob) => {
   if (job.salaryMin === undefined && job.salaryMax === undefined) return '—';
   const currency = job.salaryCurrency ? `${job.salaryCurrency} ` : '';
@@ -82,6 +86,13 @@ const EmployerJobDetailPage: React.FC = () => {
 
   const [statusActionPending, setStatusActionPending] = useState<EmployerJobStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusSuccess, setStatusSuccess] = useState<string | null>(null);
+
+  const [history, setHistory] = useState<EmployerJobStatusHistoryRow[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotalPages, setHistoryTotalPages] = useState(1);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -108,11 +119,32 @@ const EmployerJobDetailPage: React.FC = () => {
     }
   }, [organizationId, jobId]);
 
+  const fetchHistory = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const response = await employerApi.getJobStatusHistory(organizationId, jobId, { page: historyPage, limit: HISTORY_PAGE_LIMIT });
+      setHistory(response.data.history);
+      setHistoryTotalPages(Math.max(1, response.data.pagination.pages));
+    } catch (err: any) {
+      setHistoryError(err.message || 'Failed to load status history');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [organizationId, jobId, historyPage]);
+
   useEffect(() => {
     if (!isSyncing && activeOrganization?.type === 'company' && canView) {
       fetchJob();
     }
   }, [isSyncing, activeOrganization, canView, fetchJob]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchHistory();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchHistory]);
 
   const field = <K extends keyof JobFormState>(key: K, value: JobFormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -154,11 +186,24 @@ const EmployerJobDetailPage: React.FC = () => {
       if (!window.confirm(`Are you sure you want to ${verb} this job?`)) return;
     }
     setStatusError(null);
+    setStatusSuccess(null);
     setStatusActionPending(targetStatus);
     try {
+      // No optimistic mutation — `job` only ever updates from the server's
+      // own response, both for the job detail and the history list below.
       const response = await employerApi.updateJobStatus(organizationId, jobId, targetStatus);
       setJob(response.data.job);
       setForm(jobToFormState(response.data.job));
+      setStatusSuccess(`Status updated to ${STATUS_LABELS[response.data.job.status]}.`);
+      setTimeout(() => setStatusSuccess(null), 3000);
+      // Newest change is always on page 1 — if we're already there, refetch
+      // directly; otherwise jump back to page 1 (the effect below refetches
+      // once `historyPage` actually changes).
+      if (historyPage === 1) {
+        await fetchHistory();
+      } else {
+        setHistoryPage(1);
+      }
     } catch (err: any) {
       setStatusError(err.message || 'Failed to update job status');
     } finally {
@@ -284,6 +329,12 @@ const EmployerJobDetailPage: React.FC = () => {
                   <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
                     <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
                     <p className="text-sm text-mentor-error">{statusError}</p>
+                  </div>
+                )}
+                {statusSuccess && (
+                  <div className="flex items-start gap-2 bg-mentor-mint dark:bg-future-success/10 border border-emerald-200 dark:border-future-success/20 rounded-lg p-3 mb-4">
+                    <CheckCircle2 size={16} className="text-mentor-success mt-0.5 shrink-0" />
+                    <p className="text-sm text-mentor-success">{statusSuccess}</p>
                   </div>
                 )}
                 <p className="label mb-2">Status Actions</p>
@@ -575,6 +626,71 @@ const EmployerJobDetailPage: React.FC = () => {
                     <dd className="text-sm text-mentor-text">{formatDate(job.updatedAt)}</dd>
                   </div>
                 </dl>
+              )}
+            </div>
+
+            <div className="card mt-6 p-0 overflow-hidden">
+              <div className="px-6 py-4 border-b border-mentor-border flex items-center gap-2">
+                <HistoryIcon size={18} className="text-mentor-text-muted" />
+                <h2 className="section-title mb-0">Status History</h2>
+              </div>
+              {historyLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : historyError ? (
+                <div className="p-8 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{historyError}</p>
+                  <button onClick={fetchHistory} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : history.length === 0 ? (
+                <div className="p-8 text-center">
+                  <p className="text-sm text-mentor-text-secondary">No status changes yet.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-mentor-border">
+                  {history.map((row) => (
+                    <div key={row.id} className="flex flex-col sm:flex-row sm:items-center gap-2 px-6 py-3.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`badge ${STATUS_BADGE[row.fromStatus]}`}>{STATUS_LABELS[row.fromStatus]}</span>
+                        <span className="text-mentor-text-muted text-xs">&rarr;</span>
+                        <span className={`badge ${STATUS_BADGE[row.toStatus]}`}>{STATUS_LABELS[row.toStatus]}</span>
+                      </div>
+                      <div className="sm:ml-auto text-xs text-mentor-text-muted">
+                        {formatDateTime(row.changedAt)} &middot; by membership {row.changedByMembershipId}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!historyLoading && !historyError && historyTotalPages > 1 && (
+                <div className="px-4 sm:px-6 py-4 border-t border-mentor-border flex items-center justify-between gap-4">
+                  <p className="text-xs text-mentor-text-muted">
+                    Page {historyPage} of {historyTotalPages}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                      disabled={historyPage <= 1}
+                      className="btn btn-secondary px-3 py-2"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      onClick={() => setHistoryPage((p) => Math.min(historyTotalPages, p + 1))}
+                      disabled={historyPage >= historyTotalPages}
+                      className="btn btn-secondary px-3 py-2"
+                      aria-label="Next page"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </>

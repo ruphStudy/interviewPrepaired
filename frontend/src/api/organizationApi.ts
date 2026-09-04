@@ -10,6 +10,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
+import { EmployerJobStatus } from './employerApi';
 
 // ============================================================================
 // Shared enums (mirrors backend constants — values only, never re-derived)
@@ -232,9 +233,31 @@ export interface RecentQuestionSetItem {
   updatedAt: string;
 }
 
+/** Present only for a company organization — undefined (key absent) for an institute. */
+export interface RecentJobItem {
+  id: string;
+  title: string;
+  jobCode?: string;
+  status: EmployerJobStatus;
+  department?: string;
+  updatedAt: string;
+}
+
 export interface DashboardRecentActivity {
   recentInterviews: RecentInterviewItem[];
   recentQuestionSets: RecentQuestionSetItem[];
+  /** Company-only (Sprint 16C) — absent entirely for an institute organization. */
+  recentJobs?: RecentJobItem[];
+}
+
+/** Company-only (Sprint 16C) — absent entirely for an institute organization. */
+export interface DashboardJobsSummary {
+  total: number;
+  draft: number;
+  open: number;
+  paused: number;
+  closed: number;
+  archived: number;
 }
 
 export interface OrganizationDashboard {
@@ -242,6 +265,8 @@ export interface OrganizationDashboard {
   access: OrganizationAccess;
   interviews: DashboardInterviewsSummary;
   questionSets: DashboardQuestionSetsSummary;
+  /** Company-only (Sprint 16C) — undefined for an institute organization; existing institute behavior/typing is otherwise unchanged. */
+  jobs?: DashboardJobsSummary;
   memberSummary: DashboardMemberSummary | null;
   usageSummary: DashboardUsageSummary | null;
   recentActivity: DashboardRecentActivity;

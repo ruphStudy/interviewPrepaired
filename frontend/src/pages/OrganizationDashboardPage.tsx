@@ -16,7 +16,20 @@ import {
   Cpu,
   ClipboardCheck,
   FileText,
+  Briefcase,
+  PenLine,
+  PauseCircle,
+  XCircle,
+  Archive,
 } from 'lucide-react';
+
+const JOB_STATUS_BADGE: Record<string, string> = {
+  draft: 'badge-neutral',
+  open: 'badge-success',
+  paused: 'badge-warning',
+  closed: 'badge-info',
+  archived: 'badge-neutral',
+};
 
 const getStatusBadgeClass = (status: string) => {
   switch (status) {
@@ -157,7 +170,7 @@ const OrganizationDashboardPage: React.FC = () => {
     );
   }
 
-  const { organization, access, interviews, questionSets, memberSummary, usageSummary, recentActivity } = dashboard;
+  const { organization, access, interviews, questionSets, jobs, memberSummary, usageSummary, recentActivity } = dashboard;
   const TypeIcon = organization.type === 'institute' ? GraduationCap : Building2;
 
   const summaryCards = [
@@ -166,6 +179,19 @@ const OrganizationDashboardPage: React.FC = () => {
     { label: 'Completed', value: interviews.completed, icon: CheckCircle2, iconBg: 'bg-mentor-mint' },
     { label: 'Question Sets', value: questionSets.total, icon: FileStack, iconBg: 'bg-mentor-soft' },
   ];
+
+  // Company-only — `jobs` is undefined for an institute organization, so
+  // this row simply never renders there; nothing else about the page changes.
+  const jobSummaryCards = jobs
+    ? [
+        { label: 'Total Jobs', value: jobs.total, icon: Briefcase, iconBg: 'bg-mentor-aqua' },
+        { label: 'Draft', value: jobs.draft, icon: PenLine, iconBg: 'bg-mentor-soft' },
+        { label: 'Open', value: jobs.open, icon: CheckCircle2, iconBg: 'bg-mentor-mint' },
+        { label: 'Paused', value: jobs.paused, icon: PauseCircle, iconBg: 'bg-amber-50' },
+        { label: 'Closed', value: jobs.closed, icon: XCircle, iconBg: 'bg-mentor-soft' },
+        { label: 'Archived', value: jobs.archived, icon: Archive, iconBg: 'bg-mentor-soft' },
+      ]
+    : null;
 
   return (
     <AuthenticatedLayout>
@@ -213,6 +239,39 @@ const OrganizationDashboardPage: React.FC = () => {
             </div>
           ))}
         </div>
+
+        {/* Job summary — company organizations only */}
+        {jobSummaryCards && (
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="section-title flex items-center gap-2 mb-0">
+                <Briefcase size={18} className="text-mentor-text-muted" />
+                Jobs
+              </h2>
+              {hasPermission('organization:view') && (
+                <button
+                  onClick={() => navigate(`/organizations/${organizationId}/employer/jobs`)}
+                  className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  View All
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+              {jobSummaryCards.map(({ label, value, icon: Icon, iconBg }) => (
+                <div key={label} className="card-flat flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-mentor-text-muted mb-1">{label}</p>
+                    <p className="text-2xl font-bold text-mentor-text">{value}</p>
+                  </div>
+                  <div className={`w-10 h-10 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}>
+                    <Icon size={18} className="text-primary-600" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           {/* Member summary — only rendered when the backend actually returned it */}
@@ -365,6 +424,44 @@ const OrganizationDashboardPage: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Recent Jobs — company organizations only */}
+        {recentActivity.recentJobs !== undefined && (
+          <div className="card p-0 overflow-hidden mt-4">
+            <div className="px-6 py-4 border-b border-mentor-border">
+              <h2 className="section-title">Recent Jobs</h2>
+            </div>
+            {recentActivity.recentJobs.length === 0 ? (
+              <div className="p-8 text-center">
+                <p className="text-sm text-mentor-text-secondary">No jobs yet.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-mentor-border">
+                {recentActivity.recentJobs.map((job) => (
+                  <button
+                    key={job.id}
+                    onClick={() => navigate(`/organizations/${organizationId}/employer/jobs/${job.id}`)}
+                    className="flex w-full items-center gap-3 px-6 py-3.5 text-left hover:bg-mentor-surface transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-mentor-aqua flex items-center justify-center shrink-0">
+                      <Briefcase size={16} className="text-primary-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-mentor-text truncate">{job.title}</p>
+                      <p className="text-xs text-mentor-text-muted">
+                        {job.department ? `${job.department} · ` : ''}
+                        {formatDate(job.updatedAt)}
+                      </p>
+                    </div>
+                    <span className={`badge ${JOB_STATUS_BADGE[job.status] || 'badge-neutral'} capitalize shrink-0`}>
+                      {job.status}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </main>
     </AuthenticatedLayout>
   );

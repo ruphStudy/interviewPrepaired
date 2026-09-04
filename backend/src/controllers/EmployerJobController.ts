@@ -166,6 +166,8 @@ export class EmployerJobController {
   /**
    * POST /api/v1/organizations/:organizationId/jobs/:jobId/status
    * Requires INTERVIEWS_MANAGE. The ONLY way a job's status changes.
+   * `changedByMembershipId` is always the caller's own trusted membership id
+   * from organizationContext — never accepted from the request body.
    */
   public updateJobStatus = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
     const context = req.organizationContext;
@@ -176,9 +178,34 @@ export class EmployerJobController {
     const { jobId } = req.params;
     const { status } = req.body;
 
-    const job = await employerJobService.updateJobStatus(context.organizationId, context.role, jobId, status);
+    const job = await employerJobService.updateJobStatus(
+      context.organizationId,
+      context.role,
+      context.member._id.toString(),
+      jobId,
+      status
+    );
 
     res.status(200).json(successResponse('Job status updated successfully', { job }));
+  });
+
+  /**
+   * GET /api/v1/organizations/:organizationId/jobs/:jobId/status-history
+   * Requires ORGANIZATION_VIEW.
+   */
+  public getJobStatusHistory = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { jobId } = req.params;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+
+    const result = await employerJobService.getStatusHistory(context.organizationId, context.role, jobId, { page, limit });
+
+    res.status(200).json(successResponse('Job status history retrieved successfully', result));
   });
 }
 

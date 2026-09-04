@@ -4,6 +4,8 @@ import Interview from '../models/interview.model';
 import QuestionSet from '../models/QuestionSet.model';
 import OrganizationMember from '../models/OrganizationMember.model';
 import OrganizationInvitation from '../models/OrganizationInvitation.model';
+import EmployerJob from '../models/EmployerJob.model';
+import { EmployerJobStatus } from '../constants/employerJob';
 import { OrganizationType } from '../constants/organization';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
@@ -67,6 +69,24 @@ interface MemberSummary {
   // null — pending invitation counts are more sensitive than the rest of
   // the summary and are never included for TRAINER/RECRUITER.
   pendingInvitations: number | null;
+}
+
+interface JobsSummary {
+  total: number;
+  draft: number;
+  open: number;
+  paused: number;
+  closed: number;
+  archived: number;
+}
+
+interface RecentJobItem {
+  id: string;
+  title: string;
+  jobCode?: string;
+  status: EmployerJobStatus;
+  department?: string;
+  updatedAt: Date;
 }
 
 const RECENT_LIMIT = 5;
@@ -203,6 +223,40 @@ export class OrganizationDashboardService {
     };
   }
 
+  /**
+   * Company-only job overview (16C) — status-count summary + the most
+   * recently updated jobs. Only ever called for a COMPANY organization
+   * (see getDashboard below); an institute organization never triggers an
+   * EmployerJob query at all.
+   */
+  private async buildJobsSummary(orgObjectId: Types.ObjectId): Promise<{ summary: JobsSummary; recentJobs: RecentJobItem[] }> {
+    const [total, draft, open, paused, closed, archived, recentJobs] = await Promise.all([
+      EmployerJob.countDocuments({ organizationId: orgObjectId }),
+      EmployerJob.countDocuments({ organizationId: orgObjectId, status: EmployerJobStatus.DRAFT }),
+      EmployerJob.countDocuments({ organizationId: orgObjectId, status: EmployerJobStatus.OPEN }),
+      EmployerJob.countDocuments({ organizationId: orgObjectId, status: EmployerJobStatus.PAUSED }),
+      EmployerJob.countDocuments({ organizationId: orgObjectId, status: EmployerJobStatus.CLOSED }),
+      EmployerJob.countDocuments({ organizationId: orgObjectId, status: EmployerJobStatus.ARCHIVED }),
+      EmployerJob.find({ organizationId: orgObjectId })
+        .select('title jobCode status department updatedAt')
+        .sort({ updatedAt: -1 })
+        .limit(RECENT_LIMIT)
+        .lean(),
+    ]);
+
+    return {
+      summary: { total, draft, open, paused, closed, archived },
+      recentJobs: recentJobs.map((job) => ({
+        id: job._id.toString(),
+        title: job.title,
+        jobCode: job.jobCode,
+        status: job.status,
+        department: job.department,
+        updatedAt: job.updatedAt,
+      })),
+    };
+  }
+
   async getDashboard(organizationId: string, context: DashboardAccessContext): Promise<Record<string, unknown>> {
     const organization = await Organization.findById(organizationId).lean();
     if (!organization) {
@@ -220,6 +274,7 @@ export class OrganizationDashboardService {
       recentQuestionSets,
       memberSummary,
       usageAggregate,
+      jobsResult,
     ] = await Promise.all([
       Interview.countDocuments({ organizationId: orgObjectId }),
       Interview.countDocuments({ organizationId: orgObjectId, status: InterviewStatus.IN_PROGRESS }),
@@ -240,6 +295,10 @@ export class OrganizationDashboardService {
         .lean(),
       this.buildMemberSummary(orgObjectId, context),
       this.buildUsageAggregate(orgObjectId, context),
+      // Company-only — an institute organization never issues an EmployerJob
+      // query at all (the ternary short-circuits before buildJobsSummary is
+      // ever called).
+      organization.type === OrganizationType.COMPANY ? this.buildJobsSummary(orgObjectId) : Promise.resolve(undefined),
     ]);
 
     // Assembled here (not inside buildUsageAggregate) so `interviews.total`
@@ -303,6 +362,10 @@ export class OrganizationDashboardService {
       questionSets: {
         total: totalQuestionSets,
       },
+      // undefined for an institute organization — the key is dropped
+      // entirely on serialization, so the institute dashboard response is
+      // byte-for-byte unchanged.
+      jobs: jobsResult?.summary,
       memberSummary,
       usageSummary,
       recentActivity: {
@@ -320,6 +383,7 @@ export class OrganizationDashboardService {
           createdAt: questionSet.createdAt,
           updatedAt: questionSet.updatedAt,
         })),
+        recentJobs: jobsResult?.recentJobs,
       },
     };
   }

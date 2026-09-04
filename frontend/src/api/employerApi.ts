@@ -149,6 +149,22 @@ export type CreateJobResponse = ApiEnvelope<{ job: EmployerJob }>;
 export type UpdateJobResponse = ApiEnvelope<{ job: EmployerJob }>;
 export type UpdateJobStatusResponse = ApiEnvelope<{ job: EmployerJob }>;
 
+// ============================================================================
+// Job Status History (Sprint 16C) — audit-only read. Never the source of the
+// job's current status (that's always EmployerJob.status itself).
+// ============================================================================
+
+export interface EmployerJobStatusHistoryRow {
+  id: string;
+  fromStatus: EmployerJobStatus;
+  toStatus: EmployerJobStatus;
+  changedByMembershipId: string;
+  changedAt: string;
+  note?: string;
+}
+
+export type ListJobStatusHistoryResponse = ApiEnvelope<{ history: EmployerJobStatusHistoryRow[]; pagination: Pagination }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -267,6 +283,23 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to update job status');
+    }
+  }
+
+  /** Audit-only read, newest first. `changedByMembershipId` is a raw membership id, not resolved to a name — no unrestricted member lookup is used for this. */
+  async getJobStatusHistory(
+    organizationId: string,
+    jobId: string,
+    params: { page?: number; limit?: number } = {}
+  ): Promise<ListJobStatusHistoryResponse> {
+    try {
+      const response = await this.api.get<ListJobStatusHistoryResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/status-history`,
+        { params }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job status history');
     }
   }
 }
