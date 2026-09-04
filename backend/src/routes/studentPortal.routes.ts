@@ -29,4 +29,18 @@ router.get(
   studentPortalController.getAssignmentDetail
 );
 
+router.post(
+  '/assignments/:assignmentId/start',
+  ...assignmentIdValidation,
+  validate,
+  studentPortalController.startAssignment
+);
+
+router.get(
+  '/assignments/:assignmentId/session',
+  ...assignmentIdValidation,
+  validate,
+  studentPortalController.getAssignmentSession
+);
+
 export default router;

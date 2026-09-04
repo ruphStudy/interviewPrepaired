@@ -5,7 +5,13 @@ import InstituteInterviewTemplate from '../models/InstituteInterviewTemplate.mod
 import Organization, { IOrganization } from '../models/Organization.model';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
+import { instituteStudentInterviewAssignmentService } from './InstituteStudentInterviewAssignmentService';
+import { InterviewService } from './InterviewService';
 import { ApiError } from '../utils/ApiError';
+
+// Matches InterviewController's/InstituteStudentInterviewAssignmentService's convention.
+const interviewService = new InterviewService();
+type InterviewSessionResult = Awaited<ReturnType<InterviewService['getInterviewSession']>>;
 
 const MAX_UPCOMING_PER_STUDENT = 5;
 const UPCOMING_STATUSES = [
@@ -289,6 +295,47 @@ export class StudentPortalService {
     ]);
 
     return this.toRow(assignment, studentById.get(assignment.studentId.toString())!, organizationById, templateByKey);
+  }
+
+  /**
+   * Start (13C) — delegates the actual claim/create/link algorithm entirely
+   * to InstituteStudentInterviewAssignmentService.startAssignmentForStudent
+   * (the same shared core the admin 12E route uses), so there is exactly
+   * one start algorithm. No OrganizationMember/RBAC role is faked here —
+   * ownership of an ACTIVE linked InstituteStudent row is the only
+   * authorization. Once started (or idempotently already-started), reloads
+   * the safe portal row and attaches the live session via the existing,
+   * ownership-scoped InterviewService.getInterviewSession — never a second
+   * Interview, never a credit call.
+   */
+  async startAssignment(userId: string, assignmentId: string): Promise<AssignmentRow & { session: InterviewSessionResult }> {
+    await instituteStudentInterviewAssignmentService.startAssignmentForStudent(userId, assignmentId);
+
+    const assignment = await this.getAssignmentDetail(userId, assignmentId);
+    if (!assignment.interviewId) {
+      // Unreachable in practice — startAssignmentForStudent only returns
+      // once interviewId is set — but never fabricate a session otherwise.
+      throw new ApiError(409, 'Interview is not available yet');
+    }
+
+    const session = await interviewService.getInterviewSession({ interviewId: assignment.interviewId, userId });
+    return { ...assignment, session };
+  }
+
+  /**
+   * Resume/refresh (13C) — authorizes through the same ownership-scoped
+   * detail lookup as GET /assignments/:id (404 for anything not owned),
+   * then requires the assignment to have actually been started (409
+   * otherwise) before handing back the live session.
+   */
+  async getAssignmentSession(userId: string, assignmentId: string): Promise<AssignmentRow & { session: InterviewSessionResult }> {
+    const assignment = await this.getAssignmentDetail(userId, assignmentId);
+    if (!assignment.interviewId) {
+      throw new ApiError(409, 'Interview has not been started yet');
+    }
+
+    const session = await interviewService.getInterviewSession({ interviewId: assignment.interviewId, userId });
+    return { ...assignment, session };
   }
 
   /** The sole source of authorized {organizationId, studentId} pairs for a caller. */

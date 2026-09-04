@@ -55,6 +55,30 @@ export class StudentPortalController {
 
     res.status(200).json(successResponse('Assignment retrieved successfully', { assignment }));
   });
+
+  /** POST /api/v1/student-portal/assignments/:assignmentId/start */
+  public startAssignment = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    if (!req.user) {
+      throw new ApiError(401, 'Not authorized to access this route');
+    }
+
+    const { assignmentId } = req.params;
+    const result = await studentPortalService.startAssignment(req.user._id.toString(), assignmentId);
+
+    res.status(200).json(successResponse('Interview started successfully', result));
+  });
+
+  /** GET /api/v1/student-portal/assignments/:assignmentId/session */
+  public getAssignmentSession = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    if (!req.user) {
+      throw new ApiError(401, 'Not authorized to access this route');
+    }
+
+    const { assignmentId } = req.params;
+    const result = await studentPortalService.getAssignmentSession(req.user._id.toString(), assignmentId);
+
+    res.status(200).json(successResponse('Interview session retrieved successfully', result));
+  });
 }
 
 export default new StudentPortalController();

@@ -184,17 +184,8 @@ export class InstituteStudentInterviewAssignmentService {
   }
 
   /**
-   * Starts an assignment (12E): atomically claims it (ASSIGNED ->
-   * IN_PROGRESS) so two concurrent start requests can never both create an
-   * Interview, then validates student/template/questionSet (all re-scoped
-   * to this organization) and creates a real uploaded-mode Interview via
-   * InterviewService.createInstituteUploadedInterview — which deliberately
-   * never touches personal credits/subscriptions. If anything fails after
-   * the claim, the assignment is safely reverted to ASSIGNED (only if still
-   * owned by this failed start, i.e. still IN_PROGRESS with no interviewId
-   * yet). A repeated call after a successful start is idempotent: it
-   * returns the same assignment/interviewId instead of creating a second
-   * Interview.
+   * Admin start (12E) — RBAC-gated, then the shared core. `organizationId`
+   * is the caller's trusted organization from `organizationContext`.
    */
   async startAssignment(
     organizationId: string,
@@ -202,7 +193,62 @@ export class InstituteStudentInterviewAssignmentService {
     assignmentId: string
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
-    const organization = await this.getOrganizationById(organizationId);
+    return this.startAssignmentCore(assignmentId, { organizationId: new Types.ObjectId(organizationId) });
+  }
+
+  /**
+   * Student self-service start (13C) — no OrganizationMember/RBAC role is
+   * faked or required; the caller authorizes strictly by owning an ACTIVE
+   * InstituteStudent row. `authScope` becomes an `$or` of every
+   * {organizationId, studentId} pair the caller actually owns, so the
+   * shared core's `_id` + authScope match can never touch an assignment
+   * outside those pairs — cross-user/cross-org/nonexistent are all
+   * indistinguishable 404s.
+   */
+  async startAssignmentForStudent(userId: string, assignmentId: string): Promise<Record<string, unknown>> {
+    const students = await InstituteStudent.find({
+      userId: new Types.ObjectId(userId),
+      status: InstituteStudentStatus.ACTIVE,
+    })
+      .select('organizationId')
+      .lean();
+
+    if (students.length === 0) {
+      throw new ApiError(404, 'Assignment not found');
+    }
+
+    const authScope = { $or: students.map((s) => ({ organizationId: s.organizationId, studentId: s._id })) };
+    return this.startAssignmentCore(assignmentId, authScope);
+  }
+
+  /**
+   * Shared start core (12E/13C) — one algorithm for both actors. `authScope`
+   * is ANDed with `_id` on the initial read AND on the atomic claim, so an
+   * unauthorized caller never even learns an assignment exists (404) rather
+   * than being told it's in the wrong state. Atomically claims
+   * (ASSIGNED -> IN_PROGRESS) so two concurrent start requests can never
+   * both create an Interview, then validates student/template/questionSet
+   * (all re-scoped to the assignment's own organization) and creates a real
+   * uploaded-mode Interview via InterviewService.createInstituteUploadedInterview
+   * — which deliberately never touches personal credits/subscriptions. If
+   * anything fails after the claim, the assignment is safely reverted to
+   * ASSIGNED (only if still owned by this failed start, i.e. still
+   * IN_PROGRESS with no interviewId yet). A repeated call after a
+   * successful start is idempotent: it returns the same
+   * assignment/interviewId instead of creating a second Interview.
+   */
+  private async startAssignmentCore(
+    assignmentId: string,
+    authScope: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    // Read-only authorization check first — an unauthorized assignmentId
+    // never even reaches the claim attempt.
+    const target = await InstituteStudentInterviewAssignment.findOne({ _id: assignmentId, ...authScope }).lean();
+    if (!target) {
+      throw new ApiError(404, 'Assignment not found');
+    }
+
+    const organization = await this.getOrganizationById(target.organizationId.toString());
     this.assertIsInstitute(organization);
     this.assertOrganizationMutable(organization);
 
