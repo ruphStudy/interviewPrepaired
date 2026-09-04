@@ -6,14 +6,32 @@ import employerApi, {
   EmployerJob,
   EmployerJobStatus,
   EmployerJobStatusHistoryRow,
+  HiringTeamMember,
+  AvailableMember,
+  EmployerJobHiringTeamRole,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
+  EMPLOYER_JOB_HIRING_TEAM_ROLES,
 } from '../../api/employerApi';
 import { EMPTY_JOB_FORM, JobFormState, jobFormToPayload, jobToFormState } from './jobFormUtils';
-import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2, ChevronRight, History as HistoryIcon } from 'lucide-react';
+import {
+  AlertCircle,
+  Loader2,
+  ChevronLeft,
+  Pencil,
+  CheckCircle2,
+  ChevronRight,
+  History as HistoryIcon,
+  Users,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 
 const HISTORY_PAGE_LIMIT = 20;
+
+const hiringTeamRoleLabel = (role: EmployerJobHiringTeamRole) =>
+  EMPLOYER_JOB_HIRING_TEAM_ROLES.find((r) => r.value === role)?.label || role;
 
 const STATUS_LABELS: Record<EmployerJobStatus, string> = {
   draft: 'Draft',
@@ -94,6 +112,21 @@ const EmployerJobDetailPage: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
+  const [hiringTeam, setHiringTeam] = useState<HiringTeamMember[]>([]);
+  const [hiringTeamLoading, setHiringTeamLoading] = useState(true);
+  const [hiringTeamError, setHiringTeamError] = useState<string | null>(null);
+  const [teamActionError, setTeamActionError] = useState<string | null>(null);
+
+  const [availableMembers, setAvailableMembers] = useState<AvailableMember[]>([]);
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [addMembershipId, setAddMembershipId] = useState('');
+  const [addRole, setAddRole] = useState<EmployerJobHiringTeamRole>('recruiter');
+  const [addSubmitting, setAddSubmitting] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const [roleUpdatingId, setRoleUpdatingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -145,6 +178,89 @@ const EmployerJobDetailPage: React.FC = () => {
       fetchHistory();
     }
   }, [isSyncing, activeOrganization, canView, fetchHistory]);
+
+  const fetchHiringTeam = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setHiringTeamLoading(true);
+    setHiringTeamError(null);
+    try {
+      const response = await employerApi.getHiringTeam(organizationId, jobId);
+      setHiringTeam(response.data.hiringTeam);
+    } catch (err: any) {
+      setHiringTeamError(err.message || 'Failed to load hiring team');
+    } finally {
+      setHiringTeamLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchHiringTeam();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchHiringTeam]);
+
+  const handleOpenAddMember = async () => {
+    if (!organizationId || !jobId) return;
+    setAddError(null);
+    setAddMembershipId('');
+    setAddRole('recruiter');
+    setShowAddMember(true);
+    try {
+      const response = await employerApi.getAvailableMembers(organizationId, jobId);
+      setAvailableMembers(response.data.members);
+    } catch (err: any) {
+      setAddError(err.message || 'Failed to load available members');
+    }
+  };
+
+  const handleAddMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !jobId) return;
+    if (!addMembershipId) {
+      setAddError('Select a member');
+      return;
+    }
+    setAddSubmitting(true);
+    setAddError(null);
+    try {
+      await employerApi.addHiringTeamMember(organizationId, jobId, { membershipId: addMembershipId, role: addRole });
+      setShowAddMember(false);
+      await fetchHiringTeam();
+    } catch (err: any) {
+      setAddError(err.message || 'Failed to add hiring team member');
+    } finally {
+      setAddSubmitting(false);
+    }
+  };
+
+  const handleRoleChange = async (teamMemberId: string, role: EmployerJobHiringTeamRole) => {
+    if (!organizationId || !jobId) return;
+    setTeamActionError(null);
+    setRoleUpdatingId(teamMemberId);
+    try {
+      await employerApi.updateHiringTeamMemberRole(organizationId, jobId, teamMemberId, role);
+      await fetchHiringTeam();
+    } catch (err: any) {
+      setTeamActionError(err.message || 'Failed to update role');
+    } finally {
+      setRoleUpdatingId(null);
+    }
+  };
+
+  const handleRemoveMember = async (row: HiringTeamMember) => {
+    if (!organizationId || !jobId) return;
+    if (!window.confirm(`Remove ${row.member?.name || 'this member'} from the hiring team?`)) return;
+    setTeamActionError(null);
+    setRemovingId(row.id);
+    try {
+      await employerApi.removeHiringTeamMember(organizationId, jobId, row.id);
+      await fetchHiringTeam();
+    } catch (err: any) {
+      setTeamActionError(err.message || 'Failed to remove hiring team member');
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
   const field = <K extends keyof JobFormState>(key: K, value: JobFormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -692,6 +808,150 @@ const EmployerJobDetailPage: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+
+            <div className="card mt-6">
+              {(() => {
+                const canManageTeam = canManage && job.status !== 'archived';
+                return (
+                  <>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="section-title flex items-center gap-2 mb-0">
+                        <Users size={18} className="text-mentor-text-muted" />
+                        Hiring Team
+                      </h2>
+                      {canManageTeam && !showAddMember && (
+                        <button onClick={handleOpenAddMember} className="btn btn-secondary">
+                          <Plus size={16} />
+                          Add Member
+                        </button>
+                      )}
+                    </div>
+
+                    {job.status === 'archived' && (
+                      <p className="text-xs text-mentor-text-muted mb-4">
+                        This job is archived — its hiring team is read-only.
+                      </p>
+                    )}
+
+                    {showAddMember && (
+                      <form onSubmit={handleAddMember} className="surface-muted p-4 mb-4 space-y-3">
+                        {addError && (
+                          <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3">
+                            <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                            <p className="text-sm text-mentor-error">{addError}</p>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="label">Member</label>
+                            <select value={addMembershipId} onChange={(e) => setAddMembershipId(e.target.value)} className="input">
+                              <option value="">Select a member</option>
+                              {availableMembers.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name || m.email || m.id} ({m.organizationRole})
+                                </option>
+                              ))}
+                            </select>
+                            {availableMembers.length === 0 && (
+                              <p className="text-xs text-mentor-text-muted mt-1">No available members to add.</p>
+                            )}
+                          </div>
+                          <div>
+                            <label className="label">Hiring Team Role</label>
+                            <select
+                              value={addRole}
+                              onChange={(e) => setAddRole(e.target.value as EmployerJobHiringTeamRole)}
+                              className="input"
+                            >
+                              {EMPLOYER_JOB_HIRING_TEAM_ROLES.map((r) => (
+                                <option key={r.value} value={r.value}>
+                                  {r.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button type="submit" disabled={addSubmitting} className="btn btn-primary">
+                            {addSubmitting ? 'Adding...' : 'Add'}
+                          </button>
+                          <button type="button" onClick={() => setShowAddMember(false)} className="btn btn-secondary">
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {teamActionError && (
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{teamActionError}</p>
+                      </div>
+                    )}
+
+                    {hiringTeamLoading ? (
+                      <div className="p-8 text-center">
+                        <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                      </div>
+                    ) : hiringTeamError ? (
+                      <div className="p-8 text-center">
+                        <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                        <p className="text-sm text-mentor-text-secondary mb-4">{hiringTeamError}</p>
+                        <button onClick={fetchHiringTeam} className="btn btn-primary">
+                          Try Again
+                        </button>
+                      </div>
+                    ) : hiringTeam.length === 0 ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">No hiring team members yet.</p>
+                    ) : (
+                      <div className="divide-y divide-mentor-border">
+                        {hiringTeam.map((row) => (
+                          <div key={row.id} className="flex flex-col sm:flex-row sm:items-center gap-3 py-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-mentor-text truncate">
+                                {row.member?.name || row.member?.email || row.membershipId}
+                              </p>
+                              <p className="text-xs text-mentor-text-muted">
+                                {row.member?.email || '—'} &middot; org role: {row.member?.organizationRole || '—'} &middot; added{' '}
+                                {formatDate(row.createdAt)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {canManageTeam ? (
+                                <select
+                                  value={row.role}
+                                  onChange={(e) => handleRoleChange(row.id, e.target.value as EmployerJobHiringTeamRole)}
+                                  disabled={roleUpdatingId === row.id || removingId === row.id}
+                                  className="input py-1.5 text-xs w-auto"
+                                >
+                                  {EMPLOYER_JOB_HIRING_TEAM_ROLES.map((r) => (
+                                    <option key={r.value} value={r.value}>
+                                      {r.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="badge badge-info">{hiringTeamRoleLabel(row.role)}</span>
+                              )}
+                              {canManageTeam && (
+                                <button
+                                  onClick={() => handleRemoveMember(row)}
+                                  disabled={roleUpdatingId === row.id || removingId === row.id}
+                                  className="btn btn-secondary px-3 py-1.5 text-xs"
+                                  aria-label="Remove hiring team member"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </>
         )}

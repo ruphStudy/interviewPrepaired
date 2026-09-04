@@ -165,6 +165,49 @@ export interface EmployerJobStatusHistoryRow {
 
 export type ListJobStatusHistoryResponse = ApiEnvelope<{ history: EmployerJobStatusHistoryRow[]; pagination: Pagination }>;
 
+// ============================================================================
+// Job Hiring Team (Sprint 16D) — job-LOCAL role assignments over existing,
+// active, same-organization members. Never creates a member and never
+// changes the member's organization-wide role/status.
+// ============================================================================
+
+export type EmployerJobHiringTeamRole = 'hiring_manager' | 'recruiter' | 'interviewer' | 'viewer';
+
+export const EMPLOYER_JOB_HIRING_TEAM_ROLES: Array<{ value: EmployerJobHiringTeamRole; label: string }> = [
+  { value: 'hiring_manager', label: 'Hiring Manager' },
+  { value: 'recruiter', label: 'Recruiter' },
+  { value: 'interviewer', label: 'Interviewer' },
+  { value: 'viewer', label: 'Viewer' },
+];
+
+export interface HiringTeamMember {
+  id: string;
+  membershipId: string;
+  role: EmployerJobHiringTeamRole;
+  member?: {
+    name?: string;
+    email?: string;
+    organizationRole: string;
+    status: string;
+  };
+  addedByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Minimal, safe row for the add-member dropdown — never broader member metadata. */
+export interface AvailableMember {
+  id: string;
+  name?: string;
+  email?: string;
+  organizationRole: string;
+}
+
+export type ListHiringTeamResponse = ApiEnvelope<{ hiringTeam: HiringTeamMember[] }>;
+export type ListAvailableMembersResponse = ApiEnvelope<{ members: AvailableMember[] }>;
+export type AddHiringTeamMemberResponse = ApiEnvelope<{ teamMember: HiringTeamMember }>;
+export type UpdateHiringTeamMemberResponse = ApiEnvelope<{ teamMember: HiringTeamMember }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -300,6 +343,70 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load job status history');
+    }
+  }
+
+  // ---- Job Hiring Team (Sprint 16D) ----
+
+  async getHiringTeam(organizationId: string, jobId: string): Promise<ListHiringTeamResponse> {
+    try {
+      const response = await this.api.get<ListHiringTeamResponse>(`/organizations/${organizationId}/jobs/${jobId}/hiring-team`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load hiring team');
+    }
+  }
+
+  /** Safe to call even when the caller lacks members:view — this dedicated endpoint only requires interviews:manage. */
+  async getAvailableMembers(organizationId: string, jobId: string): Promise<ListAvailableMembersResponse> {
+    try {
+      const response = await this.api.get<ListAvailableMembersResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/hiring-team/available-members`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load available members');
+    }
+  }
+
+  async addHiringTeamMember(
+    organizationId: string,
+    jobId: string,
+    payload: { membershipId: string; role: EmployerJobHiringTeamRole }
+  ): Promise<AddHiringTeamMemberResponse> {
+    try {
+      const response = await this.api.post<AddHiringTeamMemberResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/hiring-team`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to add hiring team member');
+    }
+  }
+
+  async updateHiringTeamMemberRole(
+    organizationId: string,
+    jobId: string,
+    teamMemberId: string,
+    role: EmployerJobHiringTeamRole
+  ): Promise<UpdateHiringTeamMemberResponse> {
+    try {
+      const response = await this.api.put<UpdateHiringTeamMemberResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/hiring-team/${teamMemberId}`,
+        { role }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update hiring team member');
+    }
+  }
+
+  async removeHiringTeamMember(organizationId: string, jobId: string, teamMemberId: string): Promise<void> {
+    try {
+      await this.api.delete(`/organizations/${organizationId}/jobs/${jobId}/hiring-team/${teamMemberId}`);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to remove hiring team member');
     }
   }
 }

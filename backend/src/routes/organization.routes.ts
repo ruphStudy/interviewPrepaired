@@ -22,6 +22,7 @@ import instituteTrainerBatchReadinessController from '../controllers/InstituteTr
 import instituteInterviewCreditController from '../controllers/InstituteInterviewCreditController';
 import instituteBatchReadinessController from '../controllers/InstituteBatchReadinessController';
 import employerJobController from '../controllers/EmployerJobController';
+import employerJobHiringTeamController from '../controllers/EmployerJobHiringTeamController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -41,6 +42,7 @@ import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { EmployerJobStatus, EmployerJobWorkplaceType, EmployerJobEmploymentType } from '../constants/employerJob';
+import { EmployerJobHiringTeamRole } from '../constants/employerJobHiringTeam';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
@@ -1381,6 +1383,112 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobController.getJobStatusHistory
+);
+
+// ============================================================================
+// Job Hiring Team (16D) — job-LOCAL role assignments over EXISTING, ACTIVE,
+// same-organization OrganizationMember rows. Never creates a member, never
+// changes OrganizationMember.role/status. Reads use ORGANIZATION_VIEW;
+// mutations (add/update/remove) and the available-members lookup use
+// INTERVIEWS_MANAGE. Archived organization: reads allowed, mutations
+// blocked (409, enforced service-side); an archived JOB additionally blocks
+// mutations regardless of organization status.
+// ============================================================================
+
+const teamMemberIdValidation = [param('teamMemberId').isMongoId().withMessage('Invalid team member ID')];
+
+const HIRING_TEAM_ADD_FIELD_KEYS = ['membershipId', 'role'];
+const HIRING_TEAM_UPDATE_FIELD_KEYS = ['role'];
+
+const addHiringTeamMemberValidation = [
+  body('membershipId').notEmpty().withMessage('membershipId is required').isMongoId().withMessage('Invalid membershipId'),
+  body('role')
+    .notEmpty()
+    .withMessage('role is required')
+    .isIn(Object.values(EmployerJobHiringTeamRole))
+    .withMessage('Invalid role'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const unknownKeys = Object.keys(value).filter((key) => !HIRING_TEAM_ADD_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    return true;
+  }),
+];
+
+const updateHiringTeamMemberValidation = [
+  body('role')
+    .notEmpty()
+    .withMessage('role is required')
+    .isIn(Object.values(EmployerJobHiringTeamRole))
+    .withMessage('Invalid role'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const unknownKeys = Object.keys(value).filter((key) => !HIRING_TEAM_UPDATE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    return true;
+  }),
+];
+
+router.get(
+  '/:organizationId/jobs/:jobId/hiring-team',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobHiringTeamController.getHiringTeam
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId/hiring-team/available-members',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobHiringTeamController.getAvailableMembers
+);
+
+router.post(
+  '/:organizationId/jobs/:jobId/hiring-team',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...addHiringTeamMemberValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobHiringTeamController.addHiringTeamMember
+);
+
+router.put(
+  '/:organizationId/jobs/:jobId/hiring-team/:teamMemberId',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...teamMemberIdValidation,
+  ...updateHiringTeamMemberValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobHiringTeamController.updateHiringTeamMember
+);
+
+router.delete(
+  '/:organizationId/jobs/:jobId/hiring-team/:teamMemberId',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...teamMemberIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobHiringTeamController.removeHiringTeamMember
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
