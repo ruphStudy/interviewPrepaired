@@ -16,6 +16,7 @@ import instituteStudentInterviewAssignmentController from '../controllers/Instit
 import instituteTrainerDashboardController from '../controllers/InstituteTrainerDashboardController';
 import instituteTrainerStudentReportController from '../controllers/InstituteTrainerStudentReportController';
 import instituteTrainerBatchAnalyticsController from '../controllers/InstituteTrainerBatchAnalyticsController';
+import instituteTrainerSkillGapController from '../controllers/InstituteTrainerSkillGapController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -1538,6 +1539,18 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
   instituteTrainerBatchAnalyticsController.getBatchAnalytics
+);
+
+// ---- Institute Trainer Skill-Gap Analytics (14D) — read-only, derived entirely from already-persisted evaluation data (no AI calls). Same batch scope as 14C. Archived org: read allowed. ----
+
+router.get(
+  '/:organizationId/trainer-batches/:batchId/skill-gaps',
+  protect,
+  ...organizationIdValidation,
+  ...batchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  instituteTrainerSkillGapController.getSkillGaps
 );
 
 // ---- Members (8B API, 8D RBAC) ----
