@@ -7,6 +7,7 @@ import subscriptionRoutes from './subscription.routes';
 import questionSetRoutes from './questionSet.routes';
 import organizationRoutes from './organization.routes';
 import organizationInvitationRoutes from './organizationInvitation.routes';
+import studentPortalRoutes from './studentPortal.routes';
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use('/subscription', subscriptionRoutes);
 router.use('/question-sets', questionSetRoutes);
 router.use('/organizations', organizationRoutes);
 router.use('/organization-invitations', organizationInvitationRoutes);
+router.use('/student-portal', studentPortalRoutes);
 
 export default router;
