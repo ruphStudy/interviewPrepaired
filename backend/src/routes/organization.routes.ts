@@ -15,6 +15,7 @@ import instituteInterviewTemplateController from '../controllers/InstituteInterv
 import instituteStudentInterviewAssignmentController from '../controllers/InstituteStudentInterviewAssignmentController';
 import instituteTrainerDashboardController from '../controllers/InstituteTrainerDashboardController';
 import instituteTrainerStudentReportController from '../controllers/InstituteTrainerStudentReportController';
+import instituteTrainerBatchAnalyticsController from '../controllers/InstituteTrainerBatchAnalyticsController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -1525,6 +1526,18 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.REPORTS_VIEW),
   instituteTrainerStudentReportController.getReportDetail
+);
+
+// ---- Institute Trainer Batch Analytics (14C) — read-only, scoped to a batch inside the calling TRAINER's own course/batch assignments. Institute-only; OWNER/ADMIN cannot impersonate a trainer here (checked service-side). Archived org: read allowed. ----
+
+router.get(
+  '/:organizationId/trainer-batches/:batchId/analytics',
+  protect,
+  ...organizationIdValidation,
+  ...batchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  instituteTrainerBatchAnalyticsController.getBatchAnalytics
 );
 
 // ---- Members (8B API, 8D RBAC) ----
