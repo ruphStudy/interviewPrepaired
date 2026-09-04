@@ -10,8 +10,12 @@ import {
   CreditCard,
   Wallet,
   Settings as SettingsIcon,
+  Building2,
+  Users,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useOrganization } from '../contexts/OrganizationContext';
+import OrganizationSwitcher from './OrganizationSwitcher';
 
 interface SidebarProps {
   /** Called after a nav link is clicked — lets the mobile drawer close itself. */
@@ -49,8 +53,18 @@ const getInitials = (name: string) =>
 const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   const location = useLocation();
   const { user, isAdmin } = useAuth();
+  const { activeOrganization, activeOrganizationId, hasPermission } = useOrganization();
 
   const isActive = (path: string) => location.pathname.startsWith(path);
+
+  const orgNavItems = activeOrganization
+    ? [
+        { to: `/organizations/${activeOrganizationId}/profile`, label: 'Organization Profile', icon: Building2 },
+        ...(hasPermission('members:view')
+          ? [{ to: `/organizations/${activeOrganizationId}/members`, label: 'Members', icon: Users }]
+          : []),
+      ]
+    : [];
 
   const renderNavLink = ({ to, label, icon: Icon }: (typeof MAIN_NAV_ITEMS)[number]) => {
     const active = isActive(to);
@@ -96,9 +110,20 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
         )}
       </div>
 
+      <OrganizationSwitcher onNavigate={onNavigate} />
+
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-1">
         {MAIN_NAV_ITEMS.map(renderNavLink)}
+
+        {orgNavItems.length > 0 && (
+          <>
+            <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
+              {activeOrganization!.name}
+            </p>
+            {orgNavItems.map(renderNavLink)}
+          </>
+        )}
 
         <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
           Account

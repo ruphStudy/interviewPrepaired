@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
+import { OrganizationProvider } from './contexts/OrganizationContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -14,16 +15,23 @@ import SettingsPage from './pages/SettingsPage';
 import HistoryPage from './pages/HistoryPage';
 import AccountPage from './pages/AccountPage';
 import CreditHistoryPage from './pages/CreditHistoryPage';
+import CreateOrganizationPage from './pages/CreateOrganizationPage';
+import OrganizationProfilePage from './pages/OrganizationProfilePage';
+import OrganizationMembersPage from './pages/OrganizationMembersPage';
+import AcceptInvitationPage from './pages/AcceptInvitationPage';
 
 function App() {
   return (
     <AuthProvider>
+      <OrganizationProvider>
       <Router>
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          
+          {/* Public — mirrors the backend's own public invitation-preview endpoint. Accepting still requires auth (handled inside the page). */}
+          <Route path="/accept-invite/:token" element={<AcceptInvitationPage />} />
+
           {/* Protected Routes */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route
@@ -107,6 +115,32 @@ function App() {
             }
           />
 
+          {/* Organization Routes (UI-02) */}
+          <Route
+            path="/organizations/new"
+            element={
+              <ProtectedRoute>
+                <CreateOrganizationPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/profile"
+            element={
+              <ProtectedRoute>
+                <OrganizationProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/members"
+            element={
+              <ProtectedRoute>
+                <OrganizationMembersPage />
+              </ProtectedRoute>
+            }
+          />
+
           {/* Admin Routes */}
           <Route
             path="/admin"
@@ -118,6 +152,7 @@ function App() {
           />
         </Routes>
       </Router>
+      </OrganizationProvider>
     </AuthProvider>
   );
 }

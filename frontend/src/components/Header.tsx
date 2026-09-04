@@ -18,6 +18,9 @@ function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/pricing')) return 'Pricing';
   if (pathname.startsWith('/account/credits')) return 'Credit History';
   if (pathname.startsWith('/account')) return 'Account & Credits';
+  if (pathname.startsWith('/organizations/new')) return 'Create Organization';
+  if (pathname.includes('/members')) return 'Members';
+  if (pathname.startsWith('/organizations')) return 'Organization Profile';
   if (pathname.startsWith('/profile')) return 'Profile';
   if (pathname.startsWith('/settings')) return 'Settings';
   return 'Dashboard';
