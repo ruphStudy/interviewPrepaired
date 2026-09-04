@@ -5,7 +5,16 @@ import {
   OrganizationCreditLedgerReferenceType,
 } from '../models/OrganizationInterviewCreditLedger.model';
 import { OrganizationInterviewCreditBalance } from '../models/OrganizationInterviewCreditBalance.model';
+import { OrganizationInterviewCreditOperation } from '../models/OrganizationInterviewCreditOperation.model';
 import { ApiError, OrganizationInsufficientCreditsError } from '../utils/ApiError';
+
+const CLAIM_POLL_MAX_ATTEMPTS = 10;
+const CLAIM_POLL_DELAY_MS = 50;
+const COMPENSATE_MAX_ATTEMPTS = 5;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface ApplyMutationParams {
   organizationId: string;
@@ -58,33 +67,74 @@ function assertPositiveInteger(amount: number, label = 'amount'): void {
  * and its rows can, in principle, be gapless-but-unordered relative to
  * concurrent mutations; only OrganizationInterviewCreditBalance.balance
  * (read via getBalance()) is authoritative.
+ *
+ * Idempotency: a same-key retry must never mutate balance twice, and
+ * compensating a balance mutation AFTER the fact is not sufficient on its
+ * own (an unrelated concurrent consume could spend a temporary duplicate
+ * credit before compensation runs). So the idempotencyKey is CLAIMED in
+ * OrganizationInterviewCreditOperation — a separate collection, unique on
+ * {organizationId, idempotencyKey} — BEFORE any balance mutation is
+ * attempted. Only the claim's owner may mutate balance; every other
+ * concurrent caller for that exact key recovers the completed result
+ * instead. See claimIdempotencyKey().
  */
 class OrganizationInterviewCreditService {
   /**
    * Core mutation primitive — every credit-changing method funnels through
-   * this. Performs the atomic balance mutation FIRST, then appends the
-   * ledger row as a separate, non-atomic write carrying that mutation's
-   * resulting balance as `balanceAfter` (a point-in-time audit snapshot,
-   * not a claim that the two writes are joined). See the class-level doc
-   * for why the ledger is never the balance source of truth.
-   *
-   * Idempotency: if idempotencyKey matches an existing ledger row, that row
-   * is returned unchanged — no balance mutation, no duplicate row. If two
-   * concurrent calls race past that check with the same key, the balance
-   * mutation that loses the ledger insert (duplicate key) is compensated
-   * (reversed) so ONLY that losing mutation's own delta is undone, and the
-   * winning row is returned instead — the credit operation is never applied
-   * twice.
+   * this. Without an idempotencyKey there is nothing to serialize, so the
+   * mutation runs directly (compensating, unclamped-risk-free, if the
+   * ledger append then fails). WITH an idempotencyKey, the key is claimed
+   * BEFORE any balance mutation via `claimIdempotencyKey` — only the
+   * caller that wins the claim may mutate balance; every other concurrent
+   * caller for that exact {organizationId, idempotencyKey} recovers the
+   * completed result and never touches balance itself. See the class-level
+   * doc for why the ledger is never the balance source of truth.
    */
   private async applyLedgerMutation(params: ApplyMutationParams): Promise<IOrganizationInterviewCreditLedger> {
-    const { organizationId, type, amount, idempotencyKey, requireSufficientBalance } = params;
+    const { organizationId, idempotencyKey } = params;
 
-    if (idempotencyKey) {
-      const existing = await OrganizationInterviewCreditLedger.findOne({ idempotencyKey });
-      if (existing) {
-        return existing;
-      }
+    if (!idempotencyKey) {
+      return this.mutateAndAppendLedger(params);
     }
+
+    const claim = await this.claimIdempotencyKey(organizationId, idempotencyKey);
+    if (claim !== 'claimed') {
+      // A concurrent/prior call already completed this exact key — recover
+      // its result. Balance was never touched by this call.
+      return claim;
+    }
+
+    // We now exclusively own this {organizationId, idempotencyKey} claim —
+    // no other caller for this exact key can mutate balance concurrently.
+    try {
+      const transaction = await this.mutateAndAppendLedger(params);
+      await OrganizationInterviewCreditOperation.updateOne(
+        { organizationId, idempotencyKey, status: 'PENDING' },
+        { $set: { status: 'COMPLETED', ledgerTransactionId: transaction._id } }
+      );
+      return transaction;
+    } catch (error) {
+      // Whether the failure happened before or after the balance mutation,
+      // mutateAndAppendLedger has already compensated any balance change it
+      // made (see below) — this claim just needs to be released so a
+      // legitimate retry with the same key can revive it.
+      await OrganizationInterviewCreditOperation.updateOne(
+        { organizationId, idempotencyKey, status: 'PENDING' },
+        { $set: { status: 'FAILED' } }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Mutates balance then appends the ledger row. If the balance mutation
+   * itself fails (e.g. insufficient credit), nothing was changed, so there
+   * is nothing to compensate. If the mutation SUCCEEDS but the ledger
+   * append then fails for any reason, this compensates (reverses) exactly
+   * this mutation's own delta before rethrowing — never someone else's.
+   */
+  private async mutateAndAppendLedger(params: ApplyMutationParams): Promise<IOrganizationInterviewCreditLedger> {
+    const { organizationId, type, amount, idempotencyKey, requireSufficientBalance } = params;
 
     const resultingBalance = await this.atomicallyMutateBalance(organizationId, amount, requireSufficientBalance);
 
@@ -101,18 +151,106 @@ class OrganizationInterviewCreditService {
         description: params.description,
         metadata: params.metadata,
       });
-    } catch (error: any) {
-      if (idempotencyKey && error?.code === 11000) {
-        // Lost the race on the idempotency key — undo ONLY this mutation's
-        // own delta and return the row the winning call created, so the
-        // operation is never double-applied.
-        await OrganizationInterviewCreditBalance.updateOne({ organizationId }, { $inc: { balance: -amount } });
-        const existing = await OrganizationInterviewCreditLedger.findOne({ idempotencyKey });
-        if (existing) {
-          return existing;
+    } catch (error) {
+      await this.compensateBalance(organizationId, amount);
+      throw error;
+    }
+  }
+
+  /**
+   * Atomically claims an {organizationId, idempotencyKey} pair BEFORE any
+   * balance mutation is attempted — this is what actually prevents two
+   * concurrent same-key callers from both mutating balance (compensating
+   * afterward is not sufficient: an unrelated concurrent consume could
+   * spend a temporary duplicate credit before compensation runs).
+   *
+   * Returns 'claimed' when THIS call now exclusively owns a PENDING claim
+   * and must proceed to mutate balance. Returns the existing ledger
+   * transaction when the key was already completed — the caller must NOT
+   * mutate balance in that case, only recover the transaction that resulted.
+   *
+   * A FAILED claim (a prior owner's mutation/ledger-append failed) is
+   * revivable via an atomic compare-and-swap — only one racer wins that
+   * transition back to PENDING, so ownership of a given key is always
+   * held by at most one caller at a time.
+   */
+  private async claimIdempotencyKey(
+    organizationId: string,
+    idempotencyKey: string
+  ): Promise<IOrganizationInterviewCreditLedger | 'claimed'> {
+    for (let attempt = 0; attempt < CLAIM_POLL_MAX_ATTEMPTS; attempt++) {
+      try {
+        await OrganizationInterviewCreditOperation.create({ organizationId, idempotencyKey, status: 'PENDING' });
+        return 'claimed';
+      } catch (error: any) {
+        if (error?.code !== 11000) {
+          throw error;
         }
       }
-      throw error;
+
+      // Someone else already holds/held this exact key — never mutate
+      // balance ourselves; recover or wait instead.
+      const existing = await OrganizationInterviewCreditOperation.findOne({ organizationId, idempotencyKey });
+
+      if (!existing) {
+        // Claim vanished between the failed insert and this read (should
+        // not normally happen) — loop around and try to claim fresh.
+        continue;
+      }
+
+      if (existing.status === 'COMPLETED') {
+        const transaction = existing.ledgerTransactionId
+          ? await OrganizationInterviewCreditLedger.findOne({ _id: existing.ledgerTransactionId, organizationId })
+          : null;
+        if (transaction) {
+          return transaction;
+        }
+        // Completed but its referenced ledger row is missing/cross-org —
+        // a data inconsistency a duplicate caller must never paper over by
+        // mutating balance itself.
+        throw new ApiError(500, 'Credit operation record is inconsistent');
+      }
+
+      if (existing.status === 'FAILED') {
+        const revived = await OrganizationInterviewCreditOperation.findOneAndUpdate(
+          { organizationId, idempotencyKey, status: 'FAILED' },
+          { $set: { status: 'PENDING' } },
+          { new: true }
+        );
+        if (revived) {
+          return 'claimed';
+        }
+        // Another racer revived it first — loop and re-read their outcome.
+      }
+
+      await sleep(CLAIM_POLL_DELAY_MS);
+    }
+
+    throw new ApiError(409, 'This credit operation is already in progress — please retry shortly');
+  }
+
+  /**
+   * Best-effort reversal of exactly one mutation's own delta, floored at 0
+   * so it can never drive balance negative even if an unrelated concurrent
+   * operation already spent part of it — a compare-and-swap loop rather
+   * than a blind `$inc`, since the target isn't known until read.
+   */
+  private async compensateBalance(organizationId: string, amount: number): Promise<void> {
+    for (let attempt = 0; attempt < COMPENSATE_MAX_ATTEMPTS; attempt++) {
+      const current = await OrganizationInterviewCreditBalance.findOne({ organizationId });
+      if (!current) {
+        return;
+      }
+      const target = Math.max(0, current.balance - amount);
+      const updated = await OrganizationInterviewCreditBalance.findOneAndUpdate(
+        { organizationId, balance: current.balance },
+        { $set: { balance: target } },
+        { new: true }
+      );
+      if (updated) {
+        return;
+      }
+      // Lost the compare-and-swap race — retry with a fresh read.
     }
   }
 
