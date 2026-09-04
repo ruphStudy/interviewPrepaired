@@ -4,6 +4,7 @@ import InstituteStudent, { IInstituteStudent } from '../models/InstituteStudent.
 import InstituteInterviewTemplate, { IInstituteInterviewTemplate } from '../models/InstituteInterviewTemplate.model';
 import InstituteStudentInterviewAssignment from '../models/InstituteStudentInterviewAssignment.model';
 import QuestionSet from '../models/QuestionSet.model';
+import Interview from '../models/interview.model';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
@@ -290,11 +291,35 @@ export class InstituteStudentInterviewAssignmentService {
         questions: selectedQuestions,
       });
 
+      // Scoped by status: IN_PROGRESS too — this is the only write that
+      // "seals" the new Interview onto the assignment.
       const finalAssignment = await InstituteStudentInterviewAssignment.findOneAndUpdate(
-        { _id: claimed._id, organizationId: organization._id },
+        {
+          _id: claimed._id,
+          organizationId: organization._id,
+          status: InstituteStudentInterviewAssignmentStatus.IN_PROGRESS,
+        },
         { $set: { interviewId: interview._id } },
         { new: true }
       ).lean();
+
+      if (!finalAssignment) {
+        // The Interview was created but never got linked (assignment no
+        // longer matched the expected claimed state) — it would otherwise
+        // be an orphan that a retry could duplicate. It was never linked
+        // to any assignment, so it's always safe to delete here.
+        await Interview.deleteOne({ _id: interview._id, organizationId: organization._id });
+        await InstituteStudentInterviewAssignment.updateOne(
+          {
+            _id: assignmentId,
+            organizationId: organization._id,
+            status: InstituteStudentInterviewAssignmentStatus.IN_PROGRESS,
+            interviewId: { $exists: false },
+          },
+          { $set: { status: InstituteStudentInterviewAssignmentStatus.ASSIGNED } }
+        );
+        throw new ApiError(409, 'Failed to start assignment — please retry');
+      }
 
       return this.toDetail(finalAssignment);
     } catch (error) {
