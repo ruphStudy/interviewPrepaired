@@ -19,6 +19,7 @@ import {
   Contact2,
   ClipboardList,
   ListChecks,
+  Gauge,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrganization } from '../contexts/OrganizationContext';
@@ -35,6 +36,16 @@ const MAIN_NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/setup', label: 'New Interview', icon: MessageSquare },
   { to: '/history', label: 'History', icon: History },
+];
+
+// Always visible to any authenticated user — a student's linked institute
+// record is independent of OrganizationContext/OrganizationMember RBAC, so
+// this section never depends on an active organization or on hasPermission().
+const STUDENT_NAV_ITEMS = [
+  { to: '/student', label: 'Student Dashboard', icon: GraduationCap },
+  { to: '/student/assignments', label: 'My Assignments', icon: ListChecks },
+  { to: '/student/history', label: 'My History', icon: History },
+  { to: '/student/readiness', label: 'Readiness', icon: Gauge },
 ];
 
 const ACCOUNT_NAV_ITEMS = [
@@ -62,7 +73,10 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   const { user, isAdmin } = useAuth();
   const { activeOrganization, activeOrganizationId, hasPermission } = useOrganization();
 
-  const isActive = (path: string) => location.pathname.startsWith(path);
+  // Exact match for '/student' only — it's a path PREFIX of every other
+  // Student Portal route (assignments/history/readiness), so a plain
+  // startsWith() would keep it highlighted on every one of those pages too.
+  const isActive = (path: string) => (path === '/student' ? location.pathname === '/student' : location.pathname.startsWith(path));
 
   const orgNavItems = activeOrganization
     ? [
@@ -156,6 +170,11 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-1">
         {MAIN_NAV_ITEMS.map(renderNavLink)}
+
+        <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
+          Student Portal
+        </p>
+        {STUDENT_NAV_ITEMS.map(renderNavLink)}
 
         {orgNavItems.length > 0 && (
           <>

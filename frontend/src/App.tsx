@@ -31,6 +31,12 @@ import InstituteTrainersPage from './pages/institute/InstituteTrainersPage';
 import InstituteTrainerDetailPage from './pages/institute/InstituteTrainerDetailPage';
 import InstituteTemplatesPage from './pages/institute/InstituteTemplatesPage';
 import InstituteInterviewAssignmentsPage from './pages/institute/InstituteInterviewAssignmentsPage';
+import StudentDashboardPage from './pages/student/StudentDashboardPage';
+import StudentAssignmentsPage from './pages/student/StudentAssignmentsPage';
+import StudentAssignmentDetailPage from './pages/student/StudentAssignmentDetailPage';
+import StudentAssignmentResultPage from './pages/student/StudentAssignmentResultPage';
+import StudentHistoryPage from './pages/student/StudentHistoryPage';
+import StudentReadinessPage from './pages/student/StudentReadinessPage';
 
 function App() {
   return (
@@ -249,6 +255,58 @@ function App() {
             element={
               <ProtectedRoute>
                 <InstituteInterviewAssignmentsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Student Portal Routes (UI-06) — based on the caller's own linked
+              InstituteStudent records, never on OrganizationContext/RBAC; a
+              student need not be an OrganizationMember at all. */}
+          <Route
+            path="/student"
+            element={
+              <ProtectedRoute>
+                <StudentDashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/assignments"
+            element={
+              <ProtectedRoute>
+                <StudentAssignmentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/assignments/:assignmentId"
+            element={
+              <ProtectedRoute>
+                <StudentAssignmentDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/assignments/:assignmentId/result"
+            element={
+              <ProtectedRoute>
+                <StudentAssignmentResultPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/history"
+            element={
+              <ProtectedRoute>
+                <StudentHistoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/readiness"
+            element={
+              <ProtectedRoute>
+                <StudentReadinessPage />
               </ProtectedRoute>
             }
           />

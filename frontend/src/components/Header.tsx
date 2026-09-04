@@ -32,6 +32,11 @@ function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/organizations/') && pathname.includes('/members')) return 'Members';
   if (pathname.startsWith('/organizations/') && pathname.includes('/settings')) return 'Organization Settings';
   if (pathname.startsWith('/organizations')) return 'Organization Profile';
+  if (pathname.startsWith('/student/assignments') && pathname.endsWith('/result')) return 'Interview Result';
+  if (pathname.startsWith('/student/assignments')) return 'My Assignments';
+  if (pathname.startsWith('/student/history')) return 'Interview History';
+  if (pathname.startsWith('/student/readiness')) return 'Placement Readiness';
+  if (pathname === '/student') return 'Student Dashboard';
   if (pathname.startsWith('/profile')) return 'Profile';
   if (pathname.startsWith('/settings')) return 'Settings';
   return 'Dashboard';
