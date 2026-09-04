@@ -27,6 +27,10 @@ import InstituteCoursesPage from './pages/institute/InstituteCoursesPage';
 import InstituteBatchesPage from './pages/institute/InstituteBatchesPage';
 import InstituteStudentsPage from './pages/institute/InstituteStudentsPage';
 import InstituteStudentDetailPage from './pages/institute/InstituteStudentDetailPage';
+import InstituteTrainersPage from './pages/institute/InstituteTrainersPage';
+import InstituteTrainerDetailPage from './pages/institute/InstituteTrainerDetailPage';
+import InstituteTemplatesPage from './pages/institute/InstituteTemplatesPage';
+import InstituteInterviewAssignmentsPage from './pages/institute/InstituteInterviewAssignmentsPage';
 
 function App() {
   return (
@@ -211,6 +215,40 @@ function App() {
             element={
               <ProtectedRoute>
                 <InstituteStudentDetailPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Institute Trainers / Templates / Interview Assignments Routes (UI-05) — institute-only, guarded inside each page */}
+          <Route
+            path="/organizations/:organizationId/institute/trainers"
+            element={
+              <ProtectedRoute>
+                <InstituteTrainersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/trainers/:membershipId"
+            element={
+              <ProtectedRoute>
+                <InstituteTrainerDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/templates"
+            element={
+              <ProtectedRoute>
+                <InstituteTemplatesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/interview-assignments"
+            element={
+              <ProtectedRoute>
+                <InstituteInterviewAssignmentsPage />
               </ProtectedRoute>
             }
           />

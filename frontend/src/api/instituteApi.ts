@@ -203,6 +203,165 @@ export interface BulkAssignStudentsResult {
 }
 
 // ============================================================================
+// Organization-scoped Question Sets (UI-05 unblock) — SEPARATE from
+// personal/B2C question sets; never falls back to a personal set.
+// ============================================================================
+
+export interface OrgQuestionSetRow {
+  questionText: string;
+  referenceAnswer?: string;
+}
+
+export interface OrgQuestionSetSummary {
+  id: string;
+  name: string;
+  description?: string;
+  source: 'manual' | 'uploaded';
+  totalQuestions: number;
+  questionsWithAnswers: number;
+  questionsWithoutAnswers: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrgQuestionSetDetail extends OrgQuestionSetSummary {
+  questions: OrgQuestionSetRow[];
+}
+
+export interface OrgQuestionSetPayload {
+  name?: string;
+  description?: string;
+  questions?: OrgQuestionSetRow[];
+}
+
+// ============================================================================
+// Trainers (Sprint 12A) — identity is an EXISTING OrganizationMember with
+// role TRAINER; this is a profile/metadata layer on top, never a
+// member/role/status mutation surface (that remains the Members UI).
+// ============================================================================
+
+export interface TrainerProfile {
+  employeeCode?: string;
+  designation?: string;
+  department?: string;
+  specialization?: string[];
+  bio?: string;
+  status: InstituteEntityStatus;
+  updatedAt: string;
+}
+
+export interface Trainer {
+  membershipId: string;
+  organizationId: string;
+  user?: { id: string; name: string; email: string };
+  status: InstituteEntityStatus;
+  joinedAt: string;
+  /** null when no profile row exists yet for this trainer. */
+  profile: TrainerProfile | null;
+}
+
+export interface TrainerProfilePayload {
+  employeeCode?: string;
+  designation?: string;
+  department?: string;
+  specialization?: string[];
+  bio?: string;
+}
+
+// ============================================================================
+// Trainer Assignments (Sprint 12B) — a trainer's own course/batch
+// assignments. Physical delete (pure relationship record).
+// ============================================================================
+
+export interface TrainerAssignment {
+  assignmentId: string;
+  organizationId: string;
+  trainerMembershipId: string;
+  courseId?: string;
+  batchId?: string;
+  createdAt: string;
+}
+
+export interface TrainerAssignmentPayload {
+  courseId?: string;
+  batchId?: string;
+}
+
+// ============================================================================
+// Interview Templates (Sprint 12C) — reference an EXISTING organization
+// QuestionSet by id only; content is never copied.
+// ============================================================================
+
+export interface TemplateInterviewConfig {
+  difficulty?: string;
+  style?: string;
+  language?: string;
+  questionLimit?: number;
+}
+
+export interface InstituteInterviewTemplate {
+  id: string;
+  organizationId: string;
+  name: string;
+  description?: string;
+  questionSetId: string;
+  /** undefined only if the referenced question set was somehow not found. */
+  questionSet?: { id: string; name: string; questionCount: number };
+  courseId?: string;
+  batchId?: string;
+  interviewConfig?: TemplateInterviewConfig;
+  status: InstituteEntityStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TemplatePayload {
+  name?: string;
+  description?: string | null;
+  questionSetId?: string;
+  courseId?: string | null;
+  batchId?: string | null;
+  /** Whole-object replacement on update, not a per-field merge — matches the backend exactly. Pass null to clear entirely. */
+  interviewConfig?: TemplateInterviewConfig | null;
+}
+
+// ============================================================================
+// Student Interview Assignments (Sprint 12D/12E) — list responses carry raw
+// ids only (no student/template names); the caller must cross-reference the
+// students/templates lists itself.
+// ============================================================================
+
+export type StudentInterviewAssignmentStatus = 'assigned' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface StudentInterviewAssignment {
+  assignmentId: string;
+  organizationId: string;
+  studentId: string;
+  templateId: string;
+  assignedByMembershipId: string;
+  dueAt?: string;
+  instructions?: string;
+  status: StudentInterviewAssignmentStatus;
+  interviewId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssignInterviewResultRow {
+  studentId: string;
+  status: 'assigned' | 'failed';
+  assignmentId?: string;
+  error?: string;
+}
+
+export interface AssignInterviewResult {
+  total: number;
+  assigned: number;
+  failed: number;
+  results: AssignInterviewResultRow[];
+}
+
+// ============================================================================
 // Shared
 // ============================================================================
 
@@ -235,6 +394,25 @@ export type ListStudentsResponse = ApiEnvelope<{ students: InstituteStudent[]; p
 export type GetStudentResponse = ApiEnvelope<{ student: InstituteStudent }>;
 export type BulkCreateStudentsResponse = ApiEnvelope<BulkCreateStudentsResult>;
 export type BulkAssignStudentsResponse = ApiEnvelope<BulkAssignStudentsResult>;
+
+export type ListOrgQuestionSetsResponse = ApiEnvelope<{ questionSets: OrgQuestionSetSummary[]; pagination: Pagination }>;
+export type GetOrgQuestionSetResponse = ApiEnvelope<{ questionSet: OrgQuestionSetDetail }>;
+
+export type ListTrainersResponse = ApiEnvelope<{ trainers: Trainer[]; pagination: Pagination }>;
+export type GetTrainerResponse = ApiEnvelope<{ trainer: Trainer }>;
+
+export type ListTrainerAssignmentsResponse = ApiEnvelope<{ assignments: TrainerAssignment[]; pagination: Pagination }>;
+export type GetTrainerAssignmentResponse = ApiEnvelope<{ assignment: TrainerAssignment }>;
+
+export type ListTemplatesResponse = ApiEnvelope<{ templates: InstituteInterviewTemplate[]; pagination: Pagination }>;
+export type GetTemplateResponse = ApiEnvelope<{ template: InstituteInterviewTemplate }>;
+
+export type ListInterviewAssignmentsResponse = ApiEnvelope<{
+  assignments: StudentInterviewAssignment[];
+  pagination: Pagination;
+}>;
+export type GetInterviewAssignmentResponse = ApiEnvelope<{ assignment: StudentInterviewAssignment }>;
+export type AssignInterviewResponse = ApiEnvelope<AssignInterviewResult>;
 
 class InstituteApiService {
   private api: AxiosInstance;
@@ -574,6 +752,296 @@ class InstituteApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to bulk assign students');
+    }
+  }
+
+  // ---- Organization-scoped Question Sets ----
+
+  async listOrgQuestionSets(
+    organizationId: string,
+    params: { page?: number; limit?: number } = {}
+  ): Promise<ListOrgQuestionSetsResponse> {
+    try {
+      const response = await this.api.get<ListOrgQuestionSetsResponse>(`/organizations/${organizationId}/question-sets`, {
+        params,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load question sets');
+    }
+  }
+
+  async getOrgQuestionSet(organizationId: string, questionSetId: string): Promise<GetOrgQuestionSetResponse> {
+    try {
+      const response = await this.api.get<GetOrgQuestionSetResponse>(
+        `/organizations/${organizationId}/question-sets/${questionSetId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load question set');
+    }
+  }
+
+  async createOrgQuestionSet(organizationId: string, payload: OrgQuestionSetPayload): Promise<GetOrgQuestionSetResponse> {
+    try {
+      const response = await this.api.post<GetOrgQuestionSetResponse>(
+        `/organizations/${organizationId}/question-sets`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create question set');
+    }
+  }
+
+  async updateOrgQuestionSet(
+    organizationId: string,
+    questionSetId: string,
+    payload: OrgQuestionSetPayload
+  ): Promise<GetOrgQuestionSetResponse> {
+    try {
+      const response = await this.api.put<GetOrgQuestionSetResponse>(
+        `/organizations/${organizationId}/question-sets/${questionSetId}`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update question set');
+    }
+  }
+
+  async deleteOrgQuestionSet(organizationId: string, questionSetId: string): Promise<void> {
+    try {
+      await this.api.delete(`/organizations/${organizationId}/question-sets/${questionSetId}`);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to delete question set');
+    }
+  }
+
+  // ---- Trainers ----
+
+  /** Trainer identity comes from an existing OrganizationMember with role TRAINER — never invented/created here. */
+  async listTrainers(
+    organizationId: string,
+    params: { page?: number; limit?: number; status?: InstituteEntityStatus; search?: string } = {}
+  ): Promise<ListTrainersResponse> {
+    try {
+      const response = await this.api.get<ListTrainersResponse>(`/organizations/${organizationId}/trainers`, { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load trainers');
+    }
+  }
+
+  async getTrainer(organizationId: string, membershipId: string): Promise<GetTrainerResponse> {
+    try {
+      const response = await this.api.get<GetTrainerResponse>(`/organizations/${organizationId}/trainers/${membershipId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load trainer');
+    }
+  }
+
+  /** PATCH-like merge — omitted fields keep their current value. Never touches membership role/status (that's the Members UI). */
+  async updateTrainerProfile(
+    organizationId: string,
+    membershipId: string,
+    payload: TrainerProfilePayload
+  ): Promise<GetTrainerResponse> {
+    try {
+      const response = await this.api.put<GetTrainerResponse>(
+        `/organizations/${organizationId}/trainers/${membershipId}/profile`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update trainer profile');
+    }
+  }
+
+  // ---- Trainer Assignments ----
+
+  async listTrainerAssignments(
+    organizationId: string,
+    membershipId: string,
+    params: { page?: number; limit?: number } = {}
+  ): Promise<ListTrainerAssignmentsResponse> {
+    try {
+      const response = await this.api.get<ListTrainerAssignmentsResponse>(
+        `/organizations/${organizationId}/trainers/${membershipId}/assignments`,
+        { params }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load teaching assignments');
+    }
+  }
+
+  /** Exactly one of courseId/batchId — the backend rejects both-or-neither. */
+  async createTrainerAssignment(
+    organizationId: string,
+    membershipId: string,
+    payload: TrainerAssignmentPayload
+  ): Promise<GetTrainerAssignmentResponse> {
+    try {
+      const response = await this.api.post<GetTrainerAssignmentResponse>(
+        `/organizations/${organizationId}/trainers/${membershipId}/assignments`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create teaching assignment');
+    }
+  }
+
+  /** Physical delete — a pure relationship record, unlike interview/student records. */
+  async deleteTrainerAssignment(organizationId: string, membershipId: string, assignmentId: string): Promise<void> {
+    try {
+      await this.api.delete(`/organizations/${organizationId}/trainers/${membershipId}/assignments/${assignmentId}`);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to delete teaching assignment');
+    }
+  }
+
+  // ---- Interview Templates ----
+
+  async listTemplates(
+    organizationId: string,
+    params: { page?: number; limit?: number; status?: InstituteEntityStatus; courseId?: string; batchId?: string } = {}
+  ): Promise<ListTemplatesResponse> {
+    try {
+      const response = await this.api.get<ListTemplatesResponse>(`/organizations/${organizationId}/interview-templates`, {
+        params,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview templates');
+    }
+  }
+
+  async getTemplate(organizationId: string, templateId: string): Promise<GetTemplateResponse> {
+    try {
+      const response = await this.api.get<GetTemplateResponse>(
+        `/organizations/${organizationId}/interview-templates/${templateId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview template');
+    }
+  }
+
+  /** questionSetId must reference an org-scoped QuestionSet in this exact organization — the backend re-validates this itself. */
+  async createTemplate(organizationId: string, payload: TemplatePayload): Promise<GetTemplateResponse> {
+    try {
+      const response = await this.api.post<GetTemplateResponse>(
+        `/organizations/${organizationId}/interview-templates`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create interview template');
+    }
+  }
+
+  /** PATCH-like merge, EXCEPT interviewConfig which is a whole-object replacement when supplied. */
+  async updateTemplate(organizationId: string, templateId: string, payload: TemplatePayload): Promise<GetTemplateResponse> {
+    try {
+      const response = await this.api.put<GetTemplateResponse>(
+        `/organizations/${organizationId}/interview-templates/${templateId}`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update interview template');
+    }
+  }
+
+  /** Soft-deactivate (status -> inactive), idempotent — never a physical delete. No reactivate endpoint exists. */
+  async deactivateTemplate(organizationId: string, templateId: string): Promise<void> {
+    try {
+      await this.api.delete(`/organizations/${organizationId}/interview-templates/${templateId}`);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to deactivate interview template');
+    }
+  }
+
+  // ---- Student Interview Assignments ----
+
+  /** Response rows carry raw studentId/templateId only — cross-reference the students/templates lists client-side for display names. */
+  async listInterviewAssignments(
+    organizationId: string,
+    params: {
+      page?: number;
+      limit?: number;
+      studentId?: string;
+      templateId?: string;
+      status?: StudentInterviewAssignmentStatus;
+    } = {}
+  ): Promise<ListInterviewAssignmentsResponse> {
+    try {
+      const response = await this.api.get<ListInterviewAssignmentsResponse>(
+        `/organizations/${organizationId}/interview-assignments`,
+        { params }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview assignments');
+    }
+  }
+
+  async getInterviewAssignment(organizationId: string, assignmentId: string): Promise<GetInterviewAssignmentResponse> {
+    try {
+      const response = await this.api.get<GetInterviewAssignmentResponse>(
+        `/organizations/${organizationId}/interview-assignments/${assignmentId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview assignment');
+    }
+  }
+
+  /** Up to 200 studentIds per request (backend hard cap) — assignedByMembershipId is always injected server-side, never sent here. */
+  async assignInterview(
+    organizationId: string,
+    payload: { templateId: string; studentIds: string[]; dueAt?: string; instructions?: string }
+  ): Promise<AssignInterviewResponse> {
+    try {
+      const response = await this.api.post<AssignInterviewResponse>(
+        `/organizations/${organizationId}/interview-assignments`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to assign interview');
+    }
+  }
+
+  /**
+   * Consumes exactly 1 organization interview credit server-side — this
+   * client never touches credit balance/logic. On insufficient credits the
+   * backend responds 402 with a plain message; the error interceptor below
+   * already surfaces that message as-is.
+   */
+  async startInterviewAssignment(organizationId: string, assignmentId: string): Promise<GetInterviewAssignmentResponse> {
+    try {
+      const response = await this.api.post<GetInterviewAssignmentResponse>(
+        `/organizations/${organizationId}/interview-assignments/${assignmentId}/start`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to start interview assignment');
+    }
+  }
+
+  /** Only ASSIGNED -> CANCELLED is a real transition; already-CANCELLED is idempotent; IN_PROGRESS/COMPLETED are rejected by the backend. */
+  async cancelInterviewAssignment(organizationId: string, assignmentId: string): Promise<GetInterviewAssignmentResponse> {
+    try {
+      const response = await this.api.post<GetInterviewAssignmentResponse>(
+        `/organizations/${organizationId}/interview-assignments/${assignmentId}/cancel`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to cancel interview assignment');
     }
   }
 }

@@ -16,6 +16,9 @@ import {
   MapPin,
   BookOpen,
   Layers,
+  Contact2,
+  ClipboardList,
+  ListChecks,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrganization } from '../contexts/OrganizationContext';
@@ -80,6 +83,27 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
           { to: `/organizations/${activeOrganizationId}/institute/courses`, label: 'Courses', icon: BookOpen },
           { to: `/organizations/${activeOrganizationId}/institute/batches`, label: 'Batches', icon: Layers },
           { to: `/organizations/${activeOrganizationId}/institute/students`, label: 'Students', icon: Users },
+          ...(hasPermission('members:view')
+            ? [{ to: `/organizations/${activeOrganizationId}/institute/trainers`, label: 'Trainers', icon: Contact2 }]
+            : []),
+          ...(hasPermission('question-sets:view')
+            ? [
+                {
+                  to: `/organizations/${activeOrganizationId}/institute/templates`,
+                  label: 'Interview Templates',
+                  icon: ClipboardList,
+                },
+              ]
+            : []),
+          ...(hasPermission('interviews:view')
+            ? [
+                {
+                  to: `/organizations/${activeOrganizationId}/institute/interview-assignments`,
+                  label: 'Interview Assignments',
+                  icon: ListChecks,
+                },
+              ]
+            : []),
         ]
       : [];
 

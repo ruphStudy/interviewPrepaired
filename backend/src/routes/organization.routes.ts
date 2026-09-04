@@ -12,6 +12,7 @@ import instituteStudentController from '../controllers/InstituteStudentControlle
 import instituteTrainerController from '../controllers/InstituteTrainerController';
 import instituteTrainerAssignmentController from '../controllers/InstituteTrainerAssignmentController';
 import instituteInterviewTemplateController from '../controllers/InstituteInterviewTemplateController';
+import instituteQuestionSetController from '../controllers/InstituteQuestionSetController';
 import instituteStudentInterviewAssignmentController from '../controllers/InstituteStudentInterviewAssignmentController';
 import instituteTrainerDashboardController from '../controllers/InstituteTrainerDashboardController';
 import instituteTrainerStudentReportController from '../controllers/InstituteTrainerStudentReportController';
@@ -34,6 +35,7 @@ import {
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationPermission } from '../constants/organizationPermissions';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
+import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
@@ -779,6 +781,68 @@ const createTrainerAssignmentValidation = [
 // body-mutable (DELETE is the only status transition).
 // ============================================================================
 
+// ============================================================================
+// Organization-scoped Question Set validators (UI-05 unblock) — separate
+// surface from the personal /question-sets routes; mirrors that route's own
+// validation exactly (name/description/questions) so both surfaces agree on
+// one content contract.
+// ============================================================================
+
+const questionSetIdValidation = [param('questionSetId').isMongoId().withMessage('Invalid question set ID')];
+
+const listOrgQuestionSetsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+];
+
+const orgQuestionSetNameValidation = (optional: boolean) => {
+  const chain = body('name');
+  return (optional ? chain.optional() : chain.notEmpty().withMessage('Name is required'))
+    .isString()
+    .withMessage('Name must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Name must be between 1 and 100 characters');
+};
+
+const orgQuestionSetDescriptionValidation = [
+  body('description')
+    .optional()
+    .isString()
+    .withMessage('Description must be a string')
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Description must be at most 500 characters'),
+];
+
+const orgQuestionSetItemsValidation = [
+  body('questions.*.questionText')
+    .isString()
+    .withMessage('Each question requires questionText as a string')
+    .notEmpty()
+    .withMessage('Each question requires non-empty questionText'),
+  body('questions.*.referenceAnswer').optional().isString().withMessage('referenceAnswer must be a string'),
+];
+
+const createOrgQuestionSetValidation = [
+  orgQuestionSetNameValidation(false),
+  ...orgQuestionSetDescriptionValidation,
+  body('questions')
+    .isArray({ min: 1, max: MAX_UPLOADED_QUESTIONS })
+    .withMessage(`questions must be an array of 1 to ${MAX_UPLOADED_QUESTIONS} items`),
+  ...orgQuestionSetItemsValidation,
+];
+
+const updateOrgQuestionSetValidation = [
+  orgQuestionSetNameValidation(true),
+  ...orgQuestionSetDescriptionValidation,
+  body('questions')
+    .optional()
+    .isArray({ min: 1, max: MAX_UPLOADED_QUESTIONS })
+    .withMessage(`questions must be an array of 1 to ${MAX_UPLOADED_QUESTIONS} items`),
+  ...orgQuestionSetItemsValidation,
+];
+
 const templateIdValidation = [param('templateId').isMongoId().withMessage('Invalid template ID')];
 
 const listTemplatesValidation = [
@@ -1372,6 +1436,59 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   instituteTrainerAssignmentController.deleteAssignment
+);
+
+// ---- Organization-scoped Question Sets (UI-05 unblock) — SEPARATE from personal /question-sets; never falls back to a personal set. Available to any organization type (not institute-only). Archived org: reads allowed, mutations => 409. ----
+
+router.post(
+  '/:organizationId/question-sets',
+  protect,
+  ...organizationIdValidation,
+  ...createOrgQuestionSetValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  instituteQuestionSetController.createQuestionSet
+);
+
+router.get(
+  '/:organizationId/question-sets',
+  protect,
+  ...organizationIdValidation,
+  ...listOrgQuestionSetsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  instituteQuestionSetController.getQuestionSets
+);
+
+router.get(
+  '/:organizationId/question-sets/:questionSetId',
+  protect,
+  ...organizationIdValidation,
+  ...questionSetIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  instituteQuestionSetController.getQuestionSet
+);
+
+router.put(
+  '/:organizationId/question-sets/:questionSetId',
+  protect,
+  ...organizationIdValidation,
+  ...questionSetIdValidation,
+  ...updateOrgQuestionSetValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  instituteQuestionSetController.updateQuestionSet
+);
+
+router.delete(
+  '/:organizationId/question-sets/:questionSetId',
+  protect,
+  ...organizationIdValidation,
+  ...questionSetIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  instituteQuestionSetController.deleteQuestionSet
 );
 
 // ---- Institute Interview Templates (12C) — references an EXISTING QuestionSet by id only. Institute-only (400 for a company org). ----
