@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import InstituteStudent from '../models/InstituteStudent.model';
 import InstituteStudentInterviewAssignment from '../models/InstituteStudentInterviewAssignment.model';
 import InstituteInterviewTemplate from '../models/InstituteInterviewTemplate.model';
+import Interview from '../models/interview.model';
 import Organization, { IOrganization } from '../models/Organization.model';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
@@ -12,6 +13,7 @@ import { ApiError } from '../utils/ApiError';
 // Matches InterviewController's/InstituteStudentInterviewAssignmentService's convention.
 const interviewService = new InterviewService();
 type InterviewSessionResult = Awaited<ReturnType<InterviewService['getInterviewSession']>>;
+type InterviewReportResult = Awaited<ReturnType<InterviewService['getInterviewReport']>>;
 
 const MAX_UPCOMING_PER_STUDENT = 5;
 const UPCOMING_STATUSES = [
@@ -39,6 +41,27 @@ interface LinkedStudent {
   lastName?: string;
   enrollmentNumber?: string;
 }
+
+interface ListHistoryParams {
+  organizationId?: string;
+  page?: number;
+  limit?: number;
+}
+
+interface HistoryRow {
+  assignmentId: string;
+  organization: { id: string; name: string };
+  template: { id: string; name: string } | null;
+  status: InstituteStudentInterviewAssignmentStatus;
+  interviewId?: string;
+  dueAt?: Date;
+  completedAt?: Date;
+  score?: number;
+}
+
+// History only ever lists finished attempts — a pending/active assignment
+// belongs in the assignments list (13B) / dashboard (13A), not history.
+const HISTORY_STATUSES = [InstituteStudentInterviewAssignmentStatus.COMPLETED];
 
 interface AssignmentRow {
   assignmentId: string;
@@ -336,6 +359,125 @@ export class StudentPortalService {
 
     const session = await interviewService.getInterviewSession({ interviewId: assignment.interviewId, userId });
     return { ...assignment, session };
+  }
+
+  /**
+   * History (13D) — completed assignments only, across every ACTIVE
+   * InstituteStudent record linked to the caller. `organizationId` narrows
+   * an already-authorized set exactly like getAssignments (13B); it can
+   * never widen access. Score/completedAt come from a batched Interview
+   * lookup, each scoped to the exact {_id, organizationId, userId} triple —
+   * never a bare interviewId — so a cross-tenant/cross-user Interview can
+   * never leak a score into someone else's history row.
+   */
+  async getHistory(
+    userId: string,
+    params: ListHistoryParams
+  ): Promise<{
+    history: HistoryRow[];
+    pagination: { page: number; limit: number; total: number; pages: number };
+  }> {
+    const page = params.page && params.page > 0 ? params.page : DEFAULT_PAGE;
+    const limit = params.limit && params.limit > 0 ? Math.min(params.limit, MAX_LIMIT) : DEFAULT_LIMIT;
+
+    const students = await this.getActiveLinkedStudents(userId);
+
+    let authorizedStudents = students;
+    if (params.organizationId) {
+      authorizedStudents = students.filter((s) => s.organizationId.toString() === params.organizationId);
+    }
+
+    if (authorizedStudents.length === 0) {
+      return { history: [], pagination: { page, limit, total: 0, pages: 0 } };
+    }
+
+    const pairFilter = authorizedStudents.map((s) => ({ organizationId: s.organizationId, studentId: s._id }));
+    const filter: Record<string, unknown> = { $or: pairFilter, status: { $in: HISTORY_STATUSES } };
+
+    const skip = (page - 1) * limit;
+    const [assignments, total] = await Promise.all([
+      InstituteStudentInterviewAssignment.find(filter).sort({ updatedAt: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
+      InstituteStudentInterviewAssignment.countDocuments(filter),
+    ]);
+
+    const { organizationById, templateByKey } = await this.buildEnrichmentMaps(
+      authorizedStudents,
+      assignments.map((a) => ({ organizationId: a.organizationId, templateId: a.templateId }))
+    );
+
+    const interviewIds = assignments.filter((a) => a.interviewId).map((a) => a.interviewId as Types.ObjectId);
+    const organizationIds = Array.from(new Set(authorizedStudents.map((s) => s.organizationId.toString())));
+    const interviews =
+      interviewIds.length > 0
+        ? await Interview.find({
+            _id: { $in: interviewIds },
+            organizationId: { $in: organizationIds },
+            userId: new Types.ObjectId(userId),
+          })
+            .select('organizationId completedAt finalReport.overallScore')
+            .lean()
+        : [];
+    // Keyed by organizationId+interviewId — a score is only ever trusted
+    // when the Interview belongs to both the same organization AND the
+    // authenticated user (the query above already enforced userId too).
+    const interviewByKey = new Map(interviews.map((i) => [`${i.organizationId!.toString()}:${i._id.toString()}`, i]));
+
+    const history: HistoryRow[] = assignments.map((a) => {
+      const organization = organizationById.get(a.organizationId.toString());
+      const template = templateByKey.get(`${a.organizationId.toString()}:${a.templateId.toString()}`);
+      const interview = a.interviewId
+        ? interviewByKey.get(`${a.organizationId.toString()}:${a.interviewId.toString()}`)
+        : undefined;
+
+      return {
+        assignmentId: a._id.toString(),
+        organization: { id: a.organizationId.toString(), name: organization ? organization.name : '' },
+        template: template ? { id: a.templateId.toString(), name: template.name } : null,
+        status: a.status,
+        interviewId: a.interviewId ? a.interviewId.toString() : undefined,
+        dueAt: a.dueAt,
+        completedAt: interview?.completedAt,
+        score: interview?.finalReport?.overallScore,
+      };
+    });
+
+    return { history, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+  }
+
+  /**
+   * Result (13D) — authorizes via the same ownership-scoped detail lookup
+   * as GET /assignments/:id, requires the assignment to actually be
+   * COMPLETED with an interviewId, re-verifies the Interview with an exact
+   * {_id, organizationId, userId} match (never trusting interviewId alone),
+   * then reuses InterviewService.getInterviewReport as-is — no report
+   * logic is duplicated or reimplemented here.
+   */
+  async getAssignmentResult(
+    userId: string,
+    assignmentId: string
+  ): Promise<{ assignment: AssignmentRow; report: InterviewReportResult }> {
+    const assignment = await this.getAssignmentDetail(userId, assignmentId);
+
+    if (!assignment.interviewId) {
+      throw new ApiError(409, 'Interview has not been started yet');
+    }
+    if (assignment.status !== InstituteStudentInterviewAssignmentStatus.COMPLETED) {
+      throw new ApiError(409, 'Interview is not completed yet');
+    }
+
+    const interview = await Interview.findOne({
+      _id: assignment.interviewId,
+      organizationId: assignment.organization.id,
+      userId: new Types.ObjectId(userId),
+    })
+      .select('_id')
+      .lean();
+    if (!interview) {
+      throw new ApiError(404, 'Assignment not found');
+    }
+
+    const report = await interviewService.getInterviewReport(assignment.interviewId, userId);
+    return { assignment, report };
   }
 
   /** The sole source of authorized {organizationId, studentId} pairs for a caller. */

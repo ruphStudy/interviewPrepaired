@@ -79,6 +79,33 @@ export class StudentPortalController {
 
     res.status(200).json(successResponse('Interview session retrieved successfully', result));
   });
+
+  /** GET /api/v1/student-portal/history */
+  public getHistory = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    if (!req.user) {
+      throw new ApiError(401, 'Not authorized to access this route');
+    }
+
+    const organizationId = req.query.organizationId as string | undefined;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+
+    const result = await studentPortalService.getHistory(req.user._id.toString(), { organizationId, page, limit });
+
+    res.status(200).json(successResponse('Interview history retrieved successfully', result));
+  });
+
+  /** GET /api/v1/student-portal/assignments/:assignmentId/result */
+  public getAssignmentResult = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    if (!req.user) {
+      throw new ApiError(401, 'Not authorized to access this route');
+    }
+
+    const { assignmentId } = req.params;
+    const result = await studentPortalService.getAssignmentResult(req.user._id.toString(), assignmentId);
+
+    res.status(200).json(successResponse('Interview result retrieved successfully', result));
+  });
 }
 
 export default new StudentPortalController();

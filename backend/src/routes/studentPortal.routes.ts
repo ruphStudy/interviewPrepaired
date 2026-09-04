@@ -18,7 +18,15 @@ const listAssignmentsValidation = [
 
 const assignmentIdValidation = [param('assignmentId').isMongoId().withMessage('Invalid assignment ID')];
 
+const historyValidation = [
+  query('organizationId').optional().isMongoId().withMessage('Invalid organization ID'),
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+];
+
 router.get('/dashboard', studentPortalController.getDashboard);
+
+router.get('/history', ...historyValidation, validate, studentPortalController.getHistory);
 
 router.get('/assignments', ...listAssignmentsValidation, validate, studentPortalController.getAssignments);
 
@@ -41,6 +49,13 @@ router.get(
   ...assignmentIdValidation,
   validate,
   studentPortalController.getAssignmentSession
+);
+
+router.get(
+  '/assignments/:assignmentId/result',
+  ...assignmentIdValidation,
+  validate,
+  studentPortalController.getAssignmentResult
 );
 
 export default router;
