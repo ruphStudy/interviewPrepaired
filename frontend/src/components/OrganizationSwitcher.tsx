@@ -31,7 +31,7 @@ const OrganizationSwitcher: React.FC<OrganizationSwitcherProps> = ({ onNavigate 
     setOpen(false);
     onNavigate?.();
     await setActiveOrganization(id);
-    navigate(`/organizations/${id}/profile`);
+    navigate(`/organizations/${id}/dashboard`);
   };
 
   const handleCreate = () => {

@@ -60,7 +60,7 @@ const CreateOrganizationPage: React.FC = () => {
       const organization = response.data.organization;
       await refreshOrganizations();
       await setActiveOrganization(organization.id);
-      navigate(`/organizations/${organization.id}/profile`);
+      navigate(`/organizations/${organization.id}/dashboard`);
     } catch (err: any) {
       setError(err.message || 'Failed to create organization');
     } finally {

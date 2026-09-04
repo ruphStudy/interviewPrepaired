@@ -56,7 +56,7 @@ const AcceptInvitationPage: React.FC = () => {
       await refreshOrganizations();
       await setActiveOrganization(organization.id);
       setAccepted(true);
-      setTimeout(() => navigate(`/organizations/${organization.id}/profile`), 1200);
+      setTimeout(() => navigate(`/organizations/${organization.id}/dashboard`), 1200);
     } catch (err: any) {
       setAcceptError(err.message || 'Failed to accept invitation');
     } finally {

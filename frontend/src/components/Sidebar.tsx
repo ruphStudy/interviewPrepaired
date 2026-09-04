@@ -59,10 +59,12 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
 
   const orgNavItems = activeOrganization
     ? [
+        { to: `/organizations/${activeOrganizationId}/dashboard`, label: 'Dashboard', icon: LayoutDashboard },
         { to: `/organizations/${activeOrganizationId}/profile`, label: 'Organization Profile', icon: Building2 },
         ...(hasPermission('members:view')
           ? [{ to: `/organizations/${activeOrganizationId}/members`, label: 'Members', icon: Users }]
           : []),
+        { to: `/organizations/${activeOrganizationId}/settings`, label: 'Settings', icon: SettingsIcon },
       ]
     : [];
 

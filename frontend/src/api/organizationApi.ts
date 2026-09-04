@@ -53,6 +53,22 @@ export const COMPANY_SIZES = [
   { value: '1000+', label: '1000+ employees' },
 ];
 
+export type OrganizationDateFormat = 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD';
+export type OrganizationTimeFormat = '12h' | '24h';
+
+/** Mirrors backend OrganizationDateFormat — the only values the settings form may submit. */
+export const ORGANIZATION_DATE_FORMATS: { value: OrganizationDateFormat; label: string }[] = [
+  { value: 'DD/MM/YYYY', label: 'DD/MM/YYYY' },
+  { value: 'MM/DD/YYYY', label: 'MM/DD/YYYY' },
+  { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD' },
+];
+
+/** Mirrors backend OrganizationTimeFormat — the only values the settings form may submit. */
+export const ORGANIZATION_TIME_FORMATS: { value: OrganizationTimeFormat; label: string }[] = [
+  { value: '12h', label: '12-hour' },
+  { value: '24h', label: '24-hour' },
+];
+
 // ============================================================================
 // TypeScript Interfaces
 // ============================================================================
@@ -60,8 +76,26 @@ export const COMPANY_SIZES = [
 export interface OrganizationSettings {
   timezone?: string;
   locale?: string;
-  dateFormat?: 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD';
-  timeFormat?: '12h' | '24h';
+  dateFormat?: OrganizationDateFormat;
+  timeFormat?: OrganizationTimeFormat;
+  defaultInterviewLanguage?: string;
+}
+
+/** GET/PUT .../settings — all fields always present (backend backfills defaults for display). */
+export interface OrganizationSettingsDetail {
+  timezone: string;
+  locale: string;
+  dateFormat: OrganizationDateFormat;
+  timeFormat: OrganizationTimeFormat;
+  defaultInterviewLanguage: string;
+}
+
+/** PATCH-like merge — omitted fields keep their current effective value. At least one field is required. */
+export interface UpdateOrganizationSettingsPayload {
+  timezone?: string;
+  locale?: string;
+  dateFormat?: OrganizationDateFormat;
+  timeFormat?: OrganizationTimeFormat;
   defaultInterviewLanguage?: string;
 }
 
@@ -115,6 +149,102 @@ export interface OrganizationAccess {
   membershipId: string;
   role: OrganizationMemberRole;
   permissions: OrganizationPermission[];
+}
+
+/** The dashboard's own, lighter organization shape — not the same as OrganizationDetail (no settings/contact/website). */
+export interface DashboardOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  type: OrganizationType;
+  status: OrganizationStatus;
+  logoUrl?: string;
+  description?: string;
+  instituteProfile?: InstituteProfile;
+  companyProfile?: CompanyProfile;
+}
+
+export interface DashboardInterviewsSummary {
+  total: number;
+  inProgress: number;
+  completed: number;
+}
+
+export interface DashboardQuestionSetsSummary {
+  total: number;
+}
+
+/**
+ * Null outright when the caller lacks MEMBERS_VIEW — never render this
+ * section in that case, and never attempt to infer/estimate the numbers
+ * client-side. `pendingInvitations` is itself independently null unless
+ * the caller additionally has MEMBERS_MANAGE.
+ */
+export interface DashboardMemberSummary {
+  total: number;
+  active: number;
+  inactive: number;
+  byRole: {
+    owner: number;
+    admin: number;
+    trainer: number;
+    recruiter: number;
+    member: number;
+  };
+  pendingInvitations: number | null;
+}
+
+/** Null outright when the caller lacks ANALYTICS_VIEW — never render this section in that case. */
+export interface DashboardUsageSummary {
+  interviews: {
+    total: number;
+    tracked: number;
+    untracked: number;
+    trackingComplete: boolean;
+  };
+  ai: {
+    callCount: number;
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    inputCostUsd: number;
+    cachedInputCostUsd: number;
+    outputCostUsd: number;
+    totalCostUsd: number;
+    pricingComplete: boolean;
+  };
+}
+
+export interface RecentInterviewItem {
+  id: string;
+  topic: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecentQuestionSetItem {
+  id: string;
+  name: string;
+  source: 'manual' | 'uploaded';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardRecentActivity {
+  recentInterviews: RecentInterviewItem[];
+  recentQuestionSets: RecentQuestionSetItem[];
+}
+
+export interface OrganizationDashboard {
+  organization: DashboardOrganization;
+  access: OrganizationAccess;
+  interviews: DashboardInterviewsSummary;
+  questionSets: DashboardQuestionSetsSummary;
+  memberSummary: DashboardMemberSummary | null;
+  usageSummary: DashboardUsageSummary | null;
+  recentActivity: DashboardRecentActivity;
 }
 
 export interface Pagination {
@@ -210,7 +340,9 @@ export type CreateOrganizationResponse = ApiEnvelope<{ organization: Organizatio
 export type ListOrganizationsResponse = ApiEnvelope<{ organizations: OrganizationSummary[]; pagination: Pagination }>;
 export type GetOrganizationResponse = ApiEnvelope<{ organization: OrganizationDetail }>;
 export type UpdateOrganizationResponse = ApiEnvelope<{ organization: OrganizationDetail }>;
-export type GetOrganizationAccessResponse = ApiEnvelope<{ access: OrganizationAccess } & Record<string, unknown>>;
+export type GetOrganizationDashboardResponse = ApiEnvelope<OrganizationDashboard>;
+export type GetOrganizationSettingsResponse = ApiEnvelope<{ settings: OrganizationSettingsDetail }>;
+export type UpdateOrganizationSettingsResponse = ApiEnvelope<{ settings: OrganizationSettingsDetail }>;
 export type ListMembersResponse = ApiEnvelope<{ members: OrganizationMember[]; pagination: Pagination }>;
 export type AddMemberResponse = ApiEnvelope<{ member: OrganizationMember }>;
 export type UpdateMemberResponse = ApiEnvelope<{ member: OrganizationMember }>;
@@ -302,17 +434,54 @@ class OrganizationApiService {
   }
 
   /**
+   * Full dashboard snapshot (UI-03) — organization summary, the caller's
+   * own org-local access (role/permissions), interview/question-set
+   * counts, permission-gated memberSummary/usageSummary (null when the
+   * caller lacks the relevant permission — never inferred/estimated
+   * client-side), and recent activity. Read-only.
+   */
+  async getDashboard(organizationId: string): Promise<GetOrganizationDashboardResponse> {
+    try {
+      const response = await this.api.get<GetOrganizationDashboardResponse>(`/organizations/${organizationId}/dashboard`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load organization dashboard');
+    }
+  }
+
+  /**
    * No endpoint hands back the caller's own role/permissions directly
    * except the dashboard endpoint's `access` field — used here purely to
-   * bootstrap RBAC context, discarding the rest of the (out-of-scope for
-   * UI-02) dashboard payload.
+   * bootstrap RBAC context (OrganizationContext), discarding the rest of
+   * the dashboard payload.
    */
   async getOrganizationAccess(organizationId: string): Promise<OrganizationAccess> {
+    const response = await this.getDashboard(organizationId);
+    return response.data.access;
+  }
+
+  /** PATCH-like merge — omitted fields keep their current effective value. Always returns every field (backend backfills defaults for display). */
+  async getSettings(organizationId: string): Promise<GetOrganizationSettingsResponse> {
     try {
-      const response = await this.api.get<GetOrganizationAccessResponse>(`/organizations/${organizationId}/dashboard`);
-      return response.data.data.access;
+      const response = await this.api.get<GetOrganizationSettingsResponse>(`/organizations/${organizationId}/settings`);
+      return response.data;
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to load organization access');
+      throw new Error(error.message || 'Failed to load organization settings');
+    }
+  }
+
+  async updateSettings(
+    organizationId: string,
+    payload: UpdateOrganizationSettingsPayload
+  ): Promise<UpdateOrganizationSettingsResponse> {
+    try {
+      const response = await this.api.put<UpdateOrganizationSettingsResponse>(
+        `/organizations/${organizationId}/settings`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update organization settings');
     }
   }
 

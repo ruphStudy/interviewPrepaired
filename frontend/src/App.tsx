@@ -18,6 +18,8 @@ import CreditHistoryPage from './pages/CreditHistoryPage';
 import CreateOrganizationPage from './pages/CreateOrganizationPage';
 import OrganizationProfilePage from './pages/OrganizationProfilePage';
 import OrganizationMembersPage from './pages/OrganizationMembersPage';
+import OrganizationDashboardPage from './pages/OrganizationDashboardPage';
+import OrganizationSettingsPage from './pages/OrganizationSettingsPage';
 import AcceptInvitationPage from './pages/AcceptInvitationPage';
 
 function App() {
@@ -115,12 +117,20 @@ function App() {
             }
           />
 
-          {/* Organization Routes (UI-02) */}
+          {/* Organization Routes (UI-02/UI-03) */}
           <Route
             path="/organizations/new"
             element={
               <ProtectedRoute>
                 <CreateOrganizationPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/dashboard"
+            element={
+              <ProtectedRoute>
+                <OrganizationDashboardPage />
               </ProtectedRoute>
             }
           />
@@ -137,6 +147,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <OrganizationMembersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/settings"
+            element={
+              <ProtectedRoute>
+                <OrganizationSettingsPage />
               </ProtectedRoute>
             }
           />
