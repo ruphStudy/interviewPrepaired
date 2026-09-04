@@ -17,6 +17,7 @@ import instituteTrainerDashboardController from '../controllers/InstituteTrainer
 import instituteTrainerStudentReportController from '../controllers/InstituteTrainerStudentReportController';
 import instituteTrainerBatchAnalyticsController from '../controllers/InstituteTrainerBatchAnalyticsController';
 import instituteTrainerSkillGapController from '../controllers/InstituteTrainerSkillGapController';
+import instituteTrainerBatchReadinessController from '../controllers/InstituteTrainerBatchReadinessController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -1551,6 +1552,18 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
   instituteTrainerSkillGapController.getSkillGaps
+);
+
+// ---- Institute Trainer Batch Readiness Analytics (15C) — read-only, aggregates PlacementReadinessService (15A) output per batch. Same batch scope as 14C/14D. Archived org: read allowed. ----
+
+router.get(
+  '/:organizationId/trainer-batches/:batchId/readiness',
+  protect,
+  ...organizationIdValidation,
+  ...batchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  instituteTrainerBatchReadinessController.getBatchReadiness
 );
 
 // ---- Members (8B API, 8D RBAC) ----
