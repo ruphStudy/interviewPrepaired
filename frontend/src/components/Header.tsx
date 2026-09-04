@@ -28,6 +28,11 @@ function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/templates')) return 'Interview Templates';
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/interview-assignments'))
     return 'Interview Assignments';
+  if (pathname.includes('/trainer/batches/') && pathname.endsWith('/analytics')) return 'Batch Analytics';
+  if (pathname.includes('/trainer/batches/') && pathname.endsWith('/skill-gaps')) return 'Skill Gap Analytics';
+  if (pathname.includes('/trainer/batches/') && pathname.endsWith('/readiness')) return 'Batch Readiness';
+  if (pathname.includes('/trainer/students/') && pathname.includes('/reports')) return 'Student Reports';
+  if (pathname.startsWith('/organizations/') && pathname.endsWith('/trainer')) return 'Trainer Dashboard';
   if (pathname.startsWith('/organizations/') && pathname.includes('/dashboard')) return 'Organization Dashboard';
   if (pathname.startsWith('/organizations/') && pathname.includes('/members')) return 'Members';
   if (pathname.startsWith('/organizations/') && pathname.includes('/settings')) return 'Organization Settings';

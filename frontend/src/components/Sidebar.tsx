@@ -71,7 +71,7 @@ const getInitials = (name: string) =>
 const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   const location = useLocation();
   const { user, isAdmin } = useAuth();
-  const { activeOrganization, activeOrganizationId, hasPermission } = useOrganization();
+  const { activeOrganization, activeOrganizationId, activeRole, hasPermission } = useOrganization();
 
   // Exact match for '/student' only — it's a path PREFIX of every other
   // Student Portal route (assignments/history/readiness), so a plain
@@ -119,6 +119,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
               ]
             : []),
         ]
+      : [];
+
+  // Only for an actual TRAINER membership in an institute — never for
+  // owner/admin/recruiter/member, even if they hold interviews:view. This
+  // mirrors the backend's own identity check (not just a permission check)
+  // on every trainer-* endpoint.
+  const trainerNavItems =
+    activeOrganization?.type === 'institute' && activeRole === 'trainer'
+      ? [{ to: `/organizations/${activeOrganizationId}/trainer`, label: 'Trainer Dashboard', icon: Contact2 }]
       : [];
 
   const renderNavLink = ({ to, label, icon: Icon }: (typeof MAIN_NAV_ITEMS)[number]) => {
@@ -191,6 +200,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
               Institute
             </p>
             {instituteNavItems.map(renderNavLink)}
+          </>
+        )}
+
+        {trainerNavItems.length > 0 && (
+          <>
+            <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
+              Trainer Portal
+            </p>
+            {trainerNavItems.map(renderNavLink)}
           </>
         )}
 

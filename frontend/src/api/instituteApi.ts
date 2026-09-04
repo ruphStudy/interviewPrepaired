@@ -11,6 +11,8 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
+import { InterviewReport } from './interviewApi';
+import { ReadinessLevel, ReadinessComponents } from './studentPortalApi';
 
 export type InstituteEntityStatus = 'active' | 'inactive';
 
@@ -413,6 +415,156 @@ export type ListInterviewAssignmentsResponse = ApiEnvelope<{
 }>;
 export type GetInterviewAssignmentResponse = ApiEnvelope<{ assignment: StudentInterviewAssignment }>;
 export type AssignInterviewResponse = ApiEnvelope<AssignInterviewResult>;
+
+// ============================================================================
+// Trainer Portal (UI-07 / Sprint 14, 15C) — read-only, scoped entirely to the
+// CALLING trainer's own InstituteTrainerAssignment rows. Every field name
+// below was confirmed by reading InstituteTrainerDashboardService,
+// InstituteTrainerStudentReportService, InstituteTrainerBatchAnalyticsService,
+// InstituteTrainerSkillGapService and InstituteTrainerBatchReadinessService
+// directly — nothing here is guessed or widened client-side.
+// ============================================================================
+
+export interface TrainerStudentRef {
+  id: string;
+  firstName: string;
+  lastName?: string;
+  enrollmentNumber?: string;
+}
+
+export interface TrainerDashboardSummary {
+  assignedCourses: number;
+  assignedBatches: number;
+  totalStudents: number;
+  totalInterviewAssignments: number;
+  pending: number;
+  inProgress: number;
+  completed: number;
+  overdue: number;
+}
+
+export interface TrainerRecentActivityRow {
+  assignmentId: string;
+  student: TrainerStudentRef;
+  templateId: string;
+  templateName: string | null;
+  status: StudentInterviewAssignmentStatus;
+  dueAt?: string;
+  interviewId?: string;
+  createdAt: string;
+}
+
+export interface TrainerDashboard {
+  summary: TrainerDashboardSummary;
+  recentActivity: TrainerRecentActivityRow[];
+}
+
+export type GetTrainerDashboardResponse = ApiEnvelope<TrainerDashboard>;
+
+export interface TrainerReportRow {
+  assignmentId: string;
+  template: { id: string; name: string } | null;
+  interviewId: string;
+  completedAt?: string;
+  score?: number;
+  createdAt: string;
+}
+
+export type ListTrainerStudentReportsResponse = ApiEnvelope<{ reports: TrainerReportRow[]; pagination: Pagination }>;
+
+export interface TrainerReportAssignmentMeta {
+  assignmentId: string;
+  template: { id: string; name: string } | null;
+  status: StudentInterviewAssignmentStatus;
+  dueAt?: string;
+  interviewId: string;
+  createdAt: string;
+}
+
+export type GetTrainerStudentReportDetailResponse = ApiEnvelope<{
+  student: TrainerStudentRef;
+  assignment: TrainerReportAssignmentMeta;
+  report: InterviewReport;
+}>;
+
+export interface TrainerBatchStudentBreakdown {
+  student: TrainerStudentRef;
+  totalAssignments: number;
+  completed: number;
+  pending: number;
+  inProgress: number;
+  averageScore: number | null;
+}
+
+export interface TrainerBatchAnalytics {
+  summary: {
+    totalStudents: number;
+    studentsWithAssignments: number;
+    totalAssignments: number;
+    pending: number;
+    inProgress: number;
+    completed: number;
+    overdue: number;
+    completionRate: number;
+    averageScore: number | null;
+  };
+  students: TrainerBatchStudentBreakdown[];
+}
+
+export type GetTrainerBatchAnalyticsResponse = ApiEnvelope<TrainerBatchAnalytics>;
+
+export interface TrainerSkillStat {
+  skill: string;
+  evidenceCount: number;
+  averageScore?: number;
+}
+
+export interface TrainerStudentAttentionRow {
+  student: TrainerStudentRef;
+  averageScore?: number;
+  weakSkills: string[];
+}
+
+export interface TrainerSkillGapAnalytics {
+  summary: {
+    totalStudents: number;
+    studentsAssessed: number;
+    completedInterviews: number;
+    skillsObserved: number;
+  };
+  strongestSkills: TrainerSkillStat[];
+  skillGaps: TrainerSkillStat[];
+  studentsNeedingAttention: TrainerStudentAttentionRow[];
+}
+
+export type GetTrainerSkillGapsResponse = ApiEnvelope<TrainerSkillGapAnalytics>;
+
+export interface TrainerBatchStudentReadinessRow {
+  student: TrainerStudentRef;
+  readinessScore: number | null;
+  readinessLevel: ReadinessLevel | null;
+  insufficientData: boolean;
+  interviewsCompleted: number;
+  scoredInterviews: number;
+  components: ReadinessComponents;
+}
+
+export interface TrainerBatchReadinessAnalytics {
+  summary: {
+    totalStudents: number;
+    studentsAssessed: number;
+    insufficientData: number;
+    averageReadinessScore: number | null;
+    needsFoundation: number;
+    developing: number;
+    interviewReady: number;
+    strong: number;
+    excellent: number;
+  };
+  students: TrainerBatchStudentReadinessRow[];
+}
+
+export type GetTrainerBatchReadinessResponse = ApiEnvelope<TrainerBatchReadinessAnalytics>;
 
 class InstituteApiService {
   private api: AxiosInstance;
@@ -1042,6 +1194,85 @@ class InstituteApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to cancel interview assignment');
+    }
+  }
+
+  // ---- Trainer Portal (UI-07) — scoped to the CALLING trainer's own assignments; the backend rejects any non-TRAINER caller. ----
+
+  async getTrainerDashboard(organizationId: string): Promise<GetTrainerDashboardResponse> {
+    try {
+      const response = await this.api.get<GetTrainerDashboardResponse>(`/organizations/${organizationId}/trainer-dashboard`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load trainer dashboard');
+    }
+  }
+
+  /** `studentId` must already be inside the caller's own trainer scope — the backend 404s otherwise, never a distinguishable leak. */
+  async listTrainerStudentReports(
+    organizationId: string,
+    studentId: string,
+    params: { page?: number; limit?: number } = {}
+  ): Promise<ListTrainerStudentReportsResponse> {
+    try {
+      const response = await this.api.get<ListTrainerStudentReportsResponse>(
+        `/organizations/${organizationId}/trainer-students/${studentId}/reports`,
+        { params }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load student reports');
+    }
+  }
+
+  async getTrainerStudentReportDetail(
+    organizationId: string,
+    studentId: string,
+    assignmentId: string
+  ): Promise<GetTrainerStudentReportDetailResponse> {
+    try {
+      const response = await this.api.get<GetTrainerStudentReportDetailResponse>(
+        `/organizations/${organizationId}/trainer-students/${studentId}/reports/${assignmentId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load student report');
+    }
+  }
+
+  /** `batchId` must be inside the caller's own trainer scope (direct batch assignment, or a course assignment matching the batch's course) — the backend 404s otherwise. */
+  async getTrainerBatchAnalytics(organizationId: string, batchId: string): Promise<GetTrainerBatchAnalyticsResponse> {
+    try {
+      const response = await this.api.get<GetTrainerBatchAnalyticsResponse>(
+        `/organizations/${organizationId}/trainer-batches/${batchId}/analytics`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load batch analytics');
+    }
+  }
+
+  /** Derived entirely from already-persisted evaluation data server-side — never recomputed here. */
+  async getTrainerBatchSkillGaps(organizationId: string, batchId: string): Promise<GetTrainerSkillGapsResponse> {
+    try {
+      const response = await this.api.get<GetTrainerSkillGapsResponse>(
+        `/organizations/${organizationId}/trainer-batches/${batchId}/skill-gaps`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load skill gap analytics');
+    }
+  }
+
+  /** Aggregates PlacementReadinessService output per student server-side — never recomputed here. */
+  async getTrainerBatchReadiness(organizationId: string, batchId: string): Promise<GetTrainerBatchReadinessResponse> {
+    try {
+      const response = await this.api.get<GetTrainerBatchReadinessResponse>(
+        `/organizations/${organizationId}/trainer-batches/${batchId}/readiness`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load batch readiness');
     }
   }
 }

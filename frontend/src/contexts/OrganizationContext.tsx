@@ -25,6 +25,8 @@ interface OrganizationContextType {
   organizations: OrganizationOption[];
   activeOrganizationId: string | null;
   activeOrganization: OrganizationDetail | null;
+  /** The caller's own OrganizationMember id in the active organization — e.g. needed to self-scope trainer-only lookups. */
+  activeMembershipId: string | null;
   activeRole: OrganizationMemberRole | null;
   activePermissions: OrganizationPermission[];
   loading: boolean;
@@ -72,6 +74,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
   const [organizations, setOrganizations] = useState<OrganizationOption[]>([]);
   const [activeOrganizationId, setActiveOrganizationId] = useState<string | null>(null);
   const [activeOrganization, setActiveOrganizationDetail] = useState<OrganizationDetail | null>(null);
+  const [activeMembershipId, setActiveMembershipId] = useState<string | null>(null);
   const [activeRole, setActiveRole] = useState<OrganizationMemberRole | null>(null);
   const [activePermissions, setActivePermissions] = useState<OrganizationPermission[]>([]);
   const [loading, setLoading] = useState(false);
@@ -80,6 +83,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
   const clearActive = useCallback(() => {
     setActiveOrganizationId(null);
     setActiveOrganizationDetail(null);
+    setActiveMembershipId(null);
     setActiveRole(null);
     setActivePermissions([]);
     localStorage.removeItem(ACTIVE_ORG_STORAGE_KEY);
@@ -92,6 +96,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
         organizationApi.getOrganizationAccess(organizationId),
       ]);
       setActiveOrganizationDetail(orgResponse.data.organization);
+      setActiveMembershipId(access.membershipId);
       setActiveRole(access.role);
       setActivePermissions(access.permissions);
       setActiveOrganizationId(organizationId);
@@ -184,6 +189,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     organizations,
     activeOrganizationId,
     activeOrganization,
+    activeMembershipId,
     activeRole,
     activePermissions,
     loading,

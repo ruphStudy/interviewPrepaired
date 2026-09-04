@@ -31,6 +31,12 @@ import InstituteTrainersPage from './pages/institute/InstituteTrainersPage';
 import InstituteTrainerDetailPage from './pages/institute/InstituteTrainerDetailPage';
 import InstituteTemplatesPage from './pages/institute/InstituteTemplatesPage';
 import InstituteInterviewAssignmentsPage from './pages/institute/InstituteInterviewAssignmentsPage';
+import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
+import TrainerStudentReportsPage from './pages/institute/TrainerStudentReportsPage';
+import TrainerStudentReportDetailPage from './pages/institute/TrainerStudentReportDetailPage';
+import TrainerBatchAnalyticsPage from './pages/institute/TrainerBatchAnalyticsPage';
+import TrainerBatchSkillGapsPage from './pages/institute/TrainerBatchSkillGapsPage';
+import TrainerBatchReadinessPage from './pages/institute/TrainerBatchReadinessPage';
 import StudentDashboardPage from './pages/student/StudentDashboardPage';
 import StudentAssignmentsPage from './pages/student/StudentAssignmentsPage';
 import StudentAssignmentDetailPage from './pages/student/StudentAssignmentDetailPage';
@@ -255,6 +261,58 @@ function App() {
             element={
               <ProtectedRoute>
                 <InstituteInterviewAssignmentsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Institute Trainer Portal Routes (UI-07) — institute-only, and
+              further gated inside each page to activeRole === 'trainer'
+              (an OWNER/ADMIN cannot view these as if they were a trainer). */}
+          <Route
+            path="/organizations/:organizationId/trainer"
+            element={
+              <ProtectedRoute>
+                <TrainerDashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/trainer/students/:studentId/reports"
+            element={
+              <ProtectedRoute>
+                <TrainerStudentReportsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/trainer/students/:studentId/reports/:assignmentId"
+            element={
+              <ProtectedRoute>
+                <TrainerStudentReportDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/trainer/batches/:batchId/analytics"
+            element={
+              <ProtectedRoute>
+                <TrainerBatchAnalyticsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/trainer/batches/:batchId/skill-gaps"
+            element={
+              <ProtectedRoute>
+                <TrainerBatchSkillGapsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/trainer/batches/:batchId/readiness"
+            element={
+              <ProtectedRoute>
+                <TrainerBatchReadinessPage />
               </ProtectedRoute>
             }
           />
