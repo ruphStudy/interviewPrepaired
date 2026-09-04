@@ -14,6 +14,7 @@ import instituteTrainerAssignmentController from '../controllers/InstituteTraine
 import instituteInterviewTemplateController from '../controllers/InstituteInterviewTemplateController';
 import instituteStudentInterviewAssignmentController from '../controllers/InstituteStudentInterviewAssignmentController';
 import instituteTrainerDashboardController from '../controllers/InstituteTrainerDashboardController';
+import instituteTrainerStudentReportController from '../controllers/InstituteTrainerStudentReportController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -1495,6 +1496,35 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_VIEW),
   instituteTrainerDashboardController.getDashboard
+);
+
+// ---- Institute Trainer Student Reports (14B) — read-only, scoped to a student inside the calling TRAINER's own course/batch assignments. Institute-only; OWNER/ADMIN cannot impersonate a trainer here (checked service-side). Archived org: read allowed. ----
+
+const trainerStudentReportsListValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+];
+
+router.get(
+  '/:organizationId/trainer-students/:studentId/reports',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  ...trainerStudentReportsListValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.REPORTS_VIEW),
+  instituteTrainerStudentReportController.getReports
+);
+
+router.get(
+  '/:organizationId/trainer-students/:studentId/reports/:assignmentId',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  ...assignmentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.REPORTS_VIEW),
+  instituteTrainerStudentReportController.getReportDetail
 );
 
 // ---- Members (8B API, 8D RBAC) ----
