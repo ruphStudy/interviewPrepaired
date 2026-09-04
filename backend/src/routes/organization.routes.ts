@@ -20,6 +20,7 @@ import instituteTrainerBatchAnalyticsController from '../controllers/InstituteTr
 import instituteTrainerSkillGapController from '../controllers/InstituteTrainerSkillGapController';
 import instituteTrainerBatchReadinessController from '../controllers/InstituteTrainerBatchReadinessController';
 import instituteInterviewCreditController from '../controllers/InstituteInterviewCreditController';
+import instituteBatchReadinessController from '../controllers/InstituteBatchReadinessController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -1270,6 +1271,18 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteBatchController.removeBatch
+);
+
+// ---- Institute Batch Readiness (UI-08) — read-only, institute-MANAGEMENT view (no trainer-assignment scope gate, unlike the 15C trainer-batches/:batchId/readiness endpoint). Institute-only; archived org readable. ----
+
+router.get(
+  '/:organizationId/batches/:batchId/readiness',
+  protect,
+  ...organizationIdValidation,
+  ...batchIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  instituteBatchReadinessController.getBatchReadiness
 );
 
 // ---- Institute Students (11B) — institute-only (400 for a company org). Roster/profile data only. DELETE is soft/idempotent. ----

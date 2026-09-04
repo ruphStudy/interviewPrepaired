@@ -31,6 +31,8 @@ import InstituteTrainersPage from './pages/institute/InstituteTrainersPage';
 import InstituteTrainerDetailPage from './pages/institute/InstituteTrainerDetailPage';
 import InstituteTemplatesPage from './pages/institute/InstituteTemplatesPage';
 import InstituteInterviewAssignmentsPage from './pages/institute/InstituteInterviewAssignmentsPage';
+import InstituteReadinessPage from './pages/institute/InstituteReadinessPage';
+import InstituteBillingPage from './pages/institute/InstituteBillingPage';
 import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
 import TrainerStudentReportsPage from './pages/institute/TrainerStudentReportsPage';
 import TrainerStudentReportDetailPage from './pages/institute/TrainerStudentReportDetailPage';
@@ -261,6 +263,24 @@ function App() {
             element={
               <ProtectedRoute>
                 <InstituteInterviewAssignmentsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Institute Placement Readiness + Billing/Credits Routes (UI-08) — institute-only, guarded inside each page */}
+          <Route
+            path="/organizations/:organizationId/institute/readiness"
+            element={
+              <ProtectedRoute>
+                <InstituteReadinessPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/billing"
+            element={
+              <ProtectedRoute>
+                <InstituteBillingPage />
               </ProtectedRoute>
             }
           />

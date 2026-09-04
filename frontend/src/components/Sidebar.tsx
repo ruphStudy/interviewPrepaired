@@ -118,6 +118,12 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
                 },
               ]
             : []),
+          ...(hasPermission('analytics:view')
+            ? [{ to: `/organizations/${activeOrganizationId}/institute/readiness`, label: 'Placement Readiness', icon: Gauge }]
+            : []),
+          ...(hasPermission('organization:view')
+            ? [{ to: `/organizations/${activeOrganizationId}/institute/billing`, label: 'Billing & Credits', icon: Wallet }]
+            : []),
         ]
       : [];
 

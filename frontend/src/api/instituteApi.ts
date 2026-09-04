@@ -566,6 +566,90 @@ export interface TrainerBatchReadinessAnalytics {
 
 export type GetTrainerBatchReadinessResponse = ApiEnvelope<TrainerBatchReadinessAnalytics>;
 
+// ============================================================================
+// Institute-management batch readiness (UI-08) — a SEPARATE, parallel read
+// path from the trainer-scoped 14C/15C endpoints above: no trainer-identity
+// or InstituteTrainerAssignment scope gate, any batch in the organization is
+// in scope for an OWNER/ADMIN (or any ANALYTICS_VIEW holder). Same shape as
+// the trainer batch readiness response — confirmed against the new
+// InstituteBatchReadinessService.
+// ============================================================================
+
+export interface InstituteBatchReadinessStudentRow {
+  student: TrainerStudentRef;
+  readinessScore: number | null;
+  readinessLevel: ReadinessLevel | null;
+  insufficientData: boolean;
+  interviewsCompleted: number;
+  scoredInterviews: number;
+  components: ReadinessComponents;
+}
+
+export interface InstituteBatchReadinessAnalytics {
+  summary: {
+    totalStudents: number;
+    studentsAssessed: number;
+    insufficientData: number;
+    averageReadinessScore: number | null;
+    needsFoundation: number;
+    developing: number;
+    interviewReady: number;
+    strong: number;
+    excellent: number;
+  };
+  students: InstituteBatchReadinessStudentRow[];
+}
+
+export type GetInstituteBatchReadinessResponse = ApiEnvelope<InstituteBatchReadinessAnalytics>;
+
+// ============================================================================
+// Institute Interview Credits (UI-08 / Sprint 15E) — foundation-only, no
+// payment gateway/subscription billing. Field names confirmed directly from
+// InstituteInterviewCreditService and constants/institutePlan.ts.
+// ============================================================================
+
+export type InstitutePlanCode = 'STARTER' | 'GROWTH' | 'PRO' | 'ENTERPRISE';
+
+export interface InstituteCreditPlan {
+  code: InstitutePlanCode;
+  name: string;
+  description: string;
+  /** Whole INR. Null for ENTERPRISE — priced by custom negotiation. */
+  priceINR: number | null;
+  /** true only for ENTERPRISE. */
+  customPrice: boolean;
+  /** Null for ENTERPRISE — volume is custom, never auto-granted. */
+  interviewCredits: number | null;
+  sortOrder: number;
+  features: string[];
+}
+
+export interface InterviewCreditSummary {
+  balance: number;
+  plans: InstituteCreditPlan[];
+}
+
+export type InterviewCreditLedgerType = 'GRANT' | 'CONSUME' | 'REFUND' | 'ADMIN_ADJUSTMENT' | 'EXPIRE';
+
+/** `amount` is already signed (negative for CONSUME, positive for GRANT/REFUND) — never re-derive the sign from `type`. */
+export interface InterviewCreditLedgerRow {
+  id: string;
+  type: InterviewCreditLedgerType;
+  amount: number;
+  balanceAfter: number;
+  referenceType?: string;
+  referenceId?: string;
+  description?: string;
+  createdAt: string;
+}
+
+export type GetInterviewCreditSummaryResponse = ApiEnvelope<InterviewCreditSummary>;
+export type GetInterviewCreditLedgerResponse = ApiEnvelope<{
+  transactions: InterviewCreditLedgerRow[];
+  pagination: Pagination;
+}>;
+export type GrantInterviewCreditsResponse = ApiEnvelope<{ transaction: InterviewCreditLedgerRow }>;
+
 class InstituteApiService {
   private api: AxiosInstance;
 
@@ -1273,6 +1357,67 @@ class InstituteApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load batch readiness');
+    }
+  }
+
+  // ---- Institute-management Batch Readiness (UI-08) — any batch in the organization, for an OWNER/ADMIN/ANALYTICS_VIEW holder; no trainer-assignment scope gate. ----
+
+  async getInstituteBatchReadiness(organizationId: string, batchId: string): Promise<GetInstituteBatchReadinessResponse> {
+    try {
+      const response = await this.api.get<GetInstituteBatchReadinessResponse>(
+        `/organizations/${organizationId}/batches/${batchId}/readiness`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load batch readiness');
+    }
+  }
+
+  // ---- Institute Interview Credits (UI-08) — foundation-only; grant is an admin-style action, never a purchase. ----
+
+  async getInterviewCreditSummary(organizationId: string): Promise<GetInterviewCreditSummaryResponse> {
+    try {
+      const response = await this.api.get<GetInterviewCreditSummaryResponse>(`/organizations/${organizationId}/interview-credits`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview credit summary');
+    }
+  }
+
+  async listInterviewCreditLedger(
+    organizationId: string,
+    params: { page?: number; limit?: number } = {}
+  ): Promise<GetInterviewCreditLedgerResponse> {
+    try {
+      const response = await this.api.get<GetInterviewCreditLedgerResponse>(
+        `/organizations/${organizationId}/interview-credits/ledger`,
+        { params }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview credit ledger');
+    }
+  }
+
+  /**
+   * Foundation/admin-style grant — NOT a purchase flow. Exactly one of
+   * planCode/amount must be provided (never both); ENTERPRISE can never be
+   * auto-granted (enforced server-side). `idempotencyKey` must be a fresh,
+   * caller-generated value per deliberate submit so a retried/duplicate
+   * request can never double-grant.
+   */
+  async grantInterviewCredits(
+    organizationId: string,
+    payload: { planCode?: InstitutePlanCode; amount?: number; idempotencyKey: string }
+  ): Promise<GrantInterviewCreditsResponse> {
+    try {
+      const response = await this.api.post<GrantInterviewCreditsResponse>(
+        `/organizations/${organizationId}/interview-credits/grant`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to grant interview credits');
     }
   }
 }
