@@ -13,6 +13,7 @@ import instituteTrainerController from '../controllers/InstituteTrainerControlle
 import instituteTrainerAssignmentController from '../controllers/InstituteTrainerAssignmentController';
 import instituteInterviewTemplateController from '../controllers/InstituteInterviewTemplateController';
 import instituteStudentInterviewAssignmentController from '../controllers/InstituteStudentInterviewAssignmentController';
+import instituteTrainerDashboardController from '../controllers/InstituteTrainerDashboardController';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -1483,6 +1484,17 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   instituteOverviewController.getOverview
+);
+
+// ---- Institute Trainer Dashboard (14A) — read-only, scoped to the calling TRAINER's own course/batch assignments. Institute-only; OWNER/ADMIN cannot impersonate a trainer here (checked service-side). Archived org: read allowed. ----
+
+router.get(
+  '/:organizationId/trainer-dashboard',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_VIEW),
+  instituteTrainerDashboardController.getDashboard
 );
 
 // ---- Members (8B API, 8D RBAC) ----
