@@ -24,6 +24,7 @@ import instituteBatchReadinessController from '../controllers/InstituteBatchRead
 import employerJobController from '../controllers/EmployerJobController';
 import employerJobHiringTeamController from '../controllers/EmployerJobHiringTeamController';
 import employerJobDescriptionController from '../controllers/EmployerJobDescriptionController';
+import employerJobDescriptionAnalysisController from '../controllers/EmployerJobDescriptionAnalysisController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -1559,6 +1560,37 @@ router.post(
   employerJobDescriptionController.createJobDescriptionSource
 );
 
+// ============================================================================
+// Job Description Analysis (17B) — AI-parsed structured understanding of the
+// CURRENT JD source only, via the EXISTING AI Gateway (no provider SDK
+// touched here). Reads use ORGANIZATION_VIEW; triggering a parse uses
+// INTERVIEWS_MANAGE. Archived organization or archived job: reads allowed,
+// parsing blocked (enforced service-side). NOTE: `GET .../jd/analysis` is
+// registered BEFORE `GET .../jd/:jdSourceId` (above it in this file only
+// because it was added later) so the literal "analysis" segment is matched
+// before it could ever fall through to the `:jdSourceId` wildcard route.
+// ============================================================================
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd/analysis',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobDescriptionAnalysisController.getCurrentAnalysis
+);
+
+router.post(
+  '/:organizationId/jobs/:jobId/jd/analyze',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobDescriptionAnalysisController.analyzeCurrentJobDescription
+);
+
 router.get(
   '/:organizationId/jobs/:jobId/jd/:jdSourceId',
   protect,
@@ -1568,6 +1600,17 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobDescriptionController.getJobDescriptionSource
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd/:jdSourceId/analysis',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...jdSourceIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobDescriptionAnalysisController.getAnalysisForSource
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

@@ -230,6 +230,88 @@ export type GetJobDescriptionResponse = ApiEnvelope<{ current: JobDescriptionSou
 export type GetJobDescriptionSourceResponse = ApiEnvelope<{ source: JobDescriptionSource }>;
 export type CreateJobDescriptionSourceResponse = ApiEnvelope<{ source: JobDescriptionSource }>;
 
+// ============================================================================
+// Job Description Analysis (Sprint 17B) — structured, AI-parsed understanding
+// of ONE JD source version. Raw understanding only: `technicalKeywords`/
+// `toolsTechnologies`/`softSkillKeywords` are raw parsed concepts, NOT the
+// canonical/scored skill taxonomy (later sprint) or competencies.
+// ============================================================================
+
+export type EmployerJobDescriptionAnalysisStatus = 'processing' | 'completed' | 'failed';
+
+export interface JobDescriptionAnalysisRequirements {
+  mandatory: string[];
+  preferred: string[];
+}
+
+export interface JobDescriptionAnalysisExperience {
+  minYears?: number;
+  maxYears?: number;
+  description?: string;
+}
+
+export interface JobDescriptionAnalysisCompensation {
+  min?: number;
+  max?: number;
+  currency?: string;
+  rawText?: string;
+}
+
+export interface JobDescriptionAnalysisConfidence {
+  overall: number;
+  ambiguousSections: string[];
+}
+
+export interface JobDescriptionAnalysis {
+  jobTitle?: string;
+  summary?: string;
+  rolePurpose?: string;
+  responsibilities: string[];
+  requirements: JobDescriptionAnalysisRequirements;
+  experience: JobDescriptionAnalysisExperience;
+  education: string[];
+  domainKnowledge: string[];
+  technicalKeywords: string[];
+  toolsTechnologies: string[];
+  softSkillKeywords: string[];
+  location?: string;
+  workplaceType?: string;
+  employmentType?: string;
+  compensation?: JobDescriptionAnalysisCompensation;
+  confidence: JobDescriptionAnalysisConfidence;
+}
+
+export interface JobDescriptionAnalysisUsage {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputCostUsd: number;
+  cachedInputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+  pricingStatus: 'calculated' | 'unknown';
+}
+
+export interface JobDescriptionAnalysisRecord {
+  id: string;
+  jobId: string;
+  jdSourceId: string;
+  jdVersion: number;
+  status: EmployerJobDescriptionAnalysisStatus;
+  analysis: JobDescriptionAnalysis | null;
+  aiUsage: JobDescriptionAnalysisUsage | null;
+  errorMessage?: string;
+  createdByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AnalyzeJobDescriptionResponse = ApiEnvelope<{ analysis: JobDescriptionAnalysisRecord }>;
+export type GetJobDescriptionAnalysisResponse = ApiEnvelope<{ analysis: JobDescriptionAnalysisRecord | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -469,6 +551,45 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to save job description');
+    }
+  }
+
+  // ---- Job Description Analysis (Sprint 17B) ----
+
+  /**
+   * Parses the CURRENT JD source only — no body. If a completed analysis
+   * already exists for that exact source version, the backend returns it
+   * without calling AI again; if one is already in progress, this throws
+   * (surfaced as-is).
+   */
+  async analyzeCurrentJobDescription(organizationId: string, jobId: string): Promise<AnalyzeJobDescriptionResponse> {
+    try {
+      const response = await this.api.post<AnalyzeJobDescriptionResponse>(`/organizations/${organizationId}/jobs/${jobId}/jd/analyze`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to analyze job description');
+    }
+  }
+
+  /** Current JD source's analysis, or `analysis: null` if it was never parsed. */
+  async getCurrentJobDescriptionAnalysis(organizationId: string, jobId: string): Promise<GetJobDescriptionAnalysisResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionAnalysisResponse>(`/organizations/${organizationId}/jobs/${jobId}/jd/analysis`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description analysis');
+    }
+  }
+
+  /** Analysis for one EXACT historical source version, or `analysis: null` if that version was never parsed. */
+  async getJobDescriptionAnalysis(organizationId: string, jobId: string, jdSourceId: string): Promise<GetJobDescriptionAnalysisResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionAnalysisResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/${jdSourceId}/analysis`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description analysis');
     }
   }
 }

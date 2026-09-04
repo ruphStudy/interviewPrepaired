@@ -2,8 +2,15 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import AuthenticatedLayout from '../../components/AuthenticatedLayout';
 import { useOrganization } from '../../contexts/OrganizationContext';
-import employerApi, { EmployerJob, JobDescriptionSource, EmployerJobDescriptionSourceType } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Eye, X, FileText } from 'lucide-react';
+import employerApi, {
+  EmployerJob,
+  JobDescriptionSource,
+  EmployerJobDescriptionSourceType,
+  JobDescriptionAnalysisRecord,
+  JobDescriptionAnalysis,
+  JobDescriptionAnalysisUsage,
+} from '../../api/employerApi';
+import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Eye, X, FileText, Sparkles, RefreshCw } from 'lucide-react';
 
 const JD_MIN_LENGTH = 50;
 const JD_MAX_LENGTH = 50000;
@@ -16,6 +23,120 @@ const SOURCE_TYPE_OPTIONS: Array<{ value: EmployerJobDescriptionSourceType; labe
 const sourceTypeLabel = (value: EmployerJobDescriptionSourceType) =>
   SOURCE_TYPE_OPTIONS.find((o) => o.value === value)?.label || value;
 const formatDateTime = (value: string) => new Date(value).toLocaleString();
+
+/** Adaptive precision, matching the app's existing AI-cost display convention — small per-call costs need more than 2dp to not show as $0.00. */
+function formatCostUsd(value: number): string {
+  if (value === 0) return '$0.00';
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  if (value >= 0.0001) return `$${value.toFixed(6)}`;
+  return `$${value.toFixed(8)}`;
+}
+
+/** A labeled list section — omitted entirely by the caller when the array is empty, so structured-analysis sections with no content never render. */
+const ListSection: React.FC<{ title: string; items: string[] }> = ({ title, items }) => {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="label mb-1.5">{title}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((item, i) => (
+          <span key={i} className="badge badge-neutral">
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const TextSection: React.FC<{ title: string; text?: string }> = ({ title, text }) => {
+  if (!text) return null;
+  return (
+    <div>
+      <p className="label mb-1">{title}</p>
+      <p className="text-sm text-mentor-text whitespace-pre-wrap">{text}</p>
+    </div>
+  );
+};
+
+/**
+ * Structured JD analysis display (17B) — this is raw AI-parsed
+ * understanding, not the canonical skill taxonomy (later sprint). Every
+ * section is omitted entirely when the backend returned no content for it —
+ * never a fabricated "N/A" placeholder.
+ */
+const StructuredAnalysisView: React.FC<{ analysis: JobDescriptionAnalysis }> = ({ analysis }) => {
+  const context = [analysis.location, analysis.workplaceType, analysis.employmentType].filter(Boolean).join(' · ');
+  const hasExperience = analysis.experience.minYears !== undefined || analysis.experience.maxYears !== undefined || analysis.experience.description;
+  const comp = analysis.compensation;
+  const hasComp = comp && (comp.min !== undefined || comp.max !== undefined || comp.rawText);
+
+  return (
+    <div className="space-y-5">
+      <TextSection title="Summary" text={analysis.summary} />
+      <TextSection title="Role Purpose" text={analysis.rolePurpose} />
+      <ListSection title="Responsibilities" items={analysis.responsibilities} />
+      <ListSection title="Mandatory Requirements" items={analysis.requirements.mandatory} />
+      <ListSection title="Preferred Requirements" items={analysis.requirements.preferred} />
+
+      {hasExperience && (
+        <div>
+          <p className="label mb-1">Experience</p>
+          <p className="text-sm text-mentor-text">
+            {analysis.experience.minYears !== undefined || analysis.experience.maxYears !== undefined
+              ? `${analysis.experience.minYears ?? 0} – ${analysis.experience.maxYears ?? '∞'} years`
+              : null}
+            {analysis.experience.description ? ` — ${analysis.experience.description}` : ''}
+          </p>
+        </div>
+      )}
+
+      <ListSection title="Education" items={analysis.education} />
+      <ListSection title="Domain Knowledge" items={analysis.domainKnowledge} />
+      <ListSection title="Technical Keywords" items={analysis.technicalKeywords} />
+      <ListSection title="Tools / Technologies" items={analysis.toolsTechnologies} />
+      <ListSection title="Soft Skill Keywords" items={analysis.softSkillKeywords} />
+
+      {context && (
+        <div>
+          <p className="label mb-1">Location / Workplace / Employment</p>
+          <p className="text-sm text-mentor-text">{context}</p>
+        </div>
+      )}
+
+      {hasComp && (
+        <div>
+          <p className="label mb-1">Compensation</p>
+          <p className="text-sm text-mentor-text">
+            {comp!.min !== undefined || comp!.max !== undefined
+              ? `${comp!.currency ? `${comp!.currency} ` : ''}${comp!.min ?? '?'} – ${comp!.max ?? '?'}`
+              : comp!.rawText}
+          </p>
+        </div>
+      )}
+
+      <div className="pt-3 border-t border-mentor-border">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-mentor-text-muted">
+            Confidence: {Math.round(analysis.confidence.overall * 100)}%
+          </span>
+          {analysis.confidence.ambiguousSections.map((section) => (
+            <span key={section} className="badge badge-warning">
+              Ambiguous: {section}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const UsageLine: React.FC<{ usage: JobDescriptionAnalysisUsage }> = ({ usage }) => (
+  <p className="text-xs text-mentor-text-muted mt-4 pt-4 border-t border-mentor-border">
+    {usage.model} &middot; {usage.totalTokens.toLocaleString()} tokens
+    {usage.pricingStatus === 'calculated' ? ` · ~${formatCostUsd(usage.totalCostUsd)}` : ' · cost unavailable'}
+  </p>
+);
 
 /**
  * Job Description intake/editor (17A) — raw text only, no AI parsing/skill
@@ -54,6 +175,14 @@ const EmployerJobDescriptionPage: React.FC = () => {
   const [viewingVersion, setViewingVersion] = useState<JobDescriptionSource | null>(null);
   const [viewingLoading, setViewingLoading] = useState(false);
   const [viewingError, setViewingError] = useState<string | null>(null);
+  const [viewingAnalysis, setViewingAnalysis] = useState<JobDescriptionAnalysisRecord | null>(null);
+  const [viewingAnalysisLoading, setViewingAnalysisLoading] = useState(false);
+
+  const [currentAnalysis, setCurrentAnalysis] = useState<JobDescriptionAnalysisRecord | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(true);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -99,12 +228,27 @@ const EmployerJobDescriptionPage: React.FC = () => {
     }
   }, [organizationId, jobId]);
 
+  const fetchCurrentAnalysis = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const response = await employerApi.getCurrentJobDescriptionAnalysis(organizationId, jobId);
+      setCurrentAnalysis(response.data.analysis);
+    } catch (err: any) {
+      setAnalysisError(err.message || 'Failed to load job description analysis');
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, [organizationId, jobId]);
+
   useEffect(() => {
     if (!isSyncing && activeOrganization?.type === 'company' && canView) {
       fetchJob();
       fetchJobDescription();
+      fetchCurrentAnalysis();
     }
-  }, [isSyncing, activeOrganization, canView, fetchJob, fetchJobDescription]);
+  }, [isSyncing, activeOrganization, canView, fetchJob, fetchJobDescription, fetchCurrentAnalysis]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,6 +271,11 @@ const EmployerJobDescriptionPage: React.FC = () => {
       setRawText(response.data.source.rawText);
       setSourceType('pasted');
       setViewingVersion(null);
+      // Version awareness: a brand-new version has no analysis of its own —
+      // never carried forward from the previous version. The old version's
+      // analysis remains intact and viewable in its own history entry.
+      setCurrentAnalysis(null);
+      setAnalyzeError(null);
       setSaveSuccess(`Saved as version ${response.data.source.version}.`);
       setTimeout(() => setSaveSuccess(null), 3000);
       const jdResponse = await employerApi.getJobDescriptionSources(organizationId, jobId);
@@ -142,13 +291,49 @@ const EmployerJobDescriptionPage: React.FC = () => {
     if (!organizationId || !jobId) return;
     setViewingError(null);
     setViewingLoading(true);
+    setViewingAnalysis(null);
     try {
       const response = await employerApi.getJobDescriptionSource(organizationId, jobId, source.id);
       setViewingVersion(response.data.source);
     } catch (err: any) {
       setViewingError(err.message || 'Failed to load version');
-    } finally {
       setViewingLoading(false);
+      return;
+    }
+    setViewingLoading(false);
+
+    // Historical analysis is read-only display only — never a new parse trigger.
+    setViewingAnalysisLoading(true);
+    try {
+      const analysisResponse = await employerApi.getJobDescriptionAnalysis(organizationId, jobId, source.id);
+      setViewingAnalysis(analysisResponse.data.analysis);
+    } catch {
+      setViewingAnalysis(null);
+    } finally {
+      setViewingAnalysisLoading(false);
+    }
+  };
+
+  const handleCloseViewingVersion = () => {
+    setViewingVersion(null);
+    setViewingAnalysis(null);
+  };
+
+  const handleAnalyze = async () => {
+    if (!organizationId || !jobId) return;
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const response = await employerApi.analyzeCurrentJobDescription(organizationId, jobId);
+      setCurrentAnalysis(response.data.analysis);
+    } catch (err: any) {
+      setAnalyzeError(err.message || 'Failed to analyze job description');
+      // A concurrent/in-progress or stale-processing state may have changed
+      // server-side even though this request errored — refresh to reflect
+      // the true current state rather than leaving a stale view.
+      fetchCurrentAnalysis();
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -288,12 +473,37 @@ const EmployerJobDescriptionPage: React.FC = () => {
                         <span className="badge badge-neutral">{sourceTypeLabel(viewingVersion.sourceType)}</span>
                         <span className="text-xs text-mentor-text-muted">{formatDateTime(viewingVersion.createdAt)}</span>
                       </div>
-                      <button onClick={() => setViewingVersion(null)} className="btn btn-secondary px-3 py-1.5 text-xs">
+                      <button onClick={handleCloseViewingVersion} className="btn btn-secondary px-3 py-1.5 text-xs">
                         <X size={14} />
                         Close
                       </button>
                     </div>
                     <p className="text-sm text-mentor-text whitespace-pre-wrap">{viewingVersion.rawText}</p>
+
+                    <div className="mt-6 pt-6 border-t border-mentor-border">
+                      <h3 className="section-title flex items-center gap-2 mb-3">
+                        <Sparkles size={16} className="text-mentor-text-muted" />
+                        Structured Analysis
+                      </h3>
+                      {viewingAnalysisLoading ? (
+                        <div className="py-4 text-center">
+                          <Loader2 className="w-5 h-5 text-primary-600 animate-spin mx-auto" />
+                        </div>
+                      ) : viewingAnalysis?.status === 'completed' && viewingAnalysis.analysis ? (
+                        <>
+                          <StructuredAnalysisView analysis={viewingAnalysis.analysis} />
+                          {viewingAnalysis.aiUsage && <UsageLine usage={viewingAnalysis.aiUsage} />}
+                        </>
+                      ) : viewingAnalysis?.status === 'failed' ? (
+                        <p className="text-sm text-mentor-error">
+                          Analysis failed for this version.{viewingAnalysis.errorMessage ? ` ${viewingAnalysis.errorMessage}` : ''}
+                        </p>
+                      ) : viewingAnalysis?.status === 'processing' ? (
+                        <p className="text-sm text-mentor-text-secondary">Analysis is in progress for this version.</p>
+                      ) : (
+                        <p className="text-sm text-mentor-text-secondary">Not analyzed yet.</p>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <form onSubmit={handleSave} className="card mb-6">
@@ -355,6 +565,72 @@ const EmployerJobDescriptionPage: React.FC = () => {
                       </>
                     )}
                   </form>
+                )}
+
+                {!viewingVersion && current && (
+                  <div className="card mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="section-title flex items-center gap-2 mb-0">
+                        <Sparkles size={18} className="text-mentor-text-muted" />
+                        Job Description Analysis
+                      </h2>
+                      {!analysisLoading && !analysisError && currentAnalysis?.status === 'processing' && (
+                        <button onClick={fetchCurrentAnalysis} className="btn btn-secondary px-3 py-1.5 text-xs">
+                          <RefreshCw size={14} />
+                          Check Status
+                        </button>
+                      )}
+                      {!analysisLoading &&
+                        !analysisError &&
+                        currentAnalysis?.status !== 'processing' &&
+                        currentAnalysis?.status !== 'completed' &&
+                        canManage && (
+                          <button onClick={handleAnalyze} disabled={analyzing} className="btn btn-primary">
+                            {analyzing
+                              ? 'Analyzing...'
+                              : currentAnalysis?.status === 'failed'
+                              ? 'Retry Analysis'
+                              : 'Analyze Job Description'}
+                          </button>
+                        )}
+                    </div>
+
+                    {analyzeError && (
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{analyzeError}</p>
+                      </div>
+                    )}
+
+                    {analysisLoading ? (
+                      <div className="py-6 text-center">
+                        <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                      </div>
+                    ) : analysisError ? (
+                      <div className="py-6 text-center">
+                        <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                        <p className="text-sm text-mentor-text-secondary mb-4">{analysisError}</p>
+                        <button onClick={fetchCurrentAnalysis} className="btn btn-primary">
+                          Try Again
+                        </button>
+                      </div>
+                    ) : !currentAnalysis ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">Not analyzed yet.</p>
+                    ) : currentAnalysis.status === 'processing' ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">
+                        Analysis is in progress for this job description.
+                      </p>
+                    ) : currentAnalysis.status === 'failed' ? (
+                      <p className="text-sm text-mentor-error text-center py-6">
+                        Analysis failed.{currentAnalysis.errorMessage ? ` ${currentAnalysis.errorMessage}` : ''}
+                      </p>
+                    ) : currentAnalysis.analysis ? (
+                      <>
+                        <StructuredAnalysisView analysis={currentAnalysis.analysis} />
+                        {currentAnalysis.aiUsage && <UsageLine usage={currentAnalysis.aiUsage} />}
+                      </>
+                    ) : null}
+                  </div>
                 )}
 
                 <div className="card p-0 overflow-hidden">
