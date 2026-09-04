@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import AuthenticatedLayout from '../components/AuthenticatedLayout';
 import axios from 'axios';
 import { API_BASE_URL } from '../config/api.config';
+import subscriptionApi from '../api/subscriptionApi';
 import {
   MessagesSquare,
   CheckCircle2,
@@ -15,6 +16,7 @@ import {
   History,
   Plus,
   ClipboardCheck,
+  Wallet,
 } from 'lucide-react';
 
 interface RecentInterview {
@@ -36,16 +38,42 @@ interface UserStats {
   lastInterviewScore: number;
 }
 
+interface AccountSummary {
+  planName: string;
+  balance: number;
+}
+
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, token } = useAuth();
   const [recentInterviews, setRecentInterviews] = useState<RecentInterview[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
 
   useEffect(() => {
     fetchDashboardData();
+    fetchAccountSummary();
   }, []);
+
+  // Independent of the interview stats fetch above — a failure here (e.g.
+  // subscription service hiccup) must never block or blank out the rest of
+  // the dashboard, so it's a separate effect with its own try/catch and no
+  // shared loading/error state.
+  const fetchAccountSummary = async () => {
+    try {
+      const [subscriptionResponse, creditsResponse] = await Promise.all([
+        subscriptionApi.getMySubscription(),
+        subscriptionApi.getMyCredits(),
+      ]);
+      setAccountSummary({
+        planName: subscriptionResponse.data.plan.name,
+        balance: creditsResponse.data.balance,
+      });
+    } catch (error) {
+      console.error('Failed to fetch account summary:', error);
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -188,6 +216,33 @@ const DashboardPage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Account Summary (small, only rendered once loaded — never blocks the rest of the dashboard) */}
+        {accountSummary && (
+          <div className="surface-muted flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 px-5 py-4 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-white dark:bg-future-elevated flex items-center justify-center shrink-0">
+              <Wallet size={18} className="text-primary-600 dark:text-future-violet" />
+            </div>
+            <div className="flex-1 flex flex-wrap items-center gap-x-5 gap-y-1">
+              <p className="text-sm text-mentor-text-secondary">
+                <span className="font-semibold text-mentor-text">{accountSummary.planName} Plan</span>
+              </p>
+              <p className="text-sm text-mentor-text-secondary">
+                <span className="font-semibold text-mentor-text">{accountSummary.balance}</span> credit
+                {accountSummary.balance === 1 ? '' : 's'} remaining
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => navigate('/account')} className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+                View Account
+              </button>
+              <span className="text-mentor-border">&middot;</span>
+              <button onClick={() => navigate('/pricing')} className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+                Pricing
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

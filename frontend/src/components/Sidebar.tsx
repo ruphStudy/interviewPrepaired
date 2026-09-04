@@ -8,6 +8,7 @@ import {
   X,
   UserRound,
   CreditCard,
+  Wallet,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,6 +28,7 @@ const MAIN_NAV_ITEMS = [
 
 const ACCOUNT_NAV_ITEMS = [
   { to: '/profile', label: 'Profile', icon: UserRound },
+  { to: '/account', label: 'Billing', icon: Wallet },
   { to: '/pricing', label: 'Pricing', icon: CreditCard },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];

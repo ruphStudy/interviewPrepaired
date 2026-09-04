@@ -232,6 +232,34 @@ export interface GetInterviewSessionResponse {
   data: InterviewSession;
 }
 
+export interface InterviewHistoryItem {
+  id: string;
+  topic: string;
+  difficulty: string;
+  status: string;
+  overallScore?: number;
+  totalQuestions: number;
+  answeredQuestions: number;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface InterviewHistoryPagination {
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+}
+
+export interface GetInterviewHistoryResponse {
+  success: boolean;
+  message: string;
+  data: {
+    interviews: InterviewHistoryItem[];
+    pagination: InterviewHistoryPagination;
+  };
+}
+
 // ============================================================================
 // API Configuration
 // ============================================================================
@@ -358,6 +386,18 @@ class InterviewApiService {
       await this.api.delete(`/interview/${interviewId}`);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to delete interview');
+    }
+  }
+
+  /**
+   * Paginated interview history
+   */
+  async getHistory(params: { page?: number; limit?: number } = {}): Promise<GetInterviewHistoryResponse> {
+    try {
+      const response = await this.api.get<GetInterviewHistoryResponse>('/interview/history', { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview history');
     }
   }
 }
