@@ -11,6 +11,7 @@ import {
   OrganizationDateFormat,
   OrganizationTimeFormat,
   InstituteKind,
+  CompanySize,
   DEFAULT_ORGANIZATION_TIMEZONE,
   DEFAULT_ORGANIZATION_LOCALE,
   DEFAULT_ORGANIZATION_DATE_FORMAT,
@@ -88,6 +89,21 @@ interface UpdateInstituteProfileFields {
   website?: string;
   placementEmail?: string;
   placementPhone?: string;
+}
+
+interface UpdateCompanyProfileFields {
+  industry?: string;
+  companySize?: CompanySize;
+  establishedYear?: number;
+  officialName?: string;
+  companyCode?: string;
+  description?: string;
+  website?: string;
+  careersUrl?: string;
+  headquarters?: string;
+  linkedinUrl?: string;
+  hiringEmail?: string;
+  hiringPhone?: string;
 }
 
 export class OrganizationService {
@@ -370,6 +386,89 @@ export class OrganizationService {
     };
   }
 
+  /**
+   * Trusted — see getOrganizationById. Re-asserts ORGANIZATION_VIEW.
+   * Company-only (400 for an institute organization). Read-only: never
+   * creates/saves a missing companyProfile — an old company doc without one
+   * simply returns a profile object of all-optional fields.
+   */
+  async getCompanyProfileTrusted(
+    organizationId: string,
+    actingRole: OrganizationMemberRole
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_VIEW);
+
+    const organization = await Organization.findById(organizationId)
+      .select('name slug status type companyProfile')
+      .lean();
+    if (!organization) {
+      throw new ApiError(404, 'Organization not found');
+    }
+    this.assertIsCompany(organization);
+
+    return {
+      organization: {
+        id: organization._id.toString(),
+        name: organization.name,
+        slug: organization.slug,
+        status: organization.status,
+      },
+      profile: this.toCompanyProfileDetail(organization.companyProfile),
+    };
+  }
+
+  /**
+   * Trusted — see getOrganizationById. Re-asserts ORGANIZATION_UPDATE.
+   * Company-only (400 for an institute organization); rejects an archived
+   * organization (409). PATCH-like merge despite the PUT route: only
+   * supplied fields change, omitted fields keep their current value — the
+   * embedded profile is created from scratch if this is the first update on
+   * an old company doc that never had one. Never touches type/status/slug/
+   * ownerUserId — those are not part of this profile at all.
+   */
+  async updateCompanyProfileTrusted(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    fields: UpdateCompanyProfileFields
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+
+    const organization = await Organization.findById(organizationId);
+    if (!organization) {
+      throw new ApiError(404, 'Organization not found');
+    }
+    this.assertIsCompany(organization);
+    this.assertOrganizationMutable(organization);
+
+    const current = organization.companyProfile ?? {};
+    organization.companyProfile = {
+      industry: fields.industry !== undefined ? fields.industry.trim() || undefined : current.industry,
+      companySize: fields.companySize !== undefined ? fields.companySize : current.companySize,
+      establishedYear: fields.establishedYear !== undefined ? fields.establishedYear : current.establishedYear,
+      officialName: fields.officialName !== undefined ? fields.officialName.trim() || undefined : current.officialName,
+      companyCode: fields.companyCode !== undefined ? fields.companyCode.trim().toUpperCase() || undefined : current.companyCode,
+      description: fields.description !== undefined ? fields.description.trim() || undefined : current.description,
+      website: fields.website !== undefined ? fields.website.trim() || undefined : current.website,
+      careersUrl: fields.careersUrl !== undefined ? fields.careersUrl.trim() || undefined : current.careersUrl,
+      headquarters: fields.headquarters !== undefined ? fields.headquarters.trim() || undefined : current.headquarters,
+      linkedinUrl: fields.linkedinUrl !== undefined ? fields.linkedinUrl.trim() || undefined : current.linkedinUrl,
+      hiringEmail: fields.hiringEmail !== undefined ? fields.hiringEmail.trim().toLowerCase() || undefined : current.hiringEmail,
+      hiringPhone: fields.hiringPhone !== undefined ? fields.hiringPhone.trim() || undefined : current.hiringPhone,
+    };
+
+    await organization.save();
+
+    return {
+      organization: {
+        id: organization._id.toString(),
+        name: organization.name,
+        slug: organization.slug,
+        status: organization.status,
+      },
+      profile: this.toCompanyProfileDetail(organization.companyProfile),
+    };
+  }
+
   /** Soft archive only — never a physical delete, never cascades to interviews/question sets. Idempotent if already archived. */
   async deleteOrganization(userId: string, organizationId: string): Promise<void> {
     const result = await Organization.updateOne(
@@ -401,6 +500,13 @@ export class OrganizationService {
     }
   }
 
+  /** Type guard for the company-profile endpoints — never a silent empty profile for an institute org. */
+  private assertIsCompany(organization: { type: OrganizationType }): void {
+    if (organization.type !== OrganizationType.COMPANY) {
+      throw new ApiError(400, 'This organization is not a company');
+    }
+  }
+
   /** Single source of truth for the institute-profile response shape — used by both get and update. */
   private toInstituteProfileDetail(profile?: IInstituteProfile): Record<string, unknown> {
     return {
@@ -416,6 +522,24 @@ export class OrganizationService {
       website: profile?.website,
       placementEmail: profile?.placementEmail,
       placementPhone: profile?.placementPhone,
+    };
+  }
+
+  /** Single source of truth for the company-profile response shape — used by both get and update. */
+  private toCompanyProfileDetail(profile?: ICompanyProfile): Record<string, unknown> {
+    return {
+      industry: profile?.industry,
+      companySize: profile?.companySize,
+      establishedYear: profile?.establishedYear,
+      officialName: profile?.officialName,
+      companyCode: profile?.companyCode,
+      description: profile?.description,
+      website: profile?.website,
+      careersUrl: profile?.careersUrl,
+      headquarters: profile?.headquarters,
+      linkedinUrl: profile?.linkedinUrl,
+      hiringEmail: profile?.hiringEmail,
+      hiringPhone: profile?.hiringPhone,
     };
   }
 

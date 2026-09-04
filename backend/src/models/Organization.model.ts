@@ -47,6 +47,17 @@ export interface ICompanyProfile {
   industry?: string;
   companySize?: CompanySize;
   establishedYear?: number;
+  // Company/hiring-specific metadata (16A) — deliberately not job/hiring-team
+  // specific; that belongs to Jobs (16B) and hiring-team management (16D).
+  officialName?: string;
+  companyCode?: string;
+  description?: string;
+  website?: string;
+  careersUrl?: string;
+  headquarters?: string;
+  linkedinUrl?: string;
+  hiringEmail?: string;
+  hiringPhone?: string;
 }
 
 export interface IOrganization extends Document {
@@ -135,6 +146,16 @@ const companyProfileSchema = new Schema<ICompanyProfile>(
       },
     },
     establishedYear: { type: Number, min: 1800, validate: establishedYearValidator },
+    officialName: { type: String, trim: true, maxlength: [200, 'officialName cannot exceed 200 characters'] },
+    // Not globally unique — different companies/subsidiaries may reuse codes, same as instituteCode.
+    companyCode: { type: String, trim: true, uppercase: true, maxlength: [50, 'companyCode cannot exceed 50 characters'] },
+    description: { type: String, trim: true, maxlength: [1500, 'description cannot exceed 1500 characters'] },
+    website: { type: String, trim: true, maxlength: [300, 'website cannot exceed 300 characters'] },
+    careersUrl: { type: String, trim: true, maxlength: [300, 'careersUrl cannot exceed 300 characters'] },
+    headquarters: { type: String, trim: true, maxlength: [200, 'headquarters cannot exceed 200 characters'] },
+    linkedinUrl: { type: String, trim: true, maxlength: [300, 'linkedinUrl cannot exceed 300 characters'] },
+    hiringEmail: { type: String, trim: true, lowercase: true, maxlength: [254, 'hiringEmail cannot exceed 254 characters'] },
+    hiringPhone: { type: String, trim: true, maxlength: [30, 'hiringPhone cannot exceed 30 characters'] },
   },
   { _id: false }
 );

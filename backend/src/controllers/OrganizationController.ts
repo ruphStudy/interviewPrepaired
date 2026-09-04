@@ -225,6 +225,65 @@ export class OrganizationController {
   });
 
   /**
+   * GET /api/v1/organizations/:organizationId/company-profile
+   * Requires ORGANIZATION_VIEW. 400 if the organization is not a company.
+   */
+  public getCompanyProfile = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const result = await organizationService.getCompanyProfileTrusted(context.organizationId, context.role);
+
+    res.status(200).json(successResponse('Company profile retrieved successfully', result));
+  });
+
+  /**
+   * PUT /api/v1/organizations/:organizationId/company-profile
+   * Requires ORGANIZATION_UPDATE. PATCH-like merge — omitted fields keep
+   * their current value. 400 if not a company, 409 if archived.
+   */
+  public updateCompanyProfile = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const {
+      industry,
+      companySize,
+      establishedYear,
+      officialName,
+      companyCode,
+      description,
+      website,
+      careersUrl,
+      headquarters,
+      linkedinUrl,
+      hiringEmail,
+      hiringPhone,
+    } = req.body;
+
+    const result = await organizationService.updateCompanyProfileTrusted(context.organizationId, context.role, {
+      industry,
+      companySize,
+      establishedYear,
+      officialName,
+      companyCode,
+      description,
+      website,
+      careersUrl,
+      headquarters,
+      linkedinUrl,
+      hiringEmail,
+      hiringPhone,
+    });
+
+    res.status(200).json(successResponse('Company profile updated successfully', result));
+  });
+
+  /**
    * DELETE /api/v1/organizations/:id
    * Soft archive only — never a physical delete, no cascade.
    */

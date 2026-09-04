@@ -303,6 +303,73 @@ const updateInstituteProfileValidation = [
 ];
 
 // ============================================================================
+// Company profile validators (16A) — flat body, no nested `companyProfile`
+// wrapper (the endpoint itself is already /company-profile). Only known
+// fields accepted; at least one must be present. companyCode is
+// deliberately NOT unique — different companies/subsidiaries may reuse
+// codes, same as instituteCode.
+// ============================================================================
+
+const COMPANY_PROFILE_FIELD_KEYS = [
+  'industry',
+  'companySize',
+  'establishedYear',
+  'officialName',
+  'companyCode',
+  'description',
+  'website',
+  'careersUrl',
+  'headquarters',
+  'linkedinUrl',
+  'hiringEmail',
+  'hiringPhone',
+];
+
+const updateCompanyProfileValidation = [
+  body('industry').optional().isString().withMessage('industry must be a string').trim().isLength({ max: 120 }).withMessage('industry must be at most 120 characters'),
+  body('companySize').optional().isIn(Object.values(CompanySize)).withMessage('Invalid companySize'),
+  body('establishedYear')
+    .optional()
+    .isInt({ min: 1800, max: CURRENT_YEAR })
+    .withMessage(`establishedYear must be between 1800 and ${CURRENT_YEAR}`),
+  body('officialName')
+    .optional()
+    .isString()
+    .withMessage('officialName must be a string')
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('officialName must be at most 200 characters'),
+  body('companyCode')
+    .optional()
+    .isString()
+    .withMessage('companyCode must be a string')
+    .trim()
+    .isLength({ max: 50 })
+    .withMessage('companyCode must be at most 50 characters'),
+  body('description').optional().isString().trim().isLength({ max: 1500 }).withMessage('description must be at most 1500 characters'),
+  body('website').optional().isString().trim().isLength({ max: 300 }).withMessage('website must be at most 300 characters').isURL().withMessage('website must be a valid URL'),
+  body('careersUrl').optional().isString().trim().isLength({ max: 300 }).withMessage('careersUrl must be at most 300 characters').isURL().withMessage('careersUrl must be a valid URL'),
+  body('headquarters').optional().isString().trim().isLength({ max: 200 }).withMessage('headquarters must be at most 200 characters'),
+  body('linkedinUrl').optional().isString().trim().isLength({ max: 300 }).withMessage('linkedinUrl must be at most 300 characters').isURL().withMessage('linkedinUrl must be a valid URL'),
+  body('hiringEmail').optional().isEmail().withMessage('hiringEmail must be a valid email').isLength({ max: 254 }),
+  body('hiringPhone').optional().isString().trim().isLength({ max: 30 }).withMessage('hiringPhone must be at most 30 characters'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !COMPANY_PROFILE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown company profile field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one company profile field is required');
+    }
+    return true;
+  }),
+];
+
+// ============================================================================
 // Institute branch validators (10B) — institute-only sub-resource. `status`
 // is never a body-mutable field (rejected explicitly on create/update) —
 // DELETE is the only status transition (soft deactivate); `status` remains a
@@ -1112,6 +1179,27 @@ router.put(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   organizationController.updateInstituteProfile
+);
+
+// ---- Company Profile (16A) — company-only (400 for an institute org). GET = view, PUT = update (PATCH-like merge). ----
+
+router.get(
+  '/:organizationId/company-profile',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationController.getCompanyProfile
+);
+
+router.put(
+  '/:organizationId/company-profile',
+  protect,
+  ...organizationIdValidation,
+  ...updateCompanyProfileValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationController.updateCompanyProfile
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

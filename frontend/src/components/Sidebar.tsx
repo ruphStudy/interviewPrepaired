@@ -131,6 +131,13 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   // owner/admin/recruiter/member, even if they hold interviews:view. This
   // mirrors the backend's own identity check (not just a permission check)
   // on every trainer-* endpoint.
+  // Company-only — mirrors instituteNavItems but for the employer domain.
+  // No Jobs/Candidates/Hiring Team yet (16B/16D).
+  const employerNavItems =
+    activeOrganization?.type === 'company'
+      ? [{ to: `/organizations/${activeOrganizationId}/employer/profile`, label: 'Employer Profile', icon: Building2 }]
+      : [];
+
   const trainerNavItems =
     activeOrganization?.type === 'institute' && activeRole === 'trainer'
       ? [{ to: `/organizations/${activeOrganizationId}/trainer`, label: 'Trainer Dashboard', icon: Contact2 }]
@@ -206,6 +213,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
               Institute
             </p>
             {instituteNavItems.map(renderNavLink)}
+          </>
+        )}
+
+        {employerNavItems.length > 0 && (
+          <>
+            <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
+              Employer
+            </p>
+            {employerNavItems.map(renderNavLink)}
           </>
         )}
 

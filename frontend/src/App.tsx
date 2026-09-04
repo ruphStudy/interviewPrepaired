@@ -31,6 +31,7 @@ import InstituteTrainersPage from './pages/institute/InstituteTrainersPage';
 import InstituteTrainerDetailPage from './pages/institute/InstituteTrainerDetailPage';
 import InstituteTemplatesPage from './pages/institute/InstituteTemplatesPage';
 import InstituteInterviewAssignmentsPage from './pages/institute/InstituteInterviewAssignmentsPage';
+import EmployerProfilePage from './pages/employer/EmployerProfilePage';
 import InstituteReadinessPage from './pages/institute/InstituteReadinessPage';
 import InstituteBillingPage from './pages/institute/InstituteBillingPage';
 import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
@@ -263,6 +264,16 @@ function App() {
             element={
               <ProtectedRoute>
                 <InstituteInterviewAssignmentsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Employer / Company Profile Routes (Sprint 16A) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/profile"
+            element={
+              <ProtectedRoute>
+                <EmployerProfilePage />
               </ProtectedRoute>
             }
           />
