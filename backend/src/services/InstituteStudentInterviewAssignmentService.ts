@@ -402,19 +402,24 @@ export class InstituteStudentInterviewAssignmentService {
             description: 'Refund for failed institute interview start',
           });
         } catch (refundError) {
-          // Non-critical to this request's own error surface — the
-          // original failure is what the caller needs to see — but this
-          // needs operational visibility since it leaves an un-refunded
-          // credit pending manual reconciliation.
+          // The refund itself failed — a credit is now consumed with
+          // nothing to show for it. Restoring the assignment to ASSIGNED
+          // here would let a retry consume a SECOND credit while the first
+          // is still missing, so it's deliberately left IN_PROGRESS with no
+          // interviewId (no other start can claim it in that state) until
+          // an operator reconciles the ledger. Both errors are logged —
+          // this is a distinct failure mode from the original start error.
           console.error(
-            '[InstituteStudentInterviewAssignmentService] Failed to refund organization credit after failed start (needs reconciliation):',
-            refundError
+            '[InstituteStudentInterviewAssignmentService] Institute interview start failed AND credit refund failed — assignment left IN_PROGRESS pending manual reconciliation:',
+            { assignmentId, startError: error, refundError }
           );
+          throw new ApiError(500, 'Interview start failed and credit refund requires reconciliation');
         }
       }
 
       // Only restore if still owned by this failed start (claimed but never
-      // reached the interviewId write) — a safe no-op otherwise.
+      // reached the interviewId write) — a safe no-op otherwise. Reached
+      // only when there was nothing to refund, or the refund succeeded.
       await InstituteStudentInterviewAssignment.updateOne(
         {
           _id: assignmentId,
