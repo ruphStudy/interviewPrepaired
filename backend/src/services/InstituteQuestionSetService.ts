@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import QuestionSet, { IQuestionSetQuestion } from '../models/QuestionSet.model';
+import InstituteInterviewTemplate from '../models/InstituteInterviewTemplate.model';
 import Organization, { IOrganization } from '../models/Organization.model';
 import { normalizeUploadedQuestions, ParsedQuestion } from './QuestionFileParserService';
 import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
@@ -167,11 +168,37 @@ export class InstituteQuestionSetService {
     return this.toDetail(questionSet.toObject());
   }
 
-  /** Physical delete — matches the personal QuestionSetService's own delete behavior exactly; the model has no status/soft-delete concept. */
+  /**
+   * Physical delete — matches the personal QuestionSetService's own delete
+   * behavior exactly; the model has no status/soft-delete concept. Unlike
+   * the personal service, this checks for referencing interview templates
+   * first: a template only ever stores a `questionSetId` reference (never
+   * copies question content), so deleting a still-referenced set would
+   * either orphan the template or silently break its future institute
+   * assignment starts. Rejected outright rather than cascade-deleting the
+   * template or silently detaching the reference — both templates and this
+   * set remain exactly as they were.
+   */
   async deleteQuestionSet(organizationId: string, actingRole: OrganizationMemberRole, questionSetId: string): Promise<void> {
     this.assertHasPermission(actingRole, OrganizationPermission.QUESTION_SETS_MANAGE);
     const organization = await this.getOrganizationById(organizationId);
     this.assertOrganizationMutable(organization);
+
+    const questionSet = await QuestionSet.findOne({ _id: questionSetId, organizationId: organization._id }).select('_id');
+    if (!questionSet) {
+      throw new ApiError(404, 'Question set not found');
+    }
+
+    // Active AND inactive templates both count — a deactivated template's
+    // reference is not stale/discardable, it could still be reactivated
+    // conceptually or simply remains a historical record of what it used.
+    const referencingTemplate = await InstituteInterviewTemplate.findOne({
+      organizationId: organization._id,
+      questionSetId: questionSet._id,
+    }).select('_id');
+    if (referencingTemplate) {
+      throw new ApiError(409, 'Question set is used by an interview template and cannot be deleted');
+    }
 
     const result = await QuestionSet.deleteOne({ _id: questionSetId, organizationId: organization._id });
     if (result.deletedCount === 0) {
