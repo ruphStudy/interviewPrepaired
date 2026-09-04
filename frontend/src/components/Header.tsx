@@ -19,6 +19,11 @@ function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/account/credits')) return 'Credit History';
   if (pathname.startsWith('/account')) return 'Account & Credits';
   if (pathname.startsWith('/organizations/new')) return 'Create Organization';
+  if (pathname.startsWith('/organizations/') && pathname.includes('/institute/profile')) return 'Institute Profile';
+  if (pathname.startsWith('/organizations/') && pathname.includes('/institute/branches')) return 'Branches';
+  if (pathname.startsWith('/organizations/') && pathname.includes('/institute/courses')) return 'Courses';
+  if (pathname.startsWith('/organizations/') && pathname.includes('/institute/batches')) return 'Batches';
+  if (pathname.startsWith('/organizations/') && pathname.includes('/institute/students')) return 'Students';
   if (pathname.startsWith('/organizations/') && pathname.includes('/dashboard')) return 'Organization Dashboard';
   if (pathname.startsWith('/organizations/') && pathname.includes('/members')) return 'Members';
   if (pathname.startsWith('/organizations/') && pathname.includes('/settings')) return 'Organization Settings';

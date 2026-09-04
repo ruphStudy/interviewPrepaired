@@ -12,6 +12,10 @@ import {
   Settings as SettingsIcon,
   Building2,
   Users,
+  GraduationCap,
+  MapPin,
+  BookOpen,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrganization } from '../contexts/OrganizationContext';
@@ -67,6 +71,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
         { to: `/organizations/${activeOrganizationId}/settings`, label: 'Settings', icon: SettingsIcon },
       ]
     : [];
+
+  const instituteNavItems =
+    activeOrganization?.type === 'institute'
+      ? [
+          { to: `/organizations/${activeOrganizationId}/institute/profile`, label: 'Institute Profile', icon: GraduationCap },
+          { to: `/organizations/${activeOrganizationId}/institute/branches`, label: 'Branches', icon: MapPin },
+          { to: `/organizations/${activeOrganizationId}/institute/courses`, label: 'Courses', icon: BookOpen },
+          { to: `/organizations/${activeOrganizationId}/institute/batches`, label: 'Batches', icon: Layers },
+          { to: `/organizations/${activeOrganizationId}/institute/students`, label: 'Students', icon: Users },
+        ]
+      : [];
 
   const renderNavLink = ({ to, label, icon: Icon }: (typeof MAIN_NAV_ITEMS)[number]) => {
     const active = isActive(to);
@@ -124,6 +139,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
               {activeOrganization!.name}
             </p>
             {orgNavItems.map(renderNavLink)}
+          </>
+        )}
+
+        {instituteNavItems.length > 0 && (
+          <>
+            <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
+              Institute
+            </p>
+            {instituteNavItems.map(renderNavLink)}
           </>
         )}
 

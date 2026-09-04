@@ -21,6 +21,12 @@ import OrganizationMembersPage from './pages/OrganizationMembersPage';
 import OrganizationDashboardPage from './pages/OrganizationDashboardPage';
 import OrganizationSettingsPage from './pages/OrganizationSettingsPage';
 import AcceptInvitationPage from './pages/AcceptInvitationPage';
+import InstituteProfilePage from './pages/institute/InstituteProfilePage';
+import InstituteBranchesPage from './pages/institute/InstituteBranchesPage';
+import InstituteCoursesPage from './pages/institute/InstituteCoursesPage';
+import InstituteBatchesPage from './pages/institute/InstituteBatchesPage';
+import InstituteStudentsPage from './pages/institute/InstituteStudentsPage';
+import InstituteStudentDetailPage from './pages/institute/InstituteStudentDetailPage';
 
 function App() {
   return (
@@ -155,6 +161,56 @@ function App() {
             element={
               <ProtectedRoute>
                 <OrganizationSettingsPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Institute Management Routes (UI-04) — institute-only, guarded inside each page */}
+          <Route
+            path="/organizations/:organizationId/institute/profile"
+            element={
+              <ProtectedRoute>
+                <InstituteProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/branches"
+            element={
+              <ProtectedRoute>
+                <InstituteBranchesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/courses"
+            element={
+              <ProtectedRoute>
+                <InstituteCoursesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/batches"
+            element={
+              <ProtectedRoute>
+                <InstituteBatchesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/students"
+            element={
+              <ProtectedRoute>
+                <InstituteStudentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/institute/students/:studentId"
+            element={
+              <ProtectedRoute>
+                <InstituteStudentDetailPage />
               </ProtectedRoute>
             }
           />
