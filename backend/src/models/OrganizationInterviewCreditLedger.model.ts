@@ -86,17 +86,25 @@ const organizationInterviewCreditLedgerSchema = new Schema<IOrganizationIntervie
 organizationInterviewCreditLedgerSchema.index({ organizationId: 1, createdAt: -1 });
 organizationInterviewCreditLedgerSchema.index({ organizationId: 1, type: 1 });
 organizationInterviewCreditLedgerSchema.index({ interviewId: 1 });
-// Compound + sparse: idempotency is scoped PER ORGANIZATION — the same key
-// string used by two different organizations must never collide (a bare
-// {idempotencyKey} unique index would incorrectly make organization B's
-// unrelated operation fail just because organization A already used that
-// string). The actual serialization of concurrent same-key callers happens
-// one level up, in OrganizationInterviewCreditOperation's own unique
+// Compound + PARTIAL (not sparse): idempotency is scoped PER ORGANIZATION
+// — the same key string used by two different organizations must never
+// collide (a bare {idempotencyKey} unique index would incorrectly make
+// organization B's unrelated operation fail just because organization A
+// already used that string). `sparse` would be unsafe here: `organizationId`
+// is always present on every row, so a compound sparse index does not
+// reliably exclude ordinary rows with no idempotencyKey from the uniqueness
+// constraint. `partialFilterExpression` is explicit instead — this index
+// only applies to documents where idempotencyKey actually exists AND is a
+// string, so any number of ordinary (non-idempotent) ledger rows can coexist
+// per organization, while the same idempotencyKey can never be inserted
+// twice for the same organization. The actual serialization of concurrent
+// same-key callers happens one level up, in
+// OrganizationInterviewCreditOperation's own unique
 // {organizationId, idempotencyKey} claim — this index is a defense-in-depth
 // backstop against ever inserting two ledger rows for the same key.
 organizationInterviewCreditLedgerSchema.index(
   { organizationId: 1, idempotencyKey: 1 },
-  { unique: true, sparse: true }
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }
 );
 
 export const OrganizationInterviewCreditLedger = mongoose.model<IOrganizationInterviewCreditLedger>(
