@@ -18,6 +18,8 @@ import instituteTrainerStudentReportController from '../controllers/InstituteTra
 import instituteTrainerBatchAnalyticsController from '../controllers/InstituteTrainerBatchAnalyticsController';
 import instituteTrainerSkillGapController from '../controllers/InstituteTrainerSkillGapController';
 import instituteTrainerBatchReadinessController from '../controllers/InstituteTrainerBatchReadinessController';
+import instituteInterviewCreditController from '../controllers/InstituteInterviewCreditController';
+import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
@@ -1564,6 +1566,48 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
   instituteTrainerBatchReadinessController.getBatchReadiness
+);
+
+// ---- Institute Interview Credits (15E) — foundation only, no payment gateway/subscription billing. Institute-only. Reads allowed on an archived org; grant (mutation) => 409. ----
+
+const listInterviewCreditLedgerValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+];
+
+const grantInterviewCreditsValidation = [
+  body('planCode').optional().isIn(Object.values(InstitutePlanCode)).withMessage('Invalid plan code'),
+  body('amount').optional().isInt({ min: 1 }).withMessage('amount must be a positive integer'),
+  body('idempotencyKey').notEmpty().withMessage('idempotencyKey is required').isString(),
+];
+
+router.get(
+  '/:organizationId/interview-credits',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteInterviewCreditController.getCreditSummary
+);
+
+router.get(
+  '/:organizationId/interview-credits/ledger',
+  protect,
+  ...organizationIdValidation,
+  ...listInterviewCreditLedgerValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  instituteInterviewCreditController.getLedger
+);
+
+router.post(
+  '/:organizationId/interview-credits/grant',
+  protect,
+  ...organizationIdValidation,
+  ...grantInterviewCreditsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteInterviewCreditController.grantCredits
 );
 
 // ---- Members (8B API, 8D RBAC) ----

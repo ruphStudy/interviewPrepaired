@@ -15,6 +15,7 @@ import { ApiError } from '../utils/ApiError';
 import { normalizeUploadedQuestions } from './QuestionFileParserService';
 import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { InterviewService } from './InterviewService';
+import { organizationInterviewCreditService } from './OrganizationInterviewCreditService';
 
 // Matches InterviewController's convention: import the class, instantiate once here.
 const interviewService = new InterviewService();
@@ -222,20 +223,24 @@ export class InstituteStudentInterviewAssignmentService {
   }
 
   /**
-   * Shared start core (12E/13C) — one algorithm for both actors. `authScope`
-   * is ANDed with `_id` on the initial read AND on the atomic claim, so an
-   * unauthorized caller never even learns an assignment exists (404) rather
-   * than being told it's in the wrong state. Atomically claims
-   * (ASSIGNED -> IN_PROGRESS) so two concurrent start requests can never
-   * both create an Interview, then validates student/template/questionSet
-   * (all re-scoped to the assignment's own organization) and creates a real
-   * uploaded-mode Interview via InterviewService.createInstituteUploadedInterview
-   * — which deliberately never touches personal credits/subscriptions. If
-   * anything fails after the claim, the assignment is safely reverted to
-   * ASSIGNED (only if still owned by this failed start, i.e. still
-   * IN_PROGRESS with no interviewId yet). A repeated call after a
-   * successful start is idempotent: it returns the same
-   * assignment/interviewId instead of creating a second Interview.
+   * Shared start core (12E/13C/15E) — one algorithm for both actors.
+   * `authScope` is ANDed with `_id` on the initial read AND on the atomic
+   * claim, so an unauthorized caller never even learns an assignment
+   * exists (404) rather than being told it's in the wrong state. Order:
+   * (A) atomic ASSIGNED -> IN_PROGRESS claim, so two concurrent start
+   * requests can never both proceed; (B) validate student/template/
+   * questionSet (all re-scoped to the assignment's own organization);
+   * (C) consume exactly 1 ORGANIZATION interview credit (never a personal
+   * B2C credit/subscription) via a deterministic idempotencyKey scoped to
+   * this exact claim; (D) create a real uploaded-mode Interview via
+   * InterviewService.createInstituteUploadedInterview; (E) link
+   * `interviewId` onto the assignment. If anything from (B) onward fails,
+   * the assignment is safely reverted to ASSIGNED (only if still owned by
+   * this failed start), and — only if the credit was actually consumed in
+   * this attempt — that exact credit is refunded first. A repeated call
+   * after a successful start is idempotent: it returns the same
+   * assignment/interviewId instead of creating a second Interview or
+   * consuming a second credit.
    */
   private async startAssignmentCore(
     assignmentId: string,
@@ -284,6 +289,16 @@ export class InstituteStudentInterviewAssignmentService {
       throw new ApiError(409, 'Assignment cannot be started');
     }
 
+    // Unique per claim (not just per assignment): a fresh start attempt
+    // after a prior failed-and-refunded attempt gets its own distinct
+    // idempotencyKey, since `claimed.updatedAt` was just bumped by the
+    // status transition above — so a stale consume/refund pair can never
+    // suppress a genuinely new credit consumption.
+    const startEpoch = claimed.updatedAt.getTime();
+    const consumeIdempotencyKey = `institute-interview-start:${assignmentId}:${startEpoch}`;
+    const refundIdempotencyKey = `institute-interview-start-refund:${assignmentId}:${startEpoch}`;
+    let creditConsumed = false;
+
     try {
       const student = await InstituteStudent.findOne({ _id: claimed.studentId, organizationId: organization._id });
       if (!student) {
@@ -326,6 +341,18 @@ export class InstituteStudentInterviewAssignmentService {
       );
       const selectedQuestions = normalized.slice(0, effectiveCount);
 
+      // Institute billing: exactly 1 ORGANIZATION credit, never a personal
+      // B2C credit/subscription. Propagates OrganizationInsufficientCreditsError
+      // (402) untouched if the organization has no balance — no Interview is
+      // created in that case, and the outer catch reverts the claim.
+      await organizationInterviewCreditService.consumeCredit({
+        organizationId: organization._id.toString(),
+        referenceId: assignmentId,
+        idempotencyKey: consumeIdempotencyKey,
+        description: 'Interview start for institute assignment',
+      });
+      creditConsumed = true;
+
       const interview = await interviewService.createInstituteUploadedInterview({
         userId: student.userId.toString(),
         organizationId: organization._id.toString(),
@@ -353,22 +380,39 @@ export class InstituteStudentInterviewAssignmentService {
         // The Interview was created but never got linked (assignment no
         // longer matched the expected claimed state) — it would otherwise
         // be an orphan that a retry could duplicate. It was never linked
-        // to any assignment, so it's always safe to delete here.
+        // to any assignment, so it's always safe to delete here. Credit
+        // refund + assignment revert both happen in the catch block below.
         await Interview.deleteOne({ _id: interview._id, organizationId: organization._id });
-        await InstituteStudentInterviewAssignment.updateOne(
-          {
-            _id: assignmentId,
-            organizationId: organization._id,
-            status: InstituteStudentInterviewAssignmentStatus.IN_PROGRESS,
-            interviewId: { $exists: false },
-          },
-          { $set: { status: InstituteStudentInterviewAssignmentStatus.ASSIGNED } }
-        );
         throw new ApiError(409, 'Failed to start assignment — please retry');
       }
 
       return this.toDetail(finalAssignment);
     } catch (error) {
+      // Refund ONLY if this exact attempt actually consumed a credit — a
+      // failure before consumeCredit (or consumeCredit itself failing, e.g.
+      // insufficient balance) never reaches here with creditConsumed=true,
+      // so it's never refunded. Uses the same deterministic per-claim key
+      // as the consume, so a retried failure can never double-refund.
+      if (creditConsumed) {
+        try {
+          await organizationInterviewCreditService.refundCredit({
+            organizationId: organization._id.toString(),
+            referenceId: assignmentId,
+            idempotencyKey: refundIdempotencyKey,
+            description: 'Refund for failed institute interview start',
+          });
+        } catch (refundError) {
+          // Non-critical to this request's own error surface — the
+          // original failure is what the caller needs to see — but this
+          // needs operational visibility since it leaves an un-refunded
+          // credit pending manual reconciliation.
+          console.error(
+            '[InstituteStudentInterviewAssignmentService] Failed to refund organization credit after failed start (needs reconciliation):',
+            refundError
+          );
+        }
+      }
+
       // Only restore if still owned by this failed start (claimed but never
       // reached the interviewId write) — a safe no-op otherwise.
       await InstituteStudentInterviewAssignment.updateOne(
