@@ -22,6 +22,7 @@ function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/profile')) return 'Institute Profile';
   if (pathname.startsWith('/organizations/') && pathname.includes('/employer/profile')) return 'Employer Profile';
   if (pathname.startsWith('/organizations/') && pathname.endsWith('/employer/jobs/new')) return 'New Job';
+  if (pathname.startsWith('/organizations/') && pathname.endsWith('/jd')) return 'Job Description';
   if (pathname.startsWith('/organizations/') && pathname.includes('/employer/jobs/')) return 'Job Detail';
   if (pathname.startsWith('/organizations/') && pathname.endsWith('/employer/jobs')) return 'Jobs';
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/branches')) return 'Branches';

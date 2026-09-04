@@ -35,6 +35,7 @@ import EmployerProfilePage from './pages/employer/EmployerProfilePage';
 import EmployerJobsPage from './pages/employer/EmployerJobsPage';
 import EmployerJobFormPage from './pages/employer/EmployerJobFormPage';
 import EmployerJobDetailPage from './pages/employer/EmployerJobDetailPage';
+import EmployerJobDescriptionPage from './pages/employer/EmployerJobDescriptionPage';
 import InstituteReadinessPage from './pages/institute/InstituteReadinessPage';
 import InstituteBillingPage from './pages/institute/InstituteBillingPage';
 import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
@@ -302,6 +303,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerJobDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/employer/jobs/:jobId/jd"
+            element={
+              <ProtectedRoute>
+                <EmployerJobDescriptionPage />
               </ProtectedRoute>
             }
           />

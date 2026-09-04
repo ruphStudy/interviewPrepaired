@@ -23,6 +23,7 @@ import instituteInterviewCreditController from '../controllers/InstituteIntervie
 import instituteBatchReadinessController from '../controllers/InstituteBatchReadinessController';
 import employerJobController from '../controllers/EmployerJobController';
 import employerJobHiringTeamController from '../controllers/EmployerJobHiringTeamController';
+import employerJobDescriptionController from '../controllers/EmployerJobDescriptionController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -43,6 +44,7 @@ import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { EmployerJobStatus, EmployerJobWorkplaceType, EmployerJobEmploymentType } from '../constants/employerJob';
 import { EmployerJobHiringTeamRole } from '../constants/employerJobHiringTeam';
+import { EmployerJobDescriptionSourceType, JD_RAW_TEXT_MIN_LENGTH, JD_RAW_TEXT_MAX_LENGTH } from '../constants/employerJobDescription';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
@@ -1489,6 +1491,83 @@ router.delete(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerJobHiringTeamController.removeHiringTeamMember
+);
+
+// ============================================================================
+// Job Description Intake (17A) — raw JD text + versioning ONLY. No AI
+// parsing/skill extraction/competency generation (later sprints). Reads use
+// ORGANIZATION_VIEW; creating a new version uses INTERVIEWS_MANAGE.
+// Archived organization or archived job: reads allowed, mutation blocked
+// (enforced service-side). Every create is a NEW version — never an
+// overwrite; organizationId/jobId/createdByMembershipId/version/isCurrent
+// can never be set from the request body.
+// ============================================================================
+
+const jdSourceIdValidation = [param('jdSourceId').isMongoId().withMessage('Invalid job description version ID')];
+
+const JD_FIELD_KEYS = ['rawText', 'sourceType'];
+
+const createJobDescriptionValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('jobId').not().exists().withMessage('jobId cannot be set'),
+  body('createdByMembershipId').not().exists().withMessage('createdByMembershipId cannot be set'),
+  body('version').not().exists().withMessage('version cannot be set'),
+  body('isCurrent').not().exists().withMessage('isCurrent cannot be set'),
+  body('rawText')
+    .notEmpty()
+    .withMessage('rawText is required')
+    .isString()
+    .withMessage('rawText must be a string')
+    .trim()
+    .isLength({ min: JD_RAW_TEXT_MIN_LENGTH, max: JD_RAW_TEXT_MAX_LENGTH })
+    .withMessage(`rawText must be between ${JD_RAW_TEXT_MIN_LENGTH} and ${JD_RAW_TEXT_MAX_LENGTH} characters`),
+  body('sourceType')
+    .notEmpty()
+    .withMessage('sourceType is required')
+    .isIn(Object.values(EmployerJobDescriptionSourceType))
+    .withMessage('Invalid sourceType'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const unknownKeys = Object.keys(value).filter((key) => !JD_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    return true;
+  }),
+];
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobDescriptionController.getJobDescription
+);
+
+router.post(
+  '/:organizationId/jobs/:jobId/jd',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...createJobDescriptionValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobDescriptionController.createJobDescriptionSource
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd/:jdSourceId',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...jdSourceIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobDescriptionController.getJobDescriptionSource
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

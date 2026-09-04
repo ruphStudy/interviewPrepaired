@@ -208,6 +208,28 @@ export type ListAvailableMembersResponse = ApiEnvelope<{ members: AvailableMembe
 export type AddHiringTeamMemberResponse = ApiEnvelope<{ teamMember: HiringTeamMember }>;
 export type UpdateHiringTeamMemberResponse = ApiEnvelope<{ teamMember: HiringTeamMember }>;
 
+// ============================================================================
+// Job Description Intake (Sprint 17A) — raw JD text + versioning ONLY. No AI
+// parsing/skill extraction/competency generation happens anywhere here.
+// ============================================================================
+
+export type EmployerJobDescriptionSourceType = 'pasted' | 'manual';
+
+export interface JobDescriptionSource {
+  id: string;
+  jobId: string;
+  rawText: string;
+  sourceType: EmployerJobDescriptionSourceType;
+  version: number;
+  isCurrent: boolean;
+  createdByMembershipId: string;
+  createdAt: string;
+}
+
+export type GetJobDescriptionResponse = ApiEnvelope<{ current: JobDescriptionSource | null; history: JobDescriptionSource[] }>;
+export type GetJobDescriptionSourceResponse = ApiEnvelope<{ source: JobDescriptionSource }>;
+export type CreateJobDescriptionSourceResponse = ApiEnvelope<{ source: JobDescriptionSource }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -407,6 +429,46 @@ class EmployerApiService {
       await this.api.delete(`/organizations/${organizationId}/jobs/${jobId}/hiring-team/${teamMemberId}`);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to remove hiring team member');
+    }
+  }
+
+  // ---- Job Description Intake (Sprint 17A) ----
+
+  /** `current` is the highest-version source for this job (or null); `history` is newest-first, backend-limited. */
+  async getJobDescriptionSources(organizationId: string, jobId: string): Promise<GetJobDescriptionResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionResponse>(`/organizations/${organizationId}/jobs/${jobId}/jd`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description');
+    }
+  }
+
+  async getJobDescriptionSource(organizationId: string, jobId: string, jdSourceId: string): Promise<GetJobDescriptionSourceResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionSourceResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/${jdSourceId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description version');
+    }
+  }
+
+  /** Always creates a NEW version and makes it current — never overwrites an existing one. */
+  async createJobDescriptionSource(
+    organizationId: string,
+    jobId: string,
+    payload: { rawText: string; sourceType: EmployerJobDescriptionSourceType }
+  ): Promise<CreateJobDescriptionSourceResponse> {
+    try {
+      const response = await this.api.post<CreateJobDescriptionSourceResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save job description');
     }
   }
 }

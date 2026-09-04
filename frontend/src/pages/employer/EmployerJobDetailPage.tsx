@@ -9,6 +9,7 @@ import employerApi, {
   HiringTeamMember,
   AvailableMember,
   EmployerJobHiringTeamRole,
+  JobDescriptionSource,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
@@ -26,12 +27,17 @@ import {
   Users,
   Plus,
   Trash2,
+  FileText,
 } from 'lucide-react';
 
 const HISTORY_PAGE_LIMIT = 20;
 
 const hiringTeamRoleLabel = (role: EmployerJobHiringTeamRole) =>
   EMPLOYER_JOB_HIRING_TEAM_ROLES.find((r) => r.value === role)?.label || role;
+
+const JD_SOURCE_TYPE_LABELS: Record<string, string> = { pasted: 'Pasted', manual: 'Manually written' };
+
+const truncate = (text: string, max: number) => (text.length > max ? `${text.slice(0, max).trimEnd()}…` : text);
 
 const STATUS_LABELS: Record<EmployerJobStatus, string> = {
   draft: 'Draft',
@@ -127,6 +133,10 @@ const EmployerJobDetailPage: React.FC = () => {
   const [roleUpdatingId, setRoleUpdatingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  const [jdCurrent, setJdCurrent] = useState<JobDescriptionSource | null>(null);
+  const [jdLoading, setJdLoading] = useState(true);
+  const [jdError, setJdError] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -198,6 +208,26 @@ const EmployerJobDetailPage: React.FC = () => {
       fetchHiringTeam();
     }
   }, [isSyncing, activeOrganization, canView, fetchHiringTeam]);
+
+  const fetchJobDescription = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setJdLoading(true);
+    setJdError(null);
+    try {
+      const response = await employerApi.getJobDescriptionSources(organizationId, jobId);
+      setJdCurrent(response.data.current);
+    } catch (err: any) {
+      setJdError(err.message || 'Failed to load job description');
+    } finally {
+      setJdLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchJobDescription();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchJobDescription]);
 
   const handleOpenAddMember = async () => {
     if (!organizationId || !jobId) return;
@@ -742,6 +772,45 @@ const EmployerJobDetailPage: React.FC = () => {
                     <dd className="text-sm text-mentor-text">{formatDate(job.updatedAt)}</dd>
                   </div>
                 </dl>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="section-title flex items-center gap-2 mb-0">
+                  <FileText size={18} className="text-mentor-text-muted" />
+                  Job Description
+                </h2>
+                <button
+                  onClick={() => navigate(`/organizations/${organizationId}/employer/jobs/${jobId}/jd`)}
+                  className="btn btn-secondary"
+                >
+                  {jdCurrent ? 'View / Edit' : 'Add Job Description'}
+                </button>
+              </div>
+              {jdLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : jdError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{jdError}</p>
+                  <button onClick={fetchJobDescription} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !jdCurrent ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No job description added yet.</p>
+              ) : (
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    <span className="badge badge-info">Version {jdCurrent.version}</span>
+                    <span className="badge badge-neutral">{JD_SOURCE_TYPE_LABELS[jdCurrent.sourceType] || jdCurrent.sourceType}</span>
+                    <span className="text-xs text-mentor-text-muted">Added {formatDate(jdCurrent.createdAt)}</span>
+                  </div>
+                  <p className="text-sm text-mentor-text-secondary whitespace-pre-wrap">{truncate(jdCurrent.rawText, 400)}</p>
+                </div>
               )}
             </div>
 
