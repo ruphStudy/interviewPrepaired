@@ -8,12 +8,14 @@ import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
 import { instituteStudentInterviewAssignmentService } from './InstituteStudentInterviewAssignmentService';
 import { InterviewService } from './InterviewService';
+import { placementReadinessService } from './PlacementReadinessService';
 import { ApiError } from '../utils/ApiError';
 
 // Matches InterviewController's/InstituteStudentInterviewAssignmentService's convention.
 const interviewService = new InterviewService();
 type InterviewSessionResult = Awaited<ReturnType<InterviewService['getInterviewSession']>>;
 type InterviewReportResult = Awaited<ReturnType<InterviewService['getInterviewReport']>>;
+type StudentReadinessResult = Awaited<ReturnType<typeof placementReadinessService.calculateStudentReadiness>>;
 
 const MAX_UPCOMING_PER_STUDENT = 5;
 const UPCOMING_STATUSES = [
@@ -40,6 +42,31 @@ interface LinkedStudent {
   firstName: string;
   lastName?: string;
   enrollmentNumber?: string;
+  courseId?: Types.ObjectId;
+  batchId?: Types.ObjectId;
+}
+
+interface ListReadinessParams {
+  organizationId?: string;
+}
+
+interface ReadinessRow {
+  organization: { id: string; name: string };
+  student: {
+    id: string;
+    firstName: string;
+    lastName?: string;
+    enrollmentNumber?: string;
+    courseId?: string;
+    batchId?: string;
+  };
+  readinessScore: StudentReadinessResult['readinessScore'];
+  readinessLevel: StudentReadinessResult['readinessLevel'];
+  insufficientData: boolean;
+  interviewsCompleted: number;
+  scoredInterviews: number;
+  components: StudentReadinessResult['components'];
+  evidence: StudentReadinessResult['evidence'];
 }
 
 interface ListHistoryParams {
@@ -478,6 +505,66 @@ export class StudentPortalService {
 
     const report = await interviewService.getInterviewReport(assignment.interviewId, userId);
     return { assignment, report };
+  }
+
+  /**
+   * Placement readiness (15B) — one row per ACTIVE InstituteStudent record
+   * linked to the caller (a user may belong to multiple institutes).
+   * `organizationId` is narrowing-only over that already-authorized set,
+   * exactly like getAssignments/getHistory — it can never widen access.
+   * The actual readiness calculation is entirely delegated to
+   * PlacementReadinessService.calculateStudentReadiness — no calculation
+   * logic is duplicated here.
+   */
+  async getReadiness(userId: string, params: ListReadinessParams): Promise<{ readiness: ReadinessRow[] }> {
+    const students = await this.getActiveLinkedStudents(userId);
+
+    let authorizedStudents = students;
+    if (params.organizationId) {
+      authorizedStudents = students.filter((s) => s.organizationId.toString() === params.organizationId);
+    }
+
+    if (authorizedStudents.length === 0) {
+      return { readiness: [] };
+    }
+
+    const organizationIds = Array.from(new Set(authorizedStudents.map((s) => s.organizationId.toString())));
+    const organizations = await Organization.find({ _id: { $in: organizationIds } })
+      .select('name')
+      .lean();
+    const organizationById = new Map(organizations.map((o) => [o._id.toString(), o]));
+
+    const readiness = await Promise.all(
+      authorizedStudents.map(async (student) => {
+        const result = await placementReadinessService.calculateStudentReadiness({
+          organizationId: student.organizationId.toString(),
+          studentId: student._id.toString(),
+        });
+
+        const organization = organizationById.get(student.organizationId.toString());
+
+        return {
+          organization: { id: student.organizationId.toString(), name: organization ? organization.name : '' },
+          student: {
+            id: student._id.toString(),
+            firstName: student.firstName,
+            lastName: student.lastName,
+            enrollmentNumber: student.enrollmentNumber,
+            courseId: student.courseId ? student.courseId.toString() : undefined,
+            batchId: student.batchId ? student.batchId.toString() : undefined,
+          },
+          readinessScore: result.readinessScore,
+          readinessLevel: result.readinessLevel,
+          insufficientData: result.insufficientData,
+          interviewsCompleted: result.interviewsCompleted,
+          scoredInterviews: result.scoredInterviews,
+          components: result.components,
+          evidence: result.evidence,
+        };
+      })
+    );
+
+    return { readiness };
   }
 
   /** The sole source of authorized {organizationId, studentId} pairs for a caller. */

@@ -106,6 +106,18 @@ export class StudentPortalController {
 
     res.status(200).json(successResponse('Interview result retrieved successfully', result));
   });
+
+  /** GET /api/v1/student-portal/readiness */
+  public getReadiness = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    if (!req.user) {
+      throw new ApiError(401, 'Not authorized to access this route');
+    }
+
+    const organizationId = req.query.organizationId as string | undefined;
+    const result = await studentPortalService.getReadiness(req.user._id.toString(), { organizationId });
+
+    res.status(200).json(successResponse('Placement readiness retrieved successfully', result));
+  });
 }
 
 export default new StudentPortalController();

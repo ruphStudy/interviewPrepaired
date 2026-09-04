@@ -24,7 +24,11 @@ const historyValidation = [
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
 ];
 
+const readinessValidation = [query('organizationId').optional().isMongoId().withMessage('Invalid organization ID')];
+
 router.get('/dashboard', studentPortalController.getDashboard);
+
+router.get('/readiness', ...readinessValidation, validate, studentPortalController.getReadiness);
 
 router.get('/history', ...historyValidation, validate, studentPortalController.getHistory);
 
