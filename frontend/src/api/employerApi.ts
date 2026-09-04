@@ -312,6 +312,50 @@ export interface JobDescriptionAnalysisRecord {
 export type AnalyzeJobDescriptionResponse = ApiEnvelope<{ analysis: JobDescriptionAnalysisRecord }>;
 export type GetJobDescriptionAnalysisResponse = ApiEnvelope<{ analysis: JobDescriptionAnalysisRecord | null }>;
 
+// ============================================================================
+// Job Description Skill Extraction (Sprint 17C) — normalized, JD-version-
+// local skill set derived from an already-COMPLETED 17B analysis. This is
+// NOT a global/cross-company skill catalog and never feeds interview
+// competency weights (17D).
+// ============================================================================
+
+export type EmployerJobDescriptionSkillsStatus = 'processing' | 'completed' | 'failed';
+export type EmployerJobSkillCategory = 'technical' | 'tool' | 'domain' | 'soft_skill' | 'methodology' | 'other';
+export type EmployerJobSkillRequirement = 'mandatory' | 'preferred' | 'inferred';
+export type EmployerJobSkillProficiency = 'foundational' | 'intermediate' | 'advanced' | 'expert' | 'unspecified';
+export type EmployerJobSkillImportance = 'critical' | 'high' | 'medium' | 'low';
+
+export interface JobDescriptionSkill {
+  name: string;
+  normalizedName: string;
+  category: EmployerJobSkillCategory;
+  requirement: EmployerJobSkillRequirement;
+  proficiency: EmployerJobSkillProficiency;
+  importance: EmployerJobSkillImportance;
+  evidence: string[];
+  aliases: string[];
+  confidence: number;
+}
+
+/** Same shape as JobDescriptionAnalysisUsage (17B) — one AI call per extraction. */
+export type JobDescriptionSkillsUsage = JobDescriptionAnalysisUsage;
+
+export interface JobDescriptionSkillsRecord {
+  id: string;
+  jdSourceId: string;
+  jdVersion: number;
+  analysisId: string;
+  status: EmployerJobDescriptionSkillsStatus;
+  skills: JobDescriptionSkill[];
+  aiUsage: JobDescriptionSkillsUsage | null;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExtractJobDescriptionSkillsResponse = ApiEnvelope<{ skills: JobDescriptionSkillsRecord }>;
+export type GetJobDescriptionSkillsResponse = ApiEnvelope<{ skills: JobDescriptionSkillsRecord | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -590,6 +634,48 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load job description analysis');
+    }
+  }
+
+  // ---- Job Description Skill Extraction (Sprint 17C) ----
+
+  /**
+   * Extracts skills from the CURRENT JD source's already-COMPLETED 17B
+   * analysis — no body. Requires that analysis to exist and be completed
+   * (the backend returns 409 otherwise). If a completed skill set already
+   * exists for that exact source version, the backend returns it without
+   * calling AI again.
+   */
+  async extractCurrentJobDescriptionSkills(organizationId: string, jobId: string): Promise<ExtractJobDescriptionSkillsResponse> {
+    try {
+      const response = await this.api.post<ExtractJobDescriptionSkillsResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/skills/extract`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to extract job description skills');
+    }
+  }
+
+  /** Current JD source's skills, or `skills: null` if never extracted. */
+  async getCurrentJobDescriptionSkills(organizationId: string, jobId: string): Promise<GetJobDescriptionSkillsResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionSkillsResponse>(`/organizations/${organizationId}/jobs/${jobId}/jd/skills`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description skills');
+    }
+  }
+
+  /** Skills for one EXACT historical source version, or `skills: null` if that version's skills were never extracted. */
+  async getJobDescriptionSkills(organizationId: string, jobId: string, jdSourceId: string): Promise<GetJobDescriptionSkillsResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionSkillsResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/${jdSourceId}/skills`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description skills');
     }
   }
 }

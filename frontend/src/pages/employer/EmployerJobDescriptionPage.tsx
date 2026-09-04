@@ -9,8 +9,13 @@ import employerApi, {
   JobDescriptionAnalysisRecord,
   JobDescriptionAnalysis,
   JobDescriptionAnalysisUsage,
+  JobDescriptionSkillsRecord,
+  JobDescriptionSkill,
+  EmployerJobSkillCategory,
+  EmployerJobSkillRequirement,
+  EmployerJobSkillImportance,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Eye, X, FileText, Sparkles, RefreshCw } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Eye, X, FileText, Sparkles, RefreshCw, ListChecks } from 'lucide-react';
 
 const JD_MIN_LENGTH = 50;
 const JD_MAX_LENGTH = 50000;
@@ -138,6 +143,94 @@ const UsageLine: React.FC<{ usage: JobDescriptionAnalysisUsage }> = ({ usage }) 
   </p>
 );
 
+const SKILL_CATEGORY_LABELS: Record<EmployerJobSkillCategory, string> = {
+  technical: 'Technical',
+  tool: 'Tools',
+  domain: 'Domain',
+  soft_skill: 'Soft Skills',
+  methodology: 'Methodology',
+  other: 'Other',
+};
+const SKILL_CATEGORY_ORDER: EmployerJobSkillCategory[] = ['technical', 'tool', 'domain', 'methodology', 'soft_skill', 'other'];
+
+const SKILL_REQUIREMENT_LABELS: Record<EmployerJobSkillRequirement, string> = {
+  mandatory: 'Mandatory',
+  preferred: 'Preferred',
+  inferred: 'Inferred',
+};
+const SKILL_REQUIREMENT_BADGE: Record<EmployerJobSkillRequirement, string> = {
+  mandatory: 'badge-success',
+  preferred: 'badge-info',
+  inferred: 'badge-neutral',
+};
+
+const SKILL_IMPORTANCE_LABELS: Record<EmployerJobSkillImportance, string> = {
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+};
+const SKILL_IMPORTANCE_BADGE: Record<EmployerJobSkillImportance, string> = {
+  critical: 'badge-warning',
+  high: 'badge-info',
+  medium: 'badge-neutral',
+  low: 'badge-neutral',
+};
+
+/** One skill's requirement/proficiency/importance/confidence/aliases/evidence — evidence is a native <details> disclosure, not a new package. */
+const SkillCard: React.FC<{ skill: JobDescriptionSkill }> = ({ skill }) => (
+  <div className="surface-muted p-3">
+    <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+      <p className="text-sm font-semibold text-mentor-text">{skill.name}</p>
+      <span className="text-xs text-mentor-text-muted">{Math.round(skill.confidence * 100)}% confidence</span>
+    </div>
+    <div className="flex flex-wrap gap-1.5 mb-2">
+      <span className={`badge ${SKILL_REQUIREMENT_BADGE[skill.requirement]}`}>{SKILL_REQUIREMENT_LABELS[skill.requirement]}</span>
+      <span className={`badge ${SKILL_IMPORTANCE_BADGE[skill.importance]}`}>{SKILL_IMPORTANCE_LABELS[skill.importance]} importance</span>
+      {skill.proficiency !== 'unspecified' && <span className="badge badge-neutral capitalize">{skill.proficiency}</span>}
+    </div>
+    {skill.aliases.length > 0 && (
+      <p className="text-xs text-mentor-text-muted mb-1.5">Also known as: {skill.aliases.join(', ')}</p>
+    )}
+    {skill.evidence.length > 0 && (
+      <details className="text-xs">
+        <summary className="cursor-pointer text-primary-600">Evidence ({skill.evidence.length})</summary>
+        <ul className="list-disc list-inside mt-1.5 space-y-1 text-mentor-text-secondary">
+          {skill.evidence.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </details>
+    )}
+  </div>
+);
+
+const SkillsGroupedView: React.FC<{ skills: JobDescriptionSkill[] }> = ({ skills }) => {
+  if (skills.length === 0) {
+    return <p className="text-sm text-mentor-text-secondary text-center py-6">No skills were identified.</p>;
+  }
+  const byCategory = new Map<EmployerJobSkillCategory, JobDescriptionSkill[]>();
+  for (const skill of skills) {
+    const list = byCategory.get(skill.category) || [];
+    list.push(skill);
+    byCategory.set(skill.category, list);
+  }
+  return (
+    <div className="space-y-5">
+      {SKILL_CATEGORY_ORDER.filter((category) => byCategory.has(category)).map((category) => (
+        <div key={category}>
+          <p className="label mb-2">{SKILL_CATEGORY_LABELS[category]}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {byCategory.get(category)!.map((skill) => (
+              <SkillCard key={skill.normalizedName} skill={skill} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 /**
  * Job Description intake/editor (17A) — raw text only, no AI parsing/skill
  * extraction/competency generation. Saving ALWAYS creates the next version;
@@ -183,6 +276,15 @@ const EmployerJobDescriptionPage: React.FC = () => {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
+  const [currentSkills, setCurrentSkills] = useState<JobDescriptionSkillsRecord | null>(null);
+  const [skillsLoading, setSkillsLoading] = useState(true);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
+
+  const [viewingSkills, setViewingSkills] = useState<JobDescriptionSkillsRecord | null>(null);
+  const [viewingSkillsLoading, setViewingSkillsLoading] = useState(false);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -242,13 +344,28 @@ const EmployerJobDescriptionPage: React.FC = () => {
     }
   }, [organizationId, jobId]);
 
+  const fetchCurrentSkills = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setSkillsLoading(true);
+    setSkillsError(null);
+    try {
+      const response = await employerApi.getCurrentJobDescriptionSkills(organizationId, jobId);
+      setCurrentSkills(response.data.skills);
+    } catch (err: any) {
+      setSkillsError(err.message || 'Failed to load job description skills');
+    } finally {
+      setSkillsLoading(false);
+    }
+  }, [organizationId, jobId]);
+
   useEffect(() => {
     if (!isSyncing && activeOrganization?.type === 'company' && canView) {
       fetchJob();
       fetchJobDescription();
       fetchCurrentAnalysis();
+      fetchCurrentSkills();
     }
-  }, [isSyncing, activeOrganization, canView, fetchJob, fetchJobDescription, fetchCurrentAnalysis]);
+  }, [isSyncing, activeOrganization, canView, fetchJob, fetchJobDescription, fetchCurrentAnalysis, fetchCurrentSkills]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -271,11 +388,14 @@ const EmployerJobDescriptionPage: React.FC = () => {
       setRawText(response.data.source.rawText);
       setSourceType('pasted');
       setViewingVersion(null);
-      // Version awareness: a brand-new version has no analysis of its own —
-      // never carried forward from the previous version. The old version's
-      // analysis remains intact and viewable in its own history entry.
+      // Version awareness: a brand-new version has no analysis or skills of
+      // its own — never carried forward from the previous version. The old
+      // version's analysis/skills remain intact and viewable in their own
+      // history entry.
       setCurrentAnalysis(null);
       setAnalyzeError(null);
+      setCurrentSkills(null);
+      setExtractError(null);
       setSaveSuccess(`Saved as version ${response.data.source.version}.`);
       setTimeout(() => setSaveSuccess(null), 3000);
       const jdResponse = await employerApi.getJobDescriptionSources(organizationId, jobId);
@@ -292,6 +412,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
     setViewingError(null);
     setViewingLoading(true);
     setViewingAnalysis(null);
+    setViewingSkills(null);
     try {
       const response = await employerApi.getJobDescriptionSource(organizationId, jobId, source.id);
       setViewingVersion(response.data.source);
@@ -302,7 +423,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
     }
     setViewingLoading(false);
 
-    // Historical analysis is read-only display only — never a new parse trigger.
+    // Historical analysis/skills are read-only display only — never a new parse/extract trigger.
     setViewingAnalysisLoading(true);
     try {
       const analysisResponse = await employerApi.getJobDescriptionAnalysis(organizationId, jobId, source.id);
@@ -312,11 +433,22 @@ const EmployerJobDescriptionPage: React.FC = () => {
     } finally {
       setViewingAnalysisLoading(false);
     }
+
+    setViewingSkillsLoading(true);
+    try {
+      const skillsResponse = await employerApi.getJobDescriptionSkills(organizationId, jobId, source.id);
+      setViewingSkills(skillsResponse.data.skills);
+    } catch {
+      setViewingSkills(null);
+    } finally {
+      setViewingSkillsLoading(false);
+    }
   };
 
   const handleCloseViewingVersion = () => {
     setViewingVersion(null);
     setViewingAnalysis(null);
+    setViewingSkills(null);
   };
 
   const handleAnalyze = async () => {
@@ -334,6 +466,21 @@ const EmployerJobDescriptionPage: React.FC = () => {
       fetchCurrentAnalysis();
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleExtractSkills = async () => {
+    if (!organizationId || !jobId) return;
+    setExtracting(true);
+    setExtractError(null);
+    try {
+      const response = await employerApi.extractCurrentJobDescriptionSkills(organizationId, jobId);
+      setCurrentSkills(response.data.skills);
+    } catch (err: any) {
+      setExtractError(err.message || 'Failed to extract job description skills');
+      fetchCurrentSkills();
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -504,6 +651,31 @@ const EmployerJobDescriptionPage: React.FC = () => {
                         <p className="text-sm text-mentor-text-secondary">Not analyzed yet.</p>
                       )}
                     </div>
+
+                    <div className="mt-6 pt-6 border-t border-mentor-border">
+                      <h3 className="section-title flex items-center gap-2 mb-3">
+                        <ListChecks size={16} className="text-mentor-text-muted" />
+                        Skills
+                      </h3>
+                      {viewingSkillsLoading ? (
+                        <div className="py-4 text-center">
+                          <Loader2 className="w-5 h-5 text-primary-600 animate-spin mx-auto" />
+                        </div>
+                      ) : viewingSkills?.status === 'completed' ? (
+                        <>
+                          <SkillsGroupedView skills={viewingSkills.skills} />
+                          {viewingSkills.aiUsage && <UsageLine usage={viewingSkills.aiUsage} />}
+                        </>
+                      ) : viewingSkills?.status === 'failed' ? (
+                        <p className="text-sm text-mentor-error">
+                          Skill extraction failed for this version.{viewingSkills.errorMessage ? ` ${viewingSkills.errorMessage}` : ''}
+                        </p>
+                      ) : viewingSkills?.status === 'processing' ? (
+                        <p className="text-sm text-mentor-text-secondary">Skill extraction is in progress for this version.</p>
+                      ) : (
+                        <p className="text-sm text-mentor-text-secondary">Not extracted yet.</p>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <form onSubmit={handleSave} className="card mb-6">
@@ -630,6 +802,76 @@ const EmployerJobDescriptionPage: React.FC = () => {
                         {currentAnalysis.aiUsage && <UsageLine usage={currentAnalysis.aiUsage} />}
                       </>
                     ) : null}
+                  </div>
+                )}
+
+                {!viewingVersion && current && (
+                  <div className="card mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="section-title flex items-center gap-2 mb-0">
+                        <ListChecks size={18} className="text-mentor-text-muted" />
+                        Skills
+                      </h2>
+                      {!skillsLoading &&
+                        !skillsError &&
+                        currentAnalysis?.status === 'completed' &&
+                        currentSkills?.status === 'processing' && (
+                          <button onClick={fetchCurrentSkills} className="btn btn-secondary px-3 py-1.5 text-xs">
+                            <RefreshCw size={14} />
+                            Check Status
+                          </button>
+                        )}
+                      {!skillsLoading &&
+                        !skillsError &&
+                        currentAnalysis?.status === 'completed' &&
+                        currentSkills?.status !== 'processing' &&
+                        currentSkills?.status !== 'completed' &&
+                        canManage && (
+                          <button onClick={handleExtractSkills} disabled={extracting} className="btn btn-primary">
+                            {extracting ? 'Extracting...' : currentSkills?.status === 'failed' ? 'Retry Extraction' : 'Extract Skills'}
+                          </button>
+                        )}
+                    </div>
+
+                    {extractError && (
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{extractError}</p>
+                      </div>
+                    )}
+
+                    {skillsLoading ? (
+                      <div className="py-6 text-center">
+                        <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                      </div>
+                    ) : skillsError ? (
+                      <div className="py-6 text-center">
+                        <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                        <p className="text-sm text-mentor-text-secondary mb-4">{skillsError}</p>
+                        <button onClick={fetchCurrentSkills} className="btn btn-primary">
+                          Try Again
+                        </button>
+                      </div>
+                    ) : currentAnalysis?.status !== 'completed' ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">
+                        Analyze the job description before extracting skills.
+                      </p>
+                    ) : !currentSkills ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">Not extracted yet.</p>
+                    ) : currentSkills.status === 'processing' ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">
+                        Skill extraction is in progress for this job description.
+                      </p>
+                    ) : currentSkills.status === 'failed' ? (
+                      <p className="text-sm text-mentor-error text-center py-6">
+                        Skill extraction failed.{currentSkills.errorMessage ? ` ${currentSkills.errorMessage}` : ''}
+                      </p>
+                    ) : (
+                      <>
+                        <SkillsGroupedView skills={currentSkills.skills} />
+                        {currentSkills.aiUsage && <UsageLine usage={currentSkills.aiUsage} />}
+                      </>
+                    )}
                   </div>
                 )}
 

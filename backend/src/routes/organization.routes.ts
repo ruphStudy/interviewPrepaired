@@ -25,6 +25,7 @@ import employerJobController from '../controllers/EmployerJobController';
 import employerJobHiringTeamController from '../controllers/EmployerJobHiringTeamController';
 import employerJobDescriptionController from '../controllers/EmployerJobDescriptionController';
 import employerJobDescriptionAnalysisController from '../controllers/EmployerJobDescriptionAnalysisController';
+import employerJobDescriptionSkillsController from '../controllers/EmployerJobDescriptionSkillsController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -1591,6 +1592,38 @@ router.post(
   employerJobDescriptionAnalysisController.analyzeCurrentJobDescription
 );
 
+// ============================================================================
+// Job Description Skill Extraction (17C) — normalized, JD-version-local
+// skill set derived from the CURRENT JD's already-COMPLETED 17B analysis
+// (never re-parses raw JD text), via the EXISTING AI Gateway. Reads use
+// ORGANIZATION_VIEW; extracting uses INTERVIEWS_MANAGE. Archived
+// organization or archived job: reads allowed, extraction blocked
+// (enforced service-side). NOTE: `GET .../jd/skills` is registered BEFORE
+// `GET .../jd/:jdSourceId` (below) so the literal "skills" segment is
+// matched before it could ever fall through to the `:jdSourceId` wildcard
+// route — same ordering requirement as `GET .../jd/analysis` above.
+// ============================================================================
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd/skills',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobDescriptionSkillsController.getCurrentSkills
+);
+
+router.post(
+  '/:organizationId/jobs/:jobId/jd/skills/extract',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobDescriptionSkillsController.extractCurrentSkills
+);
+
 router.get(
   '/:organizationId/jobs/:jobId/jd/:jdSourceId',
   protect,
@@ -1611,6 +1644,17 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobDescriptionAnalysisController.getAnalysisForSource
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd/:jdSourceId/skills',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...jdSourceIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobDescriptionSkillsController.getSkillsForSource
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
