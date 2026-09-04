@@ -20,6 +20,7 @@ import {
   ClipboardList,
   ListChecks,
   Gauge,
+  Briefcase,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrganization } from '../contexts/OrganizationContext';
@@ -132,10 +133,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   // mirrors the backend's own identity check (not just a permission check)
   // on every trainer-* endpoint.
   // Company-only — mirrors instituteNavItems but for the employer domain.
-  // No Jobs/Candidates/Hiring Team yet (16B/16D).
+  // No Candidates/Hiring Team yet (16D).
   const employerNavItems =
     activeOrganization?.type === 'company'
-      ? [{ to: `/organizations/${activeOrganizationId}/employer/profile`, label: 'Employer Profile', icon: Building2 }]
+      ? [
+          { to: `/organizations/${activeOrganizationId}/employer/profile`, label: 'Employer Profile', icon: Building2 },
+          ...(hasPermission('organization:view')
+            ? [{ to: `/organizations/${activeOrganizationId}/employer/jobs`, label: 'Jobs', icon: Briefcase }]
+            : []),
+        ]
       : [];
 
   const trainerNavItems =

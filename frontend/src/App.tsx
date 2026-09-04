@@ -32,6 +32,9 @@ import InstituteTrainerDetailPage from './pages/institute/InstituteTrainerDetail
 import InstituteTemplatesPage from './pages/institute/InstituteTemplatesPage';
 import InstituteInterviewAssignmentsPage from './pages/institute/InstituteInterviewAssignmentsPage';
 import EmployerProfilePage from './pages/employer/EmployerProfilePage';
+import EmployerJobsPage from './pages/employer/EmployerJobsPage';
+import EmployerJobFormPage from './pages/employer/EmployerJobFormPage';
+import EmployerJobDetailPage from './pages/employer/EmployerJobDetailPage';
 import InstituteReadinessPage from './pages/institute/InstituteReadinessPage';
 import InstituteBillingPage from './pages/institute/InstituteBillingPage';
 import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
@@ -274,6 +277,31 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerProfilePage />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/organizations/:organizationId/employer/jobs"
+            element={
+              <ProtectedRoute>
+                <EmployerJobsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/employer/jobs/new"
+            element={
+              <ProtectedRoute>
+                <EmployerJobFormPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/employer/jobs/:jobId"
+            element={
+              <ProtectedRoute>
+                <EmployerJobDetailPage />
               </ProtectedRoute>
             }
           />

@@ -21,6 +21,9 @@ function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/organizations/new')) return 'Create Organization';
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/profile')) return 'Institute Profile';
   if (pathname.startsWith('/organizations/') && pathname.includes('/employer/profile')) return 'Employer Profile';
+  if (pathname.startsWith('/organizations/') && pathname.endsWith('/employer/jobs/new')) return 'New Job';
+  if (pathname.startsWith('/organizations/') && pathname.includes('/employer/jobs/')) return 'Job Detail';
+  if (pathname.startsWith('/organizations/') && pathname.endsWith('/employer/jobs')) return 'Jobs';
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/branches')) return 'Branches';
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/courses')) return 'Courses';
   if (pathname.startsWith('/organizations/') && pathname.includes('/institute/batches')) return 'Batches';

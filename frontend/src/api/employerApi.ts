@@ -51,6 +51,104 @@ interface ApiEnvelope<T> {
 export type GetCompanyProfileResponse = ApiEnvelope<CompanyProfileResult>;
 export type UpdateCompanyProfileResponse = ApiEnvelope<CompanyProfileResult>;
 
+// ============================================================================
+// Employer Jobs (Sprint 16B) — company-only job postings. Field names/shapes
+// confirmed directly from EmployerJobService/EmployerJobController.
+// ============================================================================
+
+export type EmployerJobStatus = 'draft' | 'open' | 'paused' | 'closed' | 'archived';
+export type EmployerJobWorkplaceType = 'onsite' | 'hybrid' | 'remote';
+export type EmployerJobEmploymentType = 'full_time' | 'part_time' | 'contract' | 'internship' | 'temporary' | 'other';
+
+export const EMPLOYER_JOB_WORKPLACE_TYPES: Array<{ value: EmployerJobWorkplaceType; label: string }> = [
+  { value: 'onsite', label: 'Onsite' },
+  { value: 'hybrid', label: 'Hybrid' },
+  { value: 'remote', label: 'Remote' },
+];
+
+export const EMPLOYER_JOB_EMPLOYMENT_TYPES: Array<{ value: EmployerJobEmploymentType; label: string }> = [
+  { value: 'full_time', label: 'Full-time' },
+  { value: 'part_time', label: 'Part-time' },
+  { value: 'contract', label: 'Contract' },
+  { value: 'internship', label: 'Internship' },
+  { value: 'temporary', label: 'Temporary' },
+  { value: 'other', label: 'Other' },
+];
+
+/**
+ * Mirrors the backend's EMPLOYER_JOB_STATUS_TRANSITIONS exactly — used only
+ * to decide which status-action buttons to render. The backend remains the
+ * sole authority and re-validates every transition independently; this is
+ * never trusted as the actual gate.
+ */
+export const EMPLOYER_JOB_STATUS_TRANSITIONS: Record<EmployerJobStatus, EmployerJobStatus[]> = {
+  draft: ['open', 'archived'],
+  open: ['paused', 'closed', 'archived'],
+  paused: ['open', 'closed', 'archived'],
+  closed: ['archived'],
+  archived: [],
+};
+
+export interface EmployerJob {
+  id: string;
+  organizationId: string;
+  title: string;
+  jobCode?: string;
+  department?: string;
+  location?: string;
+  workplaceType?: EmployerJobWorkplaceType;
+  employmentType?: EmployerJobEmploymentType;
+  experienceMinYears?: number;
+  experienceMaxYears?: number;
+  openings?: number;
+  description?: string;
+  responsibilities?: string[];
+  requiredSkills?: string[];
+  preferredSkills?: string[];
+  salaryMin?: number;
+  salaryMax?: number;
+  salaryCurrency?: string;
+  applicationDeadline?: string;
+  status: EmployerJobStatus;
+  createdByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Create/update payload — never includes organizationId/createdByMembershipId/status/timestamps; the backend rejects those fields outright. */
+export interface EmployerJobPayload {
+  title?: string;
+  jobCode?: string;
+  department?: string;
+  location?: string;
+  workplaceType?: EmployerJobWorkplaceType;
+  employmentType?: EmployerJobEmploymentType;
+  experienceMinYears?: number;
+  experienceMaxYears?: number;
+  openings?: number;
+  description?: string;
+  responsibilities?: string[];
+  requiredSkills?: string[];
+  preferredSkills?: string[];
+  salaryMin?: number;
+  salaryMax?: number;
+  salaryCurrency?: string;
+  applicationDeadline?: string;
+}
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+}
+
+export type ListJobsResponse = ApiEnvelope<{ jobs: EmployerJob[]; pagination: Pagination }>;
+export type GetJobResponse = ApiEnvelope<{ job: EmployerJob }>;
+export type CreateJobResponse = ApiEnvelope<{ job: EmployerJob }>;
+export type UpdateJobResponse = ApiEnvelope<{ job: EmployerJob }>;
+export type UpdateJobStatusResponse = ApiEnvelope<{ job: EmployerJob }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -106,6 +204,69 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to update company profile');
+    }
+  }
+
+  // ---- Employer Jobs (Sprint 16B) ----
+
+  async listJobs(
+    organizationId: string,
+    params: {
+      status?: EmployerJobStatus;
+      department?: string;
+      workplaceType?: EmployerJobWorkplaceType;
+      employmentType?: EmployerJobEmploymentType;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {}
+  ): Promise<ListJobsResponse> {
+    try {
+      const response = await this.api.get<ListJobsResponse>(`/organizations/${organizationId}/jobs`, { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load jobs');
+    }
+  }
+
+  async getJob(organizationId: string, jobId: string): Promise<GetJobResponse> {
+    try {
+      const response = await this.api.get<GetJobResponse>(`/organizations/${organizationId}/jobs/${jobId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job');
+    }
+  }
+
+  /** `status` always starts at draft server-side — never accepted here. */
+  async createJob(organizationId: string, payload: EmployerJobPayload): Promise<CreateJobResponse> {
+    try {
+      const response = await this.api.post<CreateJobResponse>(`/organizations/${organizationId}/jobs`, payload);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create job');
+    }
+  }
+
+  /** PATCH-like merge (despite being a PUT) — omitted fields keep their current value. Never changes status. */
+  async updateJob(organizationId: string, jobId: string, payload: EmployerJobPayload): Promise<UpdateJobResponse> {
+    try {
+      const response = await this.api.put<UpdateJobResponse>(`/organizations/${organizationId}/jobs/${jobId}`, payload);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update job');
+    }
+  }
+
+  /** The ONLY way a job's status changes. The backend rejects same/invalid transitions with a 409. */
+  async updateJobStatus(organizationId: string, jobId: string, status: EmployerJobStatus): Promise<UpdateJobStatusResponse> {
+    try {
+      const response = await this.api.post<UpdateJobStatusResponse>(`/organizations/${organizationId}/jobs/${jobId}/status`, {
+        status,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update job status');
     }
   }
 }

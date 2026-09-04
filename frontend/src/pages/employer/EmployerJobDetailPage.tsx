@@ -1,0 +1,587 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import AuthenticatedLayout from '../../components/AuthenticatedLayout';
+import { useOrganization } from '../../contexts/OrganizationContext';
+import employerApi, {
+  EmployerJob,
+  EmployerJobStatus,
+  EMPLOYER_JOB_WORKPLACE_TYPES,
+  EMPLOYER_JOB_EMPLOYMENT_TYPES,
+  EMPLOYER_JOB_STATUS_TRANSITIONS,
+} from '../../api/employerApi';
+import { EMPTY_JOB_FORM, JobFormState, jobFormToPayload, jobToFormState } from './jobFormUtils';
+import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2 } from 'lucide-react';
+
+const STATUS_LABELS: Record<EmployerJobStatus, string> = {
+  draft: 'Draft',
+  open: 'Open',
+  paused: 'Paused',
+  closed: 'Closed',
+  archived: 'Archived',
+};
+
+const STATUS_BADGE: Record<EmployerJobStatus, string> = {
+  draft: 'badge-neutral',
+  open: 'badge-success',
+  paused: 'badge-warning',
+  closed: 'badge-info',
+  archived: 'badge-neutral',
+};
+
+/** Requires confirmation — these are hard to casually undo (closing ends the hiring cycle; archiving is terminal). */
+const CONFIRM_REQUIRED_STATUSES: EmployerJobStatus[] = ['closed', 'archived'];
+
+/** Label for the button that transitions TO `targetStatus` — "open" reads as "Reopen" only when coming from paused. */
+function actionLabel(currentStatus: EmployerJobStatus, targetStatus: EmployerJobStatus): string {
+  if (targetStatus === 'open') return currentStatus === 'paused' ? 'Reopen' : 'Open';
+  if (targetStatus === 'paused') return 'Pause';
+  if (targetStatus === 'closed') return 'Close';
+  if (targetStatus === 'archived') return 'Archive';
+  return STATUS_LABELS[targetStatus];
+}
+
+const workplaceLabel = (value?: string) => EMPLOYER_JOB_WORKPLACE_TYPES.find((w) => w.value === value)?.label || value;
+const employmentLabel = (value?: string) => EMPLOYER_JOB_EMPLOYMENT_TYPES.find((e) => e.value === value)?.label || value;
+const formatDate = (value?: string) => (value ? new Date(value).toLocaleDateString() : '—');
+const formatSalary = (job: EmployerJob) => {
+  if (job.salaryMin === undefined && job.salaryMax === undefined) return '—';
+  const currency = job.salaryCurrency ? `${job.salaryCurrency} ` : '';
+  if (job.salaryMin !== undefined && job.salaryMax !== undefined) return `${currency}${job.salaryMin} – ${job.salaryMax}`;
+  return `${currency}${job.salaryMin ?? job.salaryMax}`;
+};
+
+/**
+ * Job detail (16B). Readable with only ORGANIZATION_VIEW — editing and
+ * status actions require INTERVIEWS_MANAGE on a non-archived organization.
+ * Status only ever changes through the dedicated status endpoint; the
+ * backend remains the sole authority on which transitions are valid (this
+ * page's button set is a UI convenience mirroring the same transition map,
+ * never trusted as the actual gate).
+ */
+const EmployerJobDetailPage: React.FC = () => {
+  const { organizationId, jobId } = useParams<{ organizationId: string; jobId: string }>();
+  const navigate = useNavigate();
+  const {
+    activeOrganizationId,
+    activeOrganization,
+    loading: contextLoading,
+    error: contextError,
+    setActiveOrganization,
+    hasPermission,
+  } = useOrganization();
+
+  const [job, setJob] = useState<EmployerJob | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [form, setForm] = useState<JobFormState>(EMPTY_JOB_FORM);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const [statusActionPending, setStatusActionPending] = useState<EmployerJobStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (organizationId && organizationId !== activeOrganizationId) {
+      setActiveOrganization(organizationId);
+    }
+  }, [organizationId, activeOrganizationId, setActiveOrganization]);
+
+  const isSyncing = !organizationId || activeOrganizationId !== organizationId;
+  const canView = hasPermission('organization:view');
+  const canManage = hasPermission('interviews:manage') && activeOrganization?.status !== 'archived';
+
+  const fetchJob = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const response = await employerApi.getJob(organizationId, jobId);
+      setJob(response.data.job);
+      setForm(jobToFormState(response.data.job));
+    } catch (err: any) {
+      setLoadError(err.message || 'Failed to load job');
+    } finally {
+      setLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchJob();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchJob]);
+
+  const field = <K extends keyof JobFormState>(key: K, value: JobFormState[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    if (!organizationId || !jobId) return;
+    if (!form.title.trim()) {
+      setSaveError('Title is required');
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    setSaved(false);
+    try {
+      const response = await employerApi.updateJob(organizationId, jobId, jobFormToPayload(form));
+      setJob(response.data.job);
+      setForm(jobToFormState(response.data.job));
+      setIsEditing(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed to update job');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    if (job) setForm(jobToFormState(job));
+    setSaveError(null);
+    setIsEditing(false);
+  };
+
+  const handleStatusChange = async (targetStatus: EmployerJobStatus) => {
+    if (!organizationId || !jobId) return;
+    if (CONFIRM_REQUIRED_STATUSES.includes(targetStatus)) {
+      const verb = targetStatus === 'archived' ? 'archive' : 'close';
+      if (!window.confirm(`Are you sure you want to ${verb} this job?`)) return;
+    }
+    setStatusError(null);
+    setStatusActionPending(targetStatus);
+    try {
+      const response = await employerApi.updateJobStatus(organizationId, jobId, targetStatus);
+      setJob(response.data.job);
+      setForm(jobToFormState(response.data.job));
+    } catch (err: any) {
+      setStatusError(err.message || 'Failed to update job status');
+    } finally {
+      setStatusActionPending(null);
+    }
+  };
+
+  if (isSyncing || contextLoading) {
+    return (
+      <AuthenticatedLayout>
+        <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 64px)' }}>
+          <div className="text-center">
+            <Loader2 className="w-9 h-9 text-primary-600 animate-spin mx-auto mb-4" />
+            <p className="text-mentor-text-secondary text-sm font-medium">Loading organization...</p>
+          </div>
+        </div>
+      </AuthenticatedLayout>
+    );
+  }
+
+  if (contextError || !activeOrganization) {
+    return (
+      <AuthenticatedLayout>
+        <div className="flex items-center justify-center p-4" style={{ minHeight: 'calc(100vh - 64px)' }}>
+          <div className="card max-w-md w-full text-center">
+            <AlertCircle className="w-12 h-12 text-mentor-error mx-auto mb-4" />
+            <h2 className="section-title text-lg mb-2">Couldn't load organization</h2>
+            <p className="text-sm text-mentor-text-secondary mb-6">
+              {contextError || "You don't have access to this organization, or it no longer exists."}
+            </p>
+            <button onClick={() => navigate('/dashboard')} className="btn btn-primary">
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </AuthenticatedLayout>
+    );
+  }
+
+  if (activeOrganization.type !== 'company') {
+    return (
+      <AuthenticatedLayout>
+        <main className="page-container py-8">
+          <div className="card max-w-md mx-auto text-center">
+            <AlertCircle className="w-12 h-12 text-mentor-warning mx-auto mb-4" />
+            <h2 className="section-title text-lg mb-2">Not available</h2>
+            <p className="text-sm text-mentor-text-secondary">Jobs are only available for company organizations.</p>
+          </div>
+        </main>
+      </AuthenticatedLayout>
+    );
+  }
+
+  if (!canView) {
+    return (
+      <AuthenticatedLayout>
+        <main className="page-container py-8">
+          <div className="card max-w-md mx-auto text-center">
+            <AlertCircle className="w-12 h-12 text-mentor-warning mx-auto mb-4" />
+            <h2 className="section-title text-lg mb-2">No access</h2>
+            <p className="text-sm text-mentor-text-secondary">You don't have permission to view this job.</p>
+          </div>
+        </main>
+      </AuthenticatedLayout>
+    );
+  }
+
+  return (
+    <AuthenticatedLayout>
+      <main className="page-container py-8 max-w-3xl">
+        <Link
+          to={`/organizations/${organizationId}/employer/jobs`}
+          className="inline-flex items-center gap-1.5 text-sm text-mentor-text-secondary hover:text-mentor-text mb-4"
+        >
+          <ChevronLeft size={16} />
+          Back to Jobs
+        </Link>
+
+        {loading ? (
+          <div className="card p-10 text-center">
+            <Loader2 className="w-8 h-8 text-primary-600 animate-spin mx-auto mb-3" />
+            <p className="text-mentor-text-muted text-sm">Loading job...</p>
+          </div>
+        ) : loadError || !job ? (
+          <div className="card p-10 text-center">
+            <AlertCircle className="w-12 h-12 text-mentor-error mx-auto mb-4" />
+            <h3 className="section-title mb-1.5">Couldn't load job</h3>
+            <p className="text-sm text-mentor-text-secondary mb-5">{loadError || 'Job not found'}</p>
+            <button onClick={fetchJob} className="btn btn-primary">
+              Try Again
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="page-header flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <h1 className="page-title mb-0">{job.title}</h1>
+                  <span className={`badge ${STATUS_BADGE[job.status]}`}>{STATUS_LABELS[job.status]}</span>
+                </div>
+                <p className="page-subtitle">{job.jobCode || 'No job code'}</p>
+              </div>
+              {canManage && !isEditing && (
+                <button onClick={() => setIsEditing(true)} className="btn btn-secondary shrink-0">
+                  <Pencil size={16} />
+                  Edit
+                </button>
+              )}
+            </div>
+
+            {activeOrganization.status === 'archived' && (
+              <div className="flex items-start gap-2.5 bg-amber-50 dark:bg-future-warning/10 border border-amber-200 dark:border-future-warning/20 rounded-lg p-4 mb-6">
+                <AlertCircle size={18} className="text-mentor-warning mt-0.5 shrink-0" />
+                <p className="text-sm text-amber-800 dark:text-future-warning">
+                  This organization is archived. This job is read-only.
+                </p>
+              </div>
+            )}
+
+            {canManage && (EMPLOYER_JOB_STATUS_TRANSITIONS[job.status]?.length ?? 0) > 0 && (
+              <div className="card mb-6">
+                {statusError && (
+                  <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                    <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                    <p className="text-sm text-mentor-error">{statusError}</p>
+                  </div>
+                )}
+                <p className="label mb-2">Status Actions</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  {EMPLOYER_JOB_STATUS_TRANSITIONS[job.status].map((targetStatus) => (
+                    <button
+                      key={targetStatus}
+                      onClick={() => handleStatusChange(targetStatus)}
+                      disabled={statusActionPending !== null}
+                      className="btn btn-secondary"
+                    >
+                      {statusActionPending === targetStatus ? 'Updating...' : actionLabel(job.status, targetStatus)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="card">
+              {saveError && (
+                <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-5">
+                  <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                  <p className="text-sm text-mentor-error">{saveError}</p>
+                </div>
+              )}
+              {saved && (
+                <div className="flex items-start gap-2 bg-mentor-mint dark:bg-future-success/10 border border-emerald-200 dark:border-future-success/20 rounded-lg p-3 mb-5">
+                  <CheckCircle2 size={16} className="text-mentor-success mt-0.5 shrink-0" />
+                  <p className="text-sm text-mentor-success">Job saved.</p>
+                </div>
+              )}
+
+              {isEditing ? (
+                <div className="space-y-5">
+                  <div>
+                    <label className="label">Title</label>
+                    <input type="text" value={form.title} onChange={(e) => field('title', e.target.value)} className="input" maxLength={200} />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="label">Job Code</label>
+                      <input type="text" value={form.jobCode} onChange={(e) => field('jobCode', e.target.value)} className="input" maxLength={50} />
+                    </div>
+                    <div>
+                      <label className="label">Department</label>
+                      <input
+                        type="text"
+                        value={form.department}
+                        onChange={(e) => field('department', e.target.value)}
+                        className="input"
+                        maxLength={150}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="label">Location</label>
+                      <input type="text" value={form.location} onChange={(e) => field('location', e.target.value)} className="input" maxLength={200} />
+                    </div>
+                    <div>
+                      <label className="label">Workplace Type</label>
+                      <select
+                        value={form.workplaceType}
+                        onChange={(e) => field('workplaceType', e.target.value as JobFormState['workplaceType'])}
+                        className="input"
+                      >
+                        <option value="">Select</option>
+                        {EMPLOYER_JOB_WORKPLACE_TYPES.map((w) => (
+                          <option key={w.value} value={w.value}>
+                            {w.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label">Employment Type</label>
+                      <select
+                        value={form.employmentType}
+                        onChange={(e) => field('employmentType', e.target.value as JobFormState['employmentType'])}
+                        className="input"
+                      >
+                        <option value="">Select</option>
+                        {EMPLOYER_JOB_EMPLOYMENT_TYPES.map((et) => (
+                          <option key={et.value} value={et.value}>
+                            {et.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="label">Min Experience (years)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.experienceMinYears}
+                        onChange={(e) => field('experienceMinYears', e.target.value)}
+                        className="input"
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Max Experience (years)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.experienceMaxYears}
+                        onChange={(e) => field('experienceMaxYears', e.target.value)}
+                        className="input"
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Openings</label>
+                      <input type="number" min={1} value={form.openings} onChange={(e) => field('openings', e.target.value)} className="input" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="label">Description</label>
+                    <textarea
+                      value={form.description}
+                      onChange={(e) => field('description', e.target.value)}
+                      className="input"
+                      rows={4}
+                      maxLength={5000}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="label">Responsibilities (one per line, or comma-separated)</label>
+                    <textarea
+                      value={form.responsibilitiesText}
+                      onChange={(e) => field('responsibilitiesText', e.target.value)}
+                      className="input"
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="label">Required Skills (one per line, or comma-separated)</label>
+                      <textarea
+                        value={form.requiredSkillsText}
+                        onChange={(e) => field('requiredSkillsText', e.target.value)}
+                        className="input"
+                        rows={3}
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Preferred Skills (one per line, or comma-separated)</label>
+                      <textarea
+                        value={form.preferredSkillsText}
+                        onChange={(e) => field('preferredSkillsText', e.target.value)}
+                        className="input"
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="label">Salary Min</label>
+                      <input type="number" min={0} value={form.salaryMin} onChange={(e) => field('salaryMin', e.target.value)} className="input" />
+                    </div>
+                    <div>
+                      <label className="label">Salary Max</label>
+                      <input type="number" min={0} value={form.salaryMax} onChange={(e) => field('salaryMax', e.target.value)} className="input" />
+                    </div>
+                    <div>
+                      <label className="label">Currency</label>
+                      <input
+                        type="text"
+                        value={form.salaryCurrency}
+                        onChange={(e) => field('salaryCurrency', e.target.value)}
+                        className="input"
+                        maxLength={10}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="sm:w-1/3">
+                    <label className="label">Application Deadline</label>
+                    <input
+                      type="date"
+                      value={form.applicationDeadline}
+                      onChange={(e) => field('applicationDeadline', e.target.value)}
+                      className="input"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <button onClick={handleSave} disabled={saving} className="btn btn-primary">
+                      {saving ? 'Saving...' : 'Save Changes'}
+                    </button>
+                    <button onClick={handleCancel} disabled={saving} className="btn btn-secondary">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Department</dt>
+                    <dd className="text-sm text-mentor-text">{job.department || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Location</dt>
+                    <dd className="text-sm text-mentor-text">{job.location || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Workplace Type</dt>
+                    <dd className="text-sm text-mentor-text">{workplaceLabel(job.workplaceType) || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Employment Type</dt>
+                    <dd className="text-sm text-mentor-text">{employmentLabel(job.employmentType) || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Experience</dt>
+                    <dd className="text-sm text-mentor-text">
+                      {job.experienceMinYears !== undefined || job.experienceMaxYears !== undefined
+                        ? `${job.experienceMinYears ?? 0} – ${job.experienceMaxYears ?? '∞'} yrs`
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Openings</dt>
+                    <dd className="text-sm text-mentor-text">{job.openings ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Salary</dt>
+                    <dd className="text-sm text-mentor-text">{formatSalary(job)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Application Deadline</dt>
+                    <dd className="text-sm text-mentor-text">{formatDate(job.applicationDeadline)}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Description</dt>
+                    <dd className="text-sm text-mentor-text whitespace-pre-wrap">{job.description || '—'}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1.5">Responsibilities</dt>
+                    <dd className="text-sm text-mentor-text">
+                      {job.responsibilities && job.responsibilities.length > 0 ? (
+                        <ul className="list-disc list-inside space-y-1">
+                          {job.responsibilities.map((item, i) => (
+                            <li key={i}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        '—'
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1.5">Required Skills</dt>
+                    <dd className="flex flex-wrap gap-1.5">
+                      {job.requiredSkills && job.requiredSkills.length > 0
+                        ? job.requiredSkills.map((skill) => (
+                            <span key={skill} className="badge badge-info">
+                              {skill}
+                            </span>
+                          ))
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1.5">Preferred Skills</dt>
+                    <dd className="flex flex-wrap gap-1.5">
+                      {job.preferredSkills && job.preferredSkills.length > 0
+                        ? job.preferredSkills.map((skill) => (
+                            <span key={skill} className="badge badge-neutral">
+                              {skill}
+                            </span>
+                          ))
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Created</dt>
+                    <dd className="text-sm text-mentor-text">{formatDate(job.createdAt)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Last Updated</dt>
+                    <dd className="text-sm text-mentor-text">{formatDate(job.updatedAt)}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          </>
+        )}
+      </main>
+    </AuthenticatedLayout>
+  );
+};
+
+export default EmployerJobDetailPage;

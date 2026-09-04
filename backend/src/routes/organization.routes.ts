@@ -21,6 +21,7 @@ import instituteTrainerSkillGapController from '../controllers/InstituteTrainerS
 import instituteTrainerBatchReadinessController from '../controllers/InstituteTrainerBatchReadinessController';
 import instituteInterviewCreditController from '../controllers/InstituteInterviewCreditController';
 import instituteBatchReadinessController from '../controllers/InstituteBatchReadinessController';
+import employerJobController from '../controllers/EmployerJobController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -39,6 +40,7 @@ import { OrganizationInvitationStatus } from '../constants/organizationInvitatio
 import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { InstituteBranchStatus } from '../constants/instituteBranch';
 import { InstituteCourseStatus } from '../constants/instituteCourse';
+import { EmployerJobStatus, EmployerJobWorkplaceType, EmployerJobEmploymentType } from '../constants/employerJob';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
@@ -1200,6 +1202,169 @@ router.put(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   organizationController.updateCompanyProfile
+);
+
+// ============================================================================
+// Employer Jobs (16B) — company-only (400 for an institute org). Reads use
+// ORGANIZATION_VIEW; mutations (including the dedicated status endpoint) use
+// INTERVIEWS_MANAGE — the existing hiring/interview-management permission,
+// not the generic profile-update permission. `status`/`organizationId`/
+// `createdByMembershipId`/timestamps are rejected on create/update; status
+// only ever changes through POST .../status.
+// ============================================================================
+
+const jobIdValidation = [param('jobId').isMongoId().withMessage('Invalid job ID')];
+
+const listJobsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(EmployerJobStatus)).withMessage('Invalid status'),
+  query('department').optional().isString().trim().isLength({ max: 150 }),
+  query('workplaceType').optional().isIn(Object.values(EmployerJobWorkplaceType)).withMessage('Invalid workplaceType'),
+  query('employmentType').optional().isIn(Object.values(EmployerJobEmploymentType)).withMessage('Invalid employmentType'),
+  query('search').optional().isString().trim().isLength({ max: 200 }),
+];
+
+const JOB_FIELD_KEYS = [
+  'title',
+  'jobCode',
+  'department',
+  'location',
+  'workplaceType',
+  'employmentType',
+  'experienceMinYears',
+  'experienceMaxYears',
+  'openings',
+  'description',
+  'responsibilities',
+  'requiredSkills',
+  'preferredSkills',
+  'salaryMin',
+  'salaryMax',
+  'salaryCurrency',
+  'applicationDeadline',
+];
+
+const rejectJobImmutableFieldsValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('createdByMembershipId').not().exists().withMessage('createdByMembershipId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use POST .../status'),
+  body('createdAt').not().exists().withMessage('createdAt cannot be set'),
+  body('updatedAt').not().exists().withMessage('updatedAt cannot be set'),
+];
+
+const jobOptionalFieldValidators = [
+  body('jobCode').optional().isString().withMessage('jobCode must be a string').trim().isLength({ max: 50 }).withMessage('jobCode must be at most 50 characters'),
+  body('department').optional().isString().trim().isLength({ max: 150 }).withMessage('department must be at most 150 characters'),
+  body('location').optional().isString().trim().isLength({ max: 200 }).withMessage('location must be at most 200 characters'),
+  body('workplaceType').optional().isIn(Object.values(EmployerJobWorkplaceType)).withMessage('Invalid workplaceType'),
+  body('employmentType').optional().isIn(Object.values(EmployerJobEmploymentType)).withMessage('Invalid employmentType'),
+  body('experienceMinYears').optional().isInt({ min: 0 }).withMessage('experienceMinYears must be a non-negative integer'),
+  body('experienceMaxYears').optional().isInt({ min: 0 }).withMessage('experienceMaxYears must be a non-negative integer'),
+  body('openings').optional().isInt({ min: 1 }).withMessage('openings must be a positive integer'),
+  body('description').optional().isString().trim().isLength({ max: 5000 }).withMessage('description must be at most 5000 characters'),
+  body('responsibilities').optional().isArray({ max: 50 }).withMessage('responsibilities must be an array of at most 50 items'),
+  body('requiredSkills').optional().isArray({ max: 50 }).withMessage('requiredSkills must be an array of at most 50 items'),
+  body('preferredSkills').optional().isArray({ max: 50 }).withMessage('preferredSkills must be an array of at most 50 items'),
+  body('salaryMin').optional().isFloat({ min: 0 }).withMessage('salaryMin must be a non-negative number'),
+  body('salaryMax').optional().isFloat({ min: 0 }).withMessage('salaryMax must be a non-negative number'),
+  body('salaryCurrency').optional().isString().trim().isLength({ max: 10 }).withMessage('salaryCurrency must be at most 10 characters'),
+  body('applicationDeadline').optional().isISO8601().withMessage('applicationDeadline must be a valid date'),
+];
+
+const createJobValidation = [
+  ...rejectJobImmutableFieldsValidation,
+  body('title')
+    .notEmpty()
+    .withMessage('title is required')
+    .isString()
+    .withMessage('title must be a string')
+    .trim()
+    .isLength({ min: 1, max: 200 })
+    .withMessage('title must be between 1 and 200 characters'),
+  ...jobOptionalFieldValidators,
+];
+
+const updateJobValidation = [
+  ...rejectJobImmutableFieldsValidation,
+  body('title')
+    .optional()
+    .isString()
+    .withMessage('title must be a string')
+    .trim()
+    .isLength({ min: 1, max: 200 })
+    .withMessage('title must be between 1 and 200 characters'),
+  ...jobOptionalFieldValidators,
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !JOB_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown job field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one job field is required');
+    }
+    return true;
+  }),
+];
+
+const updateJobStatusValidation = [
+  body('status').notEmpty().withMessage('status is required').isIn(Object.values(EmployerJobStatus)).withMessage('Invalid status'),
+];
+
+router.get(
+  '/:organizationId/jobs',
+  protect,
+  ...organizationIdValidation,
+  ...listJobsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobController.getJobs
+);
+
+router.post(
+  '/:organizationId/jobs',
+  protect,
+  ...organizationIdValidation,
+  ...createJobValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobController.createJob
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobController.getJob
+);
+
+router.put(
+  '/:organizationId/jobs/:jobId',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...updateJobValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobController.updateJob
+);
+
+router.post(
+  '/:organizationId/jobs/:jobId/status',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...updateJobStatusValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobController.updateJobStatus
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
