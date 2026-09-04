@@ -4,6 +4,7 @@ import Organization, {
   IInstituteProfile,
   ICompanyProfile,
 } from '../models/Organization.model';
+import OrganizationMember from '../models/OrganizationMember.model';
 import {
   OrganizationType,
   OrganizationStatus,
@@ -15,7 +16,7 @@ import {
   DEFAULT_ORGANIZATION_DATE_FORMAT,
   DEFAULT_ORGANIZATION_TIME_FORMAT,
 } from '../constants/organization';
-import { OrganizationMemberRole } from '../constants/organizationMember';
+import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
 import { slugifyOrganizationName } from '../utils/slug';
@@ -131,12 +132,32 @@ export class OrganizationService {
     throw new ApiError(409, 'Unable to generate unique organization slug');
   }
 
+  /**
+   * Discovery list — every organization the caller can actually access:
+   * the ones they own, OR the ones where they hold an ACTIVE
+   * OrganizationMember row (an INACTIVE membership grants no discovery,
+   * same as it grants no RBAC access via requireOrganizationPermission).
+   * The `$or` is evaluated against the Organization collection itself, so
+   * each matching document is naturally returned exactly once even when a
+   * caller is both the owner and separately has a mirrored OWNER
+   * membership row — no manual de-dup needed.
+   */
   async getOrganizations(params: ListOrganizationsParams): Promise<{
     organizations: Array<Record<string, unknown>>;
     pagination: { page: number; limit: number; total: number; pages: number };
   }> {
     const { userId, page, limit, type, status } = params;
-    const filter: Record<string, unknown> = { ownerUserId: new Types.ObjectId(userId) };
+    const userObjectId = new Types.ObjectId(userId);
+
+    const memberOrganizationIds = await OrganizationMember.find({
+      userId: userObjectId,
+      status: OrganizationMemberStatus.ACTIVE,
+    })
+      .distinct('organizationId');
+
+    const filter: Record<string, unknown> = {
+      $or: [{ ownerUserId: userObjectId }, { _id: { $in: memberOrganizationIds } }],
+    };
     if (type) filter.type = type;
     if (status) filter.status = status;
     const skip = (page - 1) * limit;

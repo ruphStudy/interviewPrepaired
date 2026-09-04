@@ -8,7 +8,6 @@ import organizationApi, {
 } from '../api/organizationApi';
 
 const ACTIVE_ORG_STORAGE_KEY = 'activeOrganizationId';
-const JOINED_ORGS_STORAGE_KEY = 'joinedOrganizations';
 
 /**
  * Lightweight view model for the switcher/nav — deliberately narrower than
@@ -22,9 +21,7 @@ export interface OrganizationOption {
 }
 
 interface OrganizationContextType {
-  /** Every organization the caller can switch into — owned orgs (from the
-   * backend's owner-only list endpoint) merged with orgs joined via an
-   * accepted invitation (cached locally — see the JOINED ORGS note below). */
+  /** Every organization the caller can access — owned, or an ACTIVE member of — as returned by GET /organizations. */
   organizations: OrganizationOption[];
   activeOrganizationId: string | null;
   activeOrganization: OrganizationDetail | null;
@@ -36,10 +33,8 @@ interface OrganizationContextType {
   setActiveOrganization: (organizationId: string | null) => Promise<void>;
   /** Re-fetches the active organization's own detail/access (e.g. after an edit). */
   refreshActiveOrganization: () => Promise<void>;
-  /** Re-fetches the owned-organizations list (e.g. after creating a new one). */
+  /** Re-fetches the accessible-organizations list (e.g. after creating one or accepting an invitation). */
   refreshOrganizations: () => Promise<void>;
-  /** Caches an organization the caller just joined via invitation acceptance, so it appears in the switcher. */
-  addJoinedOrganization: (org: OrganizationOption) => void;
   hasPermission: (permission: OrganizationPermission) => boolean;
 }
 
@@ -52,25 +47,6 @@ export const useOrganization = () => {
   }
   return context;
 };
-
-function readJoinedCache(): OrganizationOption[] {
-  try {
-    const raw = localStorage.getItem(JOINED_ORGS_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as OrganizationOption[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeJoinedCache(orgs: OrganizationOption[]): void {
-  localStorage.setItem(JOINED_ORGS_STORAGE_KEY, JSON.stringify(orgs));
-}
-
-function mergeOrganizations(owned: OrganizationOption[], joined: OrganizationOption[]): OrganizationOption[] {
-  const byId = new Map<string, OrganizationOption>();
-  [...owned, ...joined].forEach((org) => byId.set(org.id, org));
-  return Array.from(byId.values());
-}
 
 interface OrganizationProviderProps {
   children: ReactNode;
@@ -85,16 +61,11 @@ interface OrganizationProviderProps {
  * the sole authority regardless of what this context reports; it exists
  * only to drive UI affordances (nav visibility, disabled buttons).
  *
- * JOINED ORGS NOTE: `GET /organizations` (listMyOrganizations) is
- * owner-only on the backend — it does not return organizations the caller
- * merely belongs to as a non-owner member. There is no existing
- * "my memberships across organizations" endpoint. So an organization
- * joined via invitation acceptance is cached locally (id/name/slug/type,
- * from that endpoint's own response) purely so it keeps appearing in the
- * switcher across reloads. A member added directly via "Add Member" who
- * never went through the invitation-accept flow won't be locally cached
- * this way and would need the organization's direct URL — a known,
- * disclosed gap given no backend endpoint exists for this yet.
+ * `organizations` comes ENTIRELY from `GET /organizations`, which now
+ * returns every organization the caller can access (owned OR an ACTIVE
+ * member of) — there is no client-side cache/workaround for organizations
+ * joined via invitation; `refreshOrganizations()` after an accept is
+ * sufficient since the backend itself reflects the new membership.
  */
 export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ children }) => {
   const { isAuthenticated } = useAuth();
@@ -134,7 +105,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     }
   }, [clearActive]);
 
-  const fetchOwnedOrganizations = useCallback(async (): Promise<OrganizationOption[]> => {
+  const fetchAccessibleOrganizations = useCallback(async (): Promise<OrganizationOption[]> => {
     const response = await organizationApi.listMyOrganizations({ limit: 100 });
     return response.data.organizations.map((org) => ({ id: org.id, name: org.name, slug: org.slug, type: org.type }));
   }, []);
@@ -143,18 +114,16 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     setLoading(true);
     setError(null);
     try {
-      const owned = await fetchOwnedOrganizations();
-      const joined = readJoinedCache();
-      const merged = mergeOrganizations(owned, joined);
-      setOrganizations(merged);
+      const accessible = await fetchAccessibleOrganizations();
+      setOrganizations(accessible);
 
       const storedId = localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
-      const accessibleIds = new Set(merged.map((o) => o.id));
+      const accessibleIds = new Set(accessible.map((o) => o.id));
 
       if (storedId && accessibleIds.has(storedId)) {
         await loadActiveOrganization(storedId);
-      } else if (merged.length > 0) {
-        await loadActiveOrganization(merged[0].id);
+      } else if (accessible.length > 0) {
+        await loadActiveOrganization(accessible[0].id);
       } else {
         clearActive();
       }
@@ -163,7 +132,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     } finally {
       setLoading(false);
     }
-  }, [fetchOwnedOrganizations, loadActiveOrganization, clearActive]);
+  }, [fetchAccessibleOrganizations, loadActiveOrganization, clearActive]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -199,20 +168,12 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
 
   const refreshOrganizations = useCallback(async () => {
     try {
-      const owned = await fetchOwnedOrganizations();
-      const joined = readJoinedCache();
-      setOrganizations(mergeOrganizations(owned, joined));
+      const accessible = await fetchAccessibleOrganizations();
+      setOrganizations(accessible);
     } catch (err: any) {
       setError(err.message || 'Failed to load organizations');
     }
-  }, [fetchOwnedOrganizations]);
-
-  const addJoinedOrganization = useCallback((org: OrganizationOption) => {
-    const joined = readJoinedCache();
-    const deduped = mergeOrganizations([], [...joined, org]);
-    writeJoinedCache(deduped);
-    setOrganizations((prev) => mergeOrganizations(prev, [org]));
-  }, []);
+  }, [fetchAccessibleOrganizations]);
 
   const hasPermission = useCallback(
     (permission: OrganizationPermission) => activePermissions.includes(permission),
@@ -230,7 +191,6 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     setActiveOrganization,
     refreshActiveOrganization,
     refreshOrganizations,
-    addJoinedOrganization,
     hasPermission,
   };
 

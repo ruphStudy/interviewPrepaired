@@ -51,7 +51,10 @@ export class OrganizationController {
 
   /**
    * GET /api/v1/organizations
-   * List organizations owned by the authenticated user.
+   * Discovery list — every organization the authenticated user can access:
+   * ones they own, plus ones where they hold an ACTIVE membership. This is
+   * discovery only; per-organization RBAC is unchanged (still enforced by
+   * requireOrganizationPermission on every org-scoped route).
    */
   public getOrganizations = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
     const userId = req.user?.id;

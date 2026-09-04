@@ -17,7 +17,7 @@ const AcceptInvitationPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { setActiveOrganization, addJoinedOrganization } = useOrganization();
+  const { setActiveOrganization, refreshOrganizations } = useOrganization();
 
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,7 +51,9 @@ const AcceptInvitationPage: React.FC = () => {
     try {
       const response = await organizationApi.acceptInvitation(token);
       const { organization } = response.data;
-      addJoinedOrganization({ id: organization.id, name: organization.name, slug: organization.slug, type: organization.type });
+      // The backend now reflects this membership immediately — no
+      // client-side cache needed to make it show up in the switcher.
+      await refreshOrganizations();
       await setActiveOrganization(organization.id);
       setAccepted(true);
       setTimeout(() => navigate(`/organizations/${organization.id}/profile`), 1200);

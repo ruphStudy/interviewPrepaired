@@ -273,7 +273,7 @@ class OrganizationApiService {
     }
   }
 
-  /** Owner-only — this endpoint returns organizations the caller OWNS, not every organization they merely belong to as a member. */
+  /** Discovery — every organization the caller can access: owned, or an ACTIVE member of. */
   async listMyOrganizations(params: { page?: number; limit?: number } = {}): Promise<ListOrganizationsResponse> {
     try {
       const response = await this.api.get<ListOrganizationsResponse>('/organizations', { params });
