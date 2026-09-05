@@ -20,6 +20,7 @@ import employerApi, {
   InterviewCompetencyRubric,
   RubricScoringAnchors,
   ApplicationInterviewInvitation,
+  EmployerInterviewSessionSummary,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -33,6 +34,7 @@ import {
   ClipboardList,
   ListChecks,
   Send,
+  MonitorPlay,
 } from 'lucide-react';
 
 const INVITATION_STATUS_LABELS: Record<string, string> = {
@@ -729,6 +731,10 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [rawInvitationToken, setRawInvitationToken] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
+  const [interviewSession, setInterviewSession] = useState<EmployerInterviewSessionSummary | null>(null);
+  const [interviewSessionLoading, setInterviewSessionLoading] = useState(true);
+  const [interviewSessionError, setInterviewSessionError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1016,6 +1022,26 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchInvitation();
     }
   }, [isSyncing, activeOrganization, canView, fetchInvitation]);
+
+  const fetchInterviewSession = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setInterviewSessionLoading(true);
+    setInterviewSessionError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewSession(organizationId, applicationId);
+      setInterviewSession(response.data.session);
+    } catch (err: any) {
+      setInterviewSessionError(err.message || 'Failed to load interview session');
+    } finally {
+      setInterviewSessionLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchInterviewSession();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchInterviewSession]);
 
   const handleCreateInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1852,6 +1878,52 @@ const EmployerApplicationDetailPage: React.FC = () => {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <MonitorPlay size={18} className="text-mentor-text-muted" />
+                Interview Session
+              </h2>
+
+              {interviewSessionLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : interviewSessionError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{interviewSessionError}</p>
+                  <button onClick={fetchInterviewSession} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : interviewSession ? (
+                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Session ID</dt>
+                    <dd className="text-sm text-mentor-text font-mono">{interviewSession.id}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Status</dt>
+                    <dd className="text-sm text-mentor-text capitalize">{interviewSession.status}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Created</dt>
+                    <dd className="text-sm text-mentor-text">{formatDateTime(interviewSession.createdAt)}</dd>
+                  </div>
+                  {interviewSession.completedAt && (
+                    <div>
+                      <dt className="text-xs font-medium text-mentor-text-muted mb-1">Completed</dt>
+                      <dd className="text-sm text-mentor-text">{formatDateTime(interviewSession.completedAt)}</dd>
+                    </div>
+                  )}
+                </dl>
+              ) : invitation?.status === 'accepted' ? (
+                <p className="text-sm text-mentor-text-secondary">Candidate has accepted; session not prepared yet.</p>
+              ) : (
+                <p className="text-sm text-mentor-text-secondary">Waiting for the candidate to accept the interview invitation.</p>
               )}
             </div>
           </>

@@ -51,6 +51,29 @@ export interface PublicEmployerInterviewInvitation {
 export type GetPublicEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: PublicEmployerInterviewInvitation }>;
 export type AcceptPublicEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: PublicEmployerInterviewInvitation }>;
 
+// ============================================================================
+// Hiring-assessment interview session handoff (Sprint 20E). Only ever
+// created for an ACCEPTED invitation — no AI, no email, no candidate
+// account. Never exposes internal candidate/user/organization/
+// application/invitation/blueprint/rubric ids.
+// ============================================================================
+
+export type PublicInterviewSessionStatus = 'created' | 'in-progress' | 'paused' | 'completed' | 'evaluated';
+
+export interface PublicInterviewSession {
+  sessionId: string;
+  status: PublicInterviewSessionStatus;
+  interviewPurpose: string;
+  organizationName: string;
+  jobTitle: string;
+  blueprintTitle: string;
+  estimatedDurationMinutes: number;
+  createdAt: string;
+}
+
+export type CreatePublicInterviewSessionResponse = ApiEnvelope<{ session: PublicInterviewSession }>;
+export type GetPublicInterviewSessionResponse = ApiEnvelope<{ session: PublicInterviewSession | null }>;
+
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
 
@@ -96,6 +119,29 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to accept interview invitation');
+    }
+  }
+
+  /** Creates exactly ONE session — a duplicate call safely returns the same existing session. */
+  async createPublicInterviewSession(token: string): Promise<CreatePublicInterviewSessionResponse> {
+    try {
+      const response = await this.api.post<CreatePublicInterviewSessionResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to prepare interview session');
+    }
+  }
+
+  async getPublicInterviewSession(token: string): Promise<GetPublicInterviewSessionResponse> {
+    try {
+      const response = await this.api.get<GetPublicInterviewSessionResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview session');
     }
   }
 }

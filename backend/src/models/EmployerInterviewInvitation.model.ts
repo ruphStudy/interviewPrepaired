@@ -28,6 +28,12 @@ export interface IEmployerInterviewInvitation extends Document {
   sentAt?: Date;
   acceptedAt?: Date;
   revokedAt?: Date;
+  // Reserved (20E) — filled in only once a real Interview session exists
+  // for this invitation, mirroring InstituteStudentInterviewAssignment's
+  // own `interviewId` reverse-link. A best-effort convenience pointer
+  // only; the Interview's own unique `employerInvitationId` index (not
+  // this field) is the authoritative concurrency guard against duplicates.
+  interviewId?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -96,6 +102,7 @@ const employerInterviewInvitationSchema = new Schema<IEmployerInterviewInvitatio
     sentAt: { type: Date },
     acceptedAt: { type: Date },
     revokedAt: { type: Date },
+    interviewId: { type: Schema.Types.ObjectId, ref: 'Interview' },
   },
   {
     timestamps: true,

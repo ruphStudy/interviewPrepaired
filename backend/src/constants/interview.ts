@@ -20,6 +20,17 @@ export function isAnswerableStatus(status: InterviewStatus): boolean {
   return status === InterviewStatus.IN_PROGRESS;
 }
 
+/**
+ * What an interview is FOR (20E) — orthogonal to `status` above. Defaults
+ * to PRACTICE for every existing/ordinary interview (personal or
+ * institute-assigned); HIRING_ASSESSMENT is used only for the employer
+ * candidate-invitation session-creation flow.
+ */
+export enum InterviewPurpose {
+  PRACTICE = 'practice',
+  HIRING_ASSESSMENT = 'hiring_assessment',
+}
+
 // Shared safety bound for any non-AI-generated question list (uploaded-file
 // parsing, saved/manual question sets) — not the AI-generated-interview 1–10
 // cap. Used by InterviewService and QuestionSetService; keep it in one place

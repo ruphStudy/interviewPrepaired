@@ -25,4 +25,13 @@ router.get('/:token', ...tokenValidation, validate, publicEmployerInterviewInvit
 // public, no auth, no organization RBAC.
 router.post('/:token/accept', ...tokenValidation, validate, publicEmployerInterviewInvitationController.acceptInvitation);
 
+// POST /api/v1/public/employer-interview-invitations/:token/session (20E)
+// — creates exactly ONE hiring-assessment interview session for an
+// ACCEPTED invitation. Fully public, no auth, no organization RBAC.
+router.post('/:token/session', ...tokenValidation, validate, publicEmployerInterviewInvitationController.createSession);
+
+// GET /api/v1/public/employer-interview-invitations/:token/session (20E)
+// — returns the existing session summary, or null. Fully public.
+router.get('/:token/session', ...tokenValidation, validate, publicEmployerInterviewInvitationController.getSession);
+
 export default router;

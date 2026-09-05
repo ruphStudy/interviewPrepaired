@@ -10,6 +10,8 @@ import { EmployerInterviewBlueprintStatus } from '../constants/employerInterview
 import EmployerInterviewCompetencyRubric from '../models/EmployerInterviewCompetencyRubric.model';
 import EmployerInterviewInvitation from '../models/EmployerInterviewInvitation.model';
 import { EmployerInterviewInvitationStatus } from '../constants/employerInterviewInvitation';
+import Interview, { IInterview } from '../models/interview.model';
+import interviewService from './InterviewService';
 import { OrganizationStatus } from '../constants/organization';
 import { ApiError } from '../utils/ApiError';
 
@@ -20,17 +22,20 @@ interface ResolvedChain {
 }
 
 /**
- * PUBLIC, unauthenticated candidate invitation access (20D) — no `protect`,
- * no organization RBAC, reachable by anyone holding a valid raw token. This
- * is the ONLY place a raw invitation token is ever hashed and looked up
- * for a public caller; every organization/application/job/candidate/
- * blueprint/rubric id involved is derived EXCLUSIVELY from the matched
- * invitation row itself — nothing is ever trusted from the request beyond
- * the token. Invalid, unknown, revoked, and reference-broken tokens all
- * collapse to the SAME generic 404 so a caller can never learn whether a
- * given token ever existed. No AI, no email, no interview session/answer
- * capture, no EmployerJobApplication status change happens here — this
- * sprint only establishes secure candidate access + explicit acceptance.
+ * PUBLIC, unauthenticated candidate invitation access (20D) + hiring
+ * session creation/handoff (20E) — no `protect`, no organization RBAC,
+ * reachable by anyone holding a valid raw token. This is the ONLY place a
+ * raw invitation token is ever hashed and looked up for a public caller;
+ * every organization/application/job/candidate/blueprint/rubric id
+ * involved is derived EXCLUSIVELY from the matched invitation row itself —
+ * nothing is ever trusted from the request beyond the token. Invalid,
+ * unknown, revoked, and reference-broken tokens all collapse to the SAME
+ * generic 404 so a caller can never learn whether a given token ever
+ * existed. Session creation reuses the existing Interview domain (via
+ * `InterviewService.createEmployerHiringInterview`) rather than a parallel
+ * engine, creates exactly ONE session per accepted invitation, and never
+ * calls AI, never sends email, never changes EmployerJobApplication
+ * status, never consumes credits, and never creates a candidate account.
  */
 export class PublicEmployerInterviewInvitationService {
   /** GET /public/employer-interview-invitations/:token — read-only. Accepted invitations remain readable through the same token until they'd otherwise expire. */
@@ -89,6 +94,104 @@ export class PublicEmployerInterviewInvitationService {
     }
 
     return this.toPublicDetail(finalDoc, chain);
+  }
+
+  /**
+   * POST /public/employer-interview-invitations/:token/session — creates
+   * exactly ONE hiring-assessment Interview session for an ACCEPTED
+   * invitation (20E). ACTIVE-but-not-yet-accepted is rejected with a
+   * clear 409. Idempotent: an already-linked session is returned as-is; a
+   * concurrent duplicate create is caught via the Interview model's own
+   * unique {employerInvitationId} index (E11000) and resolved by
+   * refetching the winner — never a second session, ever. No AI, no
+   * email, no EmployerJobApplication status change, no credit
+   * consumption, no candidate account.
+   */
+  async createSession(rawToken: string): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+
+    const chain = await this.resolveChain(invitation);
+
+    if (invitation.status === EmployerInterviewInvitationStatus.ACTIVE) {
+      throw new ApiError(409, 'Accept the invitation first.');
+    }
+    // resolveChain only ever lets ACTIVE or ACCEPTED through, and ACTIVE is
+    // excluded above, so invitation.status is ACCEPTED from here on.
+
+    // Idempotent fast path — a session already exists for this invitation.
+    if (invitation.interviewId) {
+      const existing = await Interview.findById(invitation.interviewId);
+      if (existing) {
+        return this.toSessionDetail(existing, chain);
+      }
+      // Reverse pointer set but target missing (shouldn't normally happen) — fall through and create/refetch via the authoritative unique index below.
+    }
+
+    const blueprintContent = chain.blueprint.blueprint!;
+    let interview: IInterview;
+    try {
+      interview = await interviewService.createEmployerHiringInterview({
+        organizationId: chain.organization._id.toString(),
+        jobId: invitation.jobId.toString(),
+        jobTitle: chain.job.title,
+        candidateId: invitation.candidateId.toString(),
+        applicationId: invitation.applicationId.toString(),
+        invitationId: invitation._id.toString(),
+        blueprintId: invitation.blueprintId.toString(),
+        rubricId: invitation.rubricId.toString(),
+        totalQuestions: blueprintContent.metadata.totalPlannedQuestions,
+      });
+    } catch (error: any) {
+      if (error?.code !== 11000) {
+        throw error;
+      }
+      // Concurrent duplicate create — the Interview's own unique index is
+      // the authoritative guard; refetch whoever actually won.
+      const winner = await Interview.findOne({ employerInvitationId: invitation._id });
+      if (!winner) {
+        throw new ApiError(409, 'Interview session is already being prepared — please try again shortly');
+      }
+      interview = winner;
+    }
+
+    // Best-effort reverse-link for fast future lookups — never load-bearing for correctness.
+    if (!invitation.interviewId) {
+      await EmployerInterviewInvitation.updateOne(
+        { _id: invitation._id, interviewId: { $exists: false } },
+        { $set: { interviewId: interview._id } }
+      );
+    }
+
+    return this.toSessionDetail(interview, chain);
+  }
+
+  /** GET /public/employer-interview-invitations/:token/session — read-only. Returns the linked session summary, or null if none has been created yet. */
+  async getSession(rawToken: string): Promise<Record<string, unknown> | null> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+
+    const chain = await this.resolveChain(invitation);
+
+    if (!invitation.interviewId) {
+      return null;
+    }
+    const interview = await Interview.findById(invitation.interviewId);
+    if (!interview) {
+      return null;
+    }
+
+    return this.toSessionDetail(interview, chain);
   }
 
   /**
@@ -197,6 +300,27 @@ export class PublicEmployerInterviewInvitationService {
       expiresAt: invitation.expiresAt,
       message: invitation.message,
       acceptedAt: invitation.acceptedAt,
+    };
+  }
+
+  /**
+   * Safe, minimal public session shape — NEVER internal candidate/user
+   * ids, organizationId, applicationId, invitationId, blueprint/rubric
+   * ids, tokenHash, screening/score/gap details, or recruiter ids.
+   * `sessionId` is the Interview's own id — the one internal id this
+   * response is explicitly required to expose.
+   */
+  private toSessionDetail(interview: IInterview, chain: ResolvedChain): Record<string, unknown> {
+    const blueprintContent = chain.blueprint.blueprint!;
+    return {
+      sessionId: interview._id.toString(),
+      status: interview.status,
+      interviewPurpose: interview.purpose,
+      organizationName: chain.organization.name,
+      jobTitle: chain.job.title,
+      blueprintTitle: blueprintContent.title,
+      estimatedDurationMinutes: blueprintContent.estimatedDurationMinutes,
+      createdAt: interview.createdAt,
     };
   }
 }

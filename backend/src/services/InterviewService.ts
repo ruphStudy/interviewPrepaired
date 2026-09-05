@@ -12,7 +12,7 @@ import { userSubscriptionService } from './UserSubscriptionService';
 import { interviewCreditService } from './InterviewCreditService';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
 import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
-import { InterviewStatus, isAnswerableStatus, MAX_UPLOADED_QUESTIONS } from '../constants/interview';
+import { InterviewStatus, InterviewPurpose, isAnswerableStatus, MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { blueprintService } from './BlueprintService';
 import { interviewMemoryService } from './InterviewMemoryService';
 import { createEmptyMemory } from '../models/InterviewMemory.model';
@@ -700,6 +700,61 @@ export class InterviewService {
       totalQuestions: questions.length,
     });
 
+    return interview;
+  }
+
+  /**
+   * Employer hiring-assessment session creation (20E): creates a real
+   * Interview document for a candidate who has NO User account —
+   * `userId` is deliberately omitted (the schema only requires it when
+   * `purpose !== 'hiring_assessment'`). Deliberately does NOT call
+   * assertCreditAvailable/consumeInterviewCredit — mirrors
+   * `createInstituteUploadedInterview`'s own precedent of never touching
+   * the B2C credit ledger, and this path has no org-credit consumption
+   * either since nothing is actually being run yet. Does NOT call AI to
+   * generate a question — `questions` stays empty and `status` stays
+   * CREATED ("shell persisted, no usable first question yet") until a
+   * later sprint converts the blueprint into real questions. The unique
+   * partial index on `employerInvitationId` is the sole concurrency
+   * guard: a concurrent duplicate call throws E11000, which the caller
+   * (PublicEmployerInterviewInvitationService) catches and refetches the
+   * winner rather than creating a second session.
+   */
+  async createEmployerHiringInterview(params: {
+    organizationId: string;
+    jobId: string;
+    jobTitle: string;
+    candidateId: string;
+    applicationId: string;
+    invitationId: string;
+    blueprintId: string;
+    rubricId: string;
+    totalQuestions: number;
+  }): Promise<IInterview> {
+    const totalQuestions = Math.min(200, Math.max(1, Math.round(params.totalQuestions) || 1));
+    const topic = (params.jobTitle || 'Hiring Interview').trim().slice(0, 100) || 'Hiring Interview';
+
+    const interview = new Interview({
+      organizationId: new Types.ObjectId(params.organizationId),
+      purpose: InterviewPurpose.HIRING_ASSESSMENT,
+      employerJobId: new Types.ObjectId(params.jobId),
+      employerCandidateId: new Types.ObjectId(params.candidateId),
+      employerApplicationId: new Types.ObjectId(params.applicationId),
+      employerInvitationId: new Types.ObjectId(params.invitationId),
+      employerBlueprintId: new Types.ObjectId(params.blueprintId),
+      employerRubricId: new Types.ObjectId(params.rubricId),
+      topic,
+      roleName: topic,
+      difficulty: 'intermediate',
+      experienceYears: 0,
+      totalQuestions,
+      status: InterviewStatus.CREATED,
+      currentQuestion: 1,
+      questions: [],
+      interviewMode: 'ai-generated',
+    });
+
+    await interview.save();
     return interview;
   }
 

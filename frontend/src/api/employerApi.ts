@@ -1320,6 +1320,26 @@ export type GetEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: A
 export type RegenerateEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation; token: string }>;
 export type RevokeEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation }>;
 
+// ============================================================================
+// Employer Interview Session — authenticated recruiter READ only (Sprint
+// 20E). The session itself is only ever created through the public
+// candidate handoff; no create/mutate method exists here.
+// ============================================================================
+
+export interface EmployerInterviewSessionSummary {
+  id: string;
+  status: string;
+  candidateId?: string;
+  jobId?: string;
+  blueprintId?: string;
+  rubricId?: string;
+  createdAt: string;
+  completedAt?: string;
+  updatedAt: string;
+}
+
+export type GetEmployerInterviewSessionResponse = ApiEnvelope<{ session: EmployerInterviewSessionSummary | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2250,6 +2270,19 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to revoke interview invitation');
+    }
+  }
+
+  // ---- Employer Interview Session (Sprint 20E) — read only ----
+
+  async getEmployerInterviewSession(organizationId: string, applicationId: string): Promise<GetEmployerInterviewSessionResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewSessionResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview session');
     }
   }
 }

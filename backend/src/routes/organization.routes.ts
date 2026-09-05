@@ -42,6 +42,7 @@ import employerCandidateShortlistController from '../controllers/EmployerCandida
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
 import employerInterviewInvitationController from '../controllers/EmployerInterviewInvitationController';
+import employerInterviewSessionController from '../controllers/EmployerInterviewSessionController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2625,6 +2626,23 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewInvitationController.revokeInvitation
+);
+
+// ============================================================================
+// Employer Interview Session — authenticated recruiter READ only (20E).
+// The session itself is created exclusively through the PUBLIC candidate
+// handoff (see publicEmployerInterviewInvitation.routes.ts); no mutation
+// exists on this authenticated side.
+// ============================================================================
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewSessionController.getCurrentSession
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

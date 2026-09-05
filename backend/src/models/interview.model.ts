@@ -6,7 +6,7 @@ import { IClaimVerificationTracking, claimVerificationTrackingSchema, initialize
 import { IContradictionTracking, contradictionTrackingSchema, initializeContradictionTracking } from './ContradictionTracking.model';
 import { ISTARAnalysis } from './STARAnalysis.model';
 import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
-import { InterviewStatus } from '../constants/interview';
+import { InterviewStatus, InterviewPurpose } from '../constants/interview';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -118,11 +118,28 @@ export interface IFinalReport {
 }
 
 export interface IInterview extends Document {
-  userId: Types.ObjectId;
+  // Required for every existing (personal/B2C, institute-assigned) interview.
+  // Absent ONLY for `purpose: 'hiring_assessment'` sessions (20E) — an
+  // employer candidate has no User account, so there is nothing to attach.
+  userId?: Types.ObjectId;
   // Absent = personal/B2C interview. Present = organization-scoped. No
   // default, never set from an HTTP payload yet — trusted org context only
   // arrives once Sprint 8 membership/RBAC exists.
   organizationId?: Types.ObjectId;
+  // Absent = personal/B2C practice (existing behavior, unchanged). Present
+  // only for the employer hiring-assessment flow (20E) — reuses this one
+  // field rather than adding a parallel "is this a hiring interview" flag.
+  purpose?: InterviewPurpose;
+  // Employer hiring-assessment linkage (20E) — all absent for every
+  // non-hiring interview. `employerInvitationId` is the sole concurrency
+  // guard (unique partial index below): exactly one session per accepted
+  // invitation, ever.
+  employerApplicationId?: Types.ObjectId;
+  employerInvitationId?: Types.ObjectId;
+  employerBlueprintId?: Types.ObjectId;
+  employerRubricId?: Types.ObjectId;
+  employerCandidateId?: Types.ObjectId;
+  employerJobId?: Types.ObjectId;
   topic: string;
   difficulty: 'beginner' | 'intermediate' | 'advanced' | 'expert';
   experienceYears: number;
@@ -503,10 +520,18 @@ const finalReportSchema = new Schema<IFinalReport>(
 
 const interviewSchema = new Schema<IInterview, IInterviewModel>(
   {
+    // Required for every ordinary (personal/B2C, institute-assigned)
+    // interview; the ONLY exception is a hiring-assessment session (20E),
+    // where the candidate has no User account to reference at all.
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: [true, 'User ID is required'],
+      required: [
+        function (this: IInterview) {
+          return this.purpose !== InterviewPurpose.HIRING_ASSESSMENT;
+        },
+        'User ID is required',
+      ],
       index: true,
     },
     // Optional, no default — absent means personal/B2C.
@@ -515,6 +540,22 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       ref: 'Organization',
       required: false,
     },
+    // Absent = personal/B2C practice (existing behavior, unchanged).
+    purpose: {
+      type: String,
+      enum: { values: Object.values(InterviewPurpose), message: '{VALUE} is not a valid interview purpose' },
+      default: InterviewPurpose.PRACTICE,
+      required: true,
+    },
+    // Employer hiring-assessment linkage (20E) — all absent for every
+    // non-hiring interview. Never duplicates the existing `organizationId`
+    // field above; the employer organization IS `organizationId`.
+    employerApplicationId: { type: Schema.Types.ObjectId, ref: 'EmployerJobApplication' },
+    employerInvitationId: { type: Schema.Types.ObjectId, ref: 'EmployerInterviewInvitation' },
+    employerBlueprintId: { type: Schema.Types.ObjectId, ref: 'EmployerInterviewBlueprint' },
+    employerRubricId: { type: Schema.Types.ObjectId, ref: 'EmployerInterviewCompetencyRubric' },
+    employerCandidateId: { type: Schema.Types.ObjectId, ref: 'EmployerCandidate' },
+    employerJobId: { type: Schema.Types.ObjectId, ref: 'EmployerJob' },
     topic: {
       type: String,
       required: [true, 'Topic is required'],
@@ -663,6 +704,18 @@ interviewSchema.index({ 'finalReport.overallScore': -1 });
 // duplicate the existing personal `userId`/`status` indexes above.
 interviewSchema.index({ organizationId: 1, userId: 1, createdAt: -1 });
 interviewSchema.index({ organizationId: 1, status: 1, createdAt: -1 });
+
+// Employer hiring-assessment (20E) — exactly one session per accepted
+// invitation, ever. Partial: only documents that actually have this field
+// participate in the uniqueness constraint, so every ordinary (non-hiring)
+// interview is entirely unaffected. This is ALSO the authoritative
+// concurrency guard for session creation — a concurrent duplicate create
+// throws E11000, which the caller uses to refetch the winner instead of
+// creating a second session.
+interviewSchema.index(
+  { employerInvitationId: 1 },
+  { unique: true, partialFilterExpression: { employerInvitationId: { $exists: true } } }
+);
 
 // Text index for searching
 interviewSchema.index({ topic: 'text' });
