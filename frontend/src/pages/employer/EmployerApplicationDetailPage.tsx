@@ -27,6 +27,7 @@ import employerApi, {
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
   EmployerHiringAssessmentReportDetail,
+  HiringReportReviewSummary,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -775,6 +776,16 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [generateReportError, setGenerateReportError] = useState<string | null>(null);
 
+  const [reviewSummary, setReviewSummary] = useState<HiringReportReviewSummary | null>(null);
+  const [reviewSummaryLoading, setReviewSummaryLoading] = useState(false);
+  const [reviewSummaryError, setReviewSummaryError] = useState<string | null>(null);
+  const [reviewNotesDraft, setReviewNotesDraft] = useState('');
+  const [savingReview, setSavingReview] = useState(false);
+  const [saveReviewError, setSaveReviewError] = useState<string | null>(null);
+
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const [downloadReportError, setDownloadReportError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1278,6 +1289,56 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setGenerateReportError(err.message || 'Failed to generate hiring report');
     } finally {
       setGeneratingReport(false);
+    }
+  };
+
+  const isReportCompleted = hiringReport?.status === 'completed';
+
+  const fetchReviewSummary = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setReviewSummaryLoading(true);
+    setReviewSummaryError(null);
+    try {
+      const response = await employerApi.getHiringReportReviewSummary(organizationId, applicationId);
+      setReviewSummary(response.data.reviewSummary);
+      setReviewNotesDraft(response.data.reviewSummary?.currentUserReview?.reviewNotes || '');
+    } catch (err: any) {
+      setReviewSummaryError(err.message || 'Failed to load review summary');
+    } finally {
+      setReviewSummaryLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && isReportCompleted) {
+      fetchReviewSummary();
+    }
+  }, [isSyncing, activeOrganization, canView, isReportCompleted, fetchReviewSummary]);
+
+  const handleSaveReview = async () => {
+    if (!organizationId || !applicationId) return;
+    setSavingReview(true);
+    setSaveReviewError(null);
+    try {
+      const response = await employerApi.upsertHiringReportReview(organizationId, applicationId, reviewNotesDraft);
+      setReviewSummary(response.data.reviewSummary);
+    } catch (err: any) {
+      setSaveReviewError(err.message || 'Failed to save review');
+    } finally {
+      setSavingReview(false);
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    if (!organizationId || !applicationId) return;
+    setDownloadingReport(true);
+    setDownloadReportError(null);
+    try {
+      await employerApi.downloadHiringReportExport(organizationId, applicationId);
+    } catch (err: any) {
+      setDownloadReportError(err.message || 'Failed to download hiring report');
+    } finally {
+      setDownloadingReport(false);
     }
   };
 
@@ -2534,7 +2595,13 @@ const EmployerApplicationDetailPage: React.FC = () => {
                         </div>
                       ) : hiringReport?.status === 'completed' && hiringReport.report ? (
                         <div className="space-y-4">
-                          <p className="text-sm text-mentor-text whitespace-pre-wrap">{hiringReport.report.executiveSummary}</p>
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <p className="text-sm text-mentor-text whitespace-pre-wrap flex-1">{hiringReport.report.executiveSummary}</p>
+                            <button onClick={handleDownloadReport} disabled={downloadingReport} className="btn btn-secondary shrink-0">
+                              {downloadingReport ? 'Downloading...' : 'Download Report'}
+                            </button>
+                          </div>
+                          {downloadReportError && <p className="text-sm text-mentor-error">{downloadReportError}</p>}
 
                           <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
                             <div>
@@ -2594,6 +2661,61 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           </button>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {isReportCompleted && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-3">Employer Review</h3>
+
+                      {reviewSummaryLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : reviewSummaryError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{reviewSummaryError}</p>
+                          <button onClick={fetchReviewSummary} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : reviewSummary ? (
+                        <div className="space-y-3">
+                          <p className="text-sm text-mentor-text-secondary">
+                            {reviewSummary.reviewedCount} reviewed &middot; {reviewSummary.pendingCount} pending &middot;{' '}
+                            {reviewSummary.totalReviewers} total reviewers
+                          </p>
+
+                          {reviewSummary.reviews.length > 0 && (
+                            <ul className="space-y-1.5">
+                              {reviewSummary.reviews.map((r) => (
+                                <li key={r.reviewerMembershipId} className="text-xs text-mentor-text-secondary">
+                                  {r.reviewerName || r.reviewerEmail || 'Reviewer'} &middot; <span className="capitalize">{r.status}</span>
+                                  {r.reviewedAt ? ` · ${formatDateTime(r.reviewedAt)}` : ''}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          <div>
+                            <label className="label">Your review notes (internal only)</label>
+                            <textarea
+                              value={reviewNotesDraft}
+                              onChange={(e) => setReviewNotesDraft(e.target.value)}
+                              rows={3}
+                              maxLength={2000}
+                              className="input w-full"
+                              placeholder="Internal notes about this assessment..."
+                            />
+                          </div>
+                          {saveReviewError && <p className="text-sm text-mentor-error">{saveReviewError}</p>}
+                          <button onClick={handleSaveReview} disabled={savingReview} className="btn btn-primary">
+                            {savingReview
+                              ? 'Saving...'
+                              : reviewSummary.currentUserReview?.status === 'reviewed'
+                              ? 'Update Review'
+                              : 'Mark as Reviewed'}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </>

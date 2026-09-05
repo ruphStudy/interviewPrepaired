@@ -68,6 +68,157 @@ export class PDFService {
   }
 
   /**
+   * Generate PDF export of an employer hiring assessment report (22D).
+   * Reuses the SAME puppeteer pipeline as `generateReportPDF` — never a
+   * parallel PDF engine. `data` is the exact immutable 22C report content
+   * (executiveSummary/scores/competencySummary/etc.) plus its own
+   * `createdAt` — never candidate contact info, raw resume/JD, screening
+   * internals, invitation tokens, or recruiter review notes.
+   */
+  async generateHiringReportPDF(data: {
+    overallScore: number;
+    averageRubricScore: number;
+    competencyCoveragePercent: number;
+    executiveSummary: string;
+    competencySummary: Array<{ competencyName: string; importance: string; score: number; evidenceStatus: string; summary: string }>;
+    demonstratedStrengths: string[];
+    evidenceGaps: string[];
+    followUpPriorities: string[];
+    interviewerNotes: string[];
+    createdAt: Date;
+  }): Promise<Buffer> {
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+
+    try {
+      const page = await browser.newPage();
+      const html = this.generateHiringReportHTML(data);
+      await page.setContent(html, { waitUntil: 'domcontentloaded' });
+
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '20mm', right: '15mm', bottom: '20mm', left: '15mm' },
+      });
+
+      return Buffer.from(pdfBuffer);
+    } finally {
+      await browser.close();
+    }
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private generateHiringReportHTML(data: {
+    overallScore: number;
+    averageRubricScore: number;
+    competencyCoveragePercent: number;
+    executiveSummary: string;
+    competencySummary: Array<{ competencyName: string; importance: string; score: number; evidenceStatus: string; summary: string }>;
+    demonstratedStrengths: string[];
+    evidenceGaps: string[];
+    followUpPriorities: string[];
+    interviewerNotes: string[];
+    createdAt: Date;
+  }): string {
+    const esc = (v: string) => this.escapeHtml(v);
+    const list = (items: string[]) => (items.length > 0 ? `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` : '<p class="muted">None recorded.</p>');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background: #fff; padding: 20px; }
+          .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid #4F46E5; padding-bottom: 20px; }
+          .header h1 { color: #4F46E5; font-size: 26px; margin-bottom: 8px; }
+          .header p { color: #666; font-size: 13px; }
+          .scores { display: flex; justify-content: center; gap: 24px; margin: 20px 0; }
+          .score-box { text-align: center; }
+          .score-box .value { font-size: 22px; font-weight: bold; color: #4F46E5; }
+          .score-box .label { font-size: 11px; color: #666; }
+          .section { margin: 24px 0; }
+          .section-title { font-size: 16px; color: #4F46E5; margin-bottom: 10px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+          .competency { margin-bottom: 14px; padding: 10px; background: #f8f9fb; border-radius: 6px; }
+          .competency .name { font-weight: bold; }
+          .competency .meta { font-size: 12px; color: #666; margin: 2px 0; }
+          ul { margin-left: 20px; font-size: 13px; }
+          .muted { color: #999; font-size: 13px; }
+          .footer { margin-top: 40px; text-align: center; font-size: 11px; color: #999; border-top: 1px solid #eee; padding-top: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>Employer Hiring Assessment Report</h1>
+          <p>Generated ${new Date(data.createdAt).toLocaleString()}</p>
+        </div>
+
+        <div class="scores">
+          <div class="score-box"><div class="value">${data.overallScore}/100</div><div class="label">Overall Score</div></div>
+          <div class="score-box"><div class="value">${data.averageRubricScore}/5</div><div class="label">Avg Rubric Score</div></div>
+          <div class="score-box"><div class="value">${data.competencyCoveragePercent}%</div><div class="label">Competency Coverage</div></div>
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Executive Summary</h2>
+          <p>${esc(data.executiveSummary) || '<span class="muted">No summary available.</span>'}</p>
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Competency Summary</h2>
+          ${data.competencySummary
+            .map(
+              (c) => `
+            <div class="competency">
+              <div class="name">${esc(c.competencyName)} (${esc(c.importance)})</div>
+              <div class="meta">Score: ${c.score}/5 &middot; Evidence status: ${esc(c.evidenceStatus)}</div>
+              ${c.summary ? `<div>${esc(c.summary)}</div>` : ''}
+            </div>
+          `
+            )
+            .join('')}
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Demonstrated Strengths</h2>
+          ${list(data.demonstratedStrengths)}
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Evidence Gaps</h2>
+          ${list(data.evidenceGaps)}
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Follow-up Priorities</h2>
+          ${list(data.followUpPriorities)}
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Interviewer Notes</h2>
+          ${list(data.interviewerNotes)}
+        </div>
+
+        <div class="footer">
+          <p>Employer Hiring Assessment Report — internal use only.</p>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
    * Generate HTML template for PDF
    */
   private generateHTML(report: any): string {

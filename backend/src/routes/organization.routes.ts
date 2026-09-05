@@ -47,6 +47,7 @@ import employerHiringAssessmentResultController from '../controllers/EmployerHir
 import employerHiringEvidenceMatrixController from '../controllers/EmployerHiringEvidenceMatrixController';
 import employerHiringFollowUpPlanController from '../controllers/EmployerHiringFollowUpPlanController';
 import employerHiringAssessmentReportController from '../controllers/EmployerHiringAssessmentReportController';
+import employerHiringReportReviewController from '../controllers/EmployerHiringReportReviewController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2775,6 +2776,42 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringAssessmentReportController.getReport
+);
+
+// GET .../interview-session/report/export (22D) — authenticated, exact-tenant
+// PDF download of the existing immutable 22C report. No public/token access.
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/report/export',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringAssessmentReportController.exportReport
+);
+
+// GET/POST .../interview-session/report/reviews (22D) — informational
+// recruiter review workflow, never a hire/reject verdict, never mutates
+// the report or EmployerJobApplication.status.
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/report/reviews',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringReportReviewController.getReviews
+);
+
+router.post(
+  '/:organizationId/applications/:applicationId/interview-session/report/reviews',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  body('reviewNotes').optional().isString().trim().isLength({ max: 2000 }).withMessage('reviewNotes must be at most 2000 characters'),
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringReportReviewController.upsertReview
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

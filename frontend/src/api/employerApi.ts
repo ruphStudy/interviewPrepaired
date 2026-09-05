@@ -1607,6 +1607,36 @@ export interface EmployerHiringAssessmentReportDetail {
 export type CreateEmployerHiringAssessmentReportResponse = ApiEnvelope<{ hiringReport: EmployerHiringAssessmentReportDetail }>;
 export type GetEmployerHiringAssessmentReportResponse = ApiEnvelope<{ hiringReport: EmployerHiringAssessmentReportDetail | null }>;
 
+// ============================================================================
+// Employer Hiring Report Review + Export (Sprint 22D). Informational
+// recruiter review only — never a hire/reject verdict, never exposed to
+// the candidate.
+// ============================================================================
+
+export type HiringReportReviewStatus = 'pending' | 'reviewed';
+
+export interface HiringReportReviewEntry {
+  reviewerMembershipId: string;
+  reviewerName?: string;
+  reviewerEmail?: string;
+  status: HiringReportReviewStatus;
+  reviewNotes?: string;
+  reviewedAt?: string;
+  updatedAt: string;
+}
+
+export interface HiringReportReviewSummary {
+  reportId: string;
+  totalReviewers: number;
+  reviewedCount: number;
+  pendingCount: number;
+  currentUserReview: HiringReportReviewEntry | null;
+  reviews: HiringReportReviewEntry[];
+}
+
+export type GetHiringReportReviewSummaryResponse = ApiEnvelope<{ reviewSummary: HiringReportReviewSummary | null }>;
+export type UpsertHiringReportReviewResponse = ApiEnvelope<{ reviewSummary: HiringReportReviewSummary }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2709,6 +2739,58 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load hiring report');
+    }
+  }
+
+  async getHiringReportReviewSummary(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetHiringReportReviewSummaryResponse> {
+    try {
+      const response = await this.api.get<GetHiringReportReviewSummaryResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/report/reviews`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load review summary');
+    }
+  }
+
+  /** Upserts only the CALLER's own review — never another reviewer's. */
+  async upsertHiringReportReview(
+    organizationId: string,
+    applicationId: string,
+    reviewNotes?: string
+  ): Promise<UpsertHiringReportReviewResponse> {
+    try {
+      const response = await this.api.post<UpsertHiringReportReviewResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/report/reviews`,
+        { reviewNotes }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save review');
+    }
+  }
+
+  /** Downloads the existing immutable 22C report as a PDF and triggers a browser save. */
+  async downloadHiringReportExport(organizationId: string, applicationId: string): Promise<void> {
+    try {
+      const response = await this.api.get(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/report/export`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hiring-report-${applicationId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to download hiring report');
     }
   }
 }
