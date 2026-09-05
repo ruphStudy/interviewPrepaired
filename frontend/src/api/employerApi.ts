@@ -356,6 +356,60 @@ export interface JobDescriptionSkillsRecord {
 export type ExtractJobDescriptionSkillsResponse = ApiEnvelope<{ skills: JobDescriptionSkillsRecord }>;
 export type GetJobDescriptionSkillsResponse = ApiEnvelope<{ skills: JobDescriptionSkillsRecord | null }>;
 
+// ============================================================================
+// Job Description Competency Generation (Sprint 17D) — job/JD-version
+// competency blueprint derived from an already-COMPLETED 17B analysis + 17C
+// skills. NOT an interview-question/assessment blueprint, NOT candidate
+// scoring, and NOT a global/cross-company competency catalog.
+// ============================================================================
+
+export type EmployerJobDescriptionCompetenciesStatus = 'processing' | 'completed' | 'failed';
+export type EmployerJobCompetencyCategory =
+  | 'technical'
+  | 'problem_solving'
+  | 'system_design'
+  | 'communication'
+  | 'leadership'
+  | 'domain'
+  | 'execution'
+  | 'collaboration'
+  | 'other';
+export type EmployerJobCompetencyImportance = 'critical' | 'high' | 'medium' | 'low';
+
+export interface JobDescriptionCompetency {
+  name: string;
+  description: string;
+  category: EmployerJobCompetencyCategory;
+  importance: EmployerJobCompetencyImportance;
+  /** 0-100; the full completed competency set always sums to exactly 100 (backend-normalized). */
+  weight: number;
+  skillNames: string[];
+  evidence: string[];
+  /** Observable evidence an interviewer should look for — NOT interview questions. */
+  interviewSignals: string[];
+  confidence: number;
+}
+
+/** Same shape as JobDescriptionAnalysisUsage (17B/17C) — one AI call per generation. */
+export type JobDescriptionCompetenciesUsage = JobDescriptionAnalysisUsage;
+
+export interface JobDescriptionCompetenciesRecord {
+  id: string;
+  jdSourceId: string;
+  jdVersion: number;
+  analysisId: string;
+  skillsId: string;
+  status: EmployerJobDescriptionCompetenciesStatus;
+  competencies: JobDescriptionCompetency[];
+  aiUsage: JobDescriptionCompetenciesUsage | null;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type GenerateJobDescriptionCompetenciesResponse = ApiEnvelope<{ competencies: JobDescriptionCompetenciesRecord }>;
+export type GetJobDescriptionCompetenciesResponse = ApiEnvelope<{ competencies: JobDescriptionCompetenciesRecord | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -676,6 +730,58 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load job description skills');
+    }
+  }
+
+  // ---- Job Description Competency Generation (Sprint 17D) ----
+
+  /**
+   * Generates competencies from the CURRENT JD source's already-COMPLETED
+   * 17B analysis and 17C skills — no body. Requires both to exist and be
+   * completed (the backend returns 409 otherwise, naming which prerequisite
+   * is missing). If a completed competency blueprint already exists for
+   * that exact source version, the backend returns it without calling AI
+   * again.
+   */
+  async generateCurrentJobDescriptionCompetencies(
+    organizationId: string,
+    jobId: string
+  ): Promise<GenerateJobDescriptionCompetenciesResponse> {
+    try {
+      const response = await this.api.post<GenerateJobDescriptionCompetenciesResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/competencies/generate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate job description competencies');
+    }
+  }
+
+  /** Current JD source's competencies, or `competencies: null` if never generated. */
+  async getCurrentJobDescriptionCompetencies(organizationId: string, jobId: string): Promise<GetJobDescriptionCompetenciesResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionCompetenciesResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/competencies`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description competencies');
+    }
+  }
+
+  /** Competencies for one EXACT historical source version, or `competencies: null` if that version's competencies were never generated. */
+  async getJobDescriptionCompetencies(
+    organizationId: string,
+    jobId: string,
+    jdSourceId: string
+  ): Promise<GetJobDescriptionCompetenciesResponse> {
+    try {
+      const response = await this.api.get<GetJobDescriptionCompetenciesResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/${jdSourceId}/competencies`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description competencies');
     }
   }
 }

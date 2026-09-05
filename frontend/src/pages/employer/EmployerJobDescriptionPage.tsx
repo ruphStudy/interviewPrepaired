@@ -14,8 +14,12 @@ import employerApi, {
   EmployerJobSkillCategory,
   EmployerJobSkillRequirement,
   EmployerJobSkillImportance,
+  JobDescriptionCompetenciesRecord,
+  JobDescriptionCompetency,
+  EmployerJobCompetencyCategory,
+  EmployerJobCompetencyImportance,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Eye, X, FileText, Sparkles, RefreshCw, ListChecks } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Eye, X, FileText, Sparkles, RefreshCw, ListChecks, Target } from 'lucide-react';
 
 const JD_MIN_LENGTH = 50;
 const JD_MAX_LENGTH = 50000;
@@ -231,6 +235,104 @@ const SkillsGroupedView: React.FC<{ skills: JobDescriptionSkill[] }> = ({ skills
   );
 };
 
+const COMPETENCY_CATEGORY_LABELS: Record<EmployerJobCompetencyCategory, string> = {
+  technical: 'Technical',
+  problem_solving: 'Problem Solving',
+  system_design: 'System Design',
+  communication: 'Communication',
+  leadership: 'Leadership',
+  domain: 'Domain',
+  execution: 'Execution',
+  collaboration: 'Collaboration',
+  other: 'Other',
+};
+
+const COMPETENCY_IMPORTANCE_LABELS: Record<EmployerJobCompetencyImportance, string> = {
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+};
+const COMPETENCY_IMPORTANCE_BADGE: Record<EmployerJobCompetencyImportance, string> = {
+  critical: 'badge-warning',
+  high: 'badge-info',
+  medium: 'badge-neutral',
+  low: 'badge-neutral',
+};
+
+/** One competency's category/importance/weight/linked-skills/evidence/interview-signals/confidence — evidence and signals use native <details> disclosures, not a new package. */
+const CompetencyCard: React.FC<{ competency: JobDescriptionCompetency }> = ({ competency }) => (
+  <div className="surface-muted p-4">
+    <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+      <div>
+        <p className="text-sm font-semibold text-mentor-text">{competency.name}</p>
+        <p className="text-xs text-mentor-text-muted">{COMPETENCY_CATEGORY_LABELS[competency.category]}</p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="text-lg font-bold text-primary-600">{competency.weight}%</p>
+        <p className="text-[11px] text-mentor-text-muted">weight</p>
+      </div>
+    </div>
+    <p className="text-sm text-mentor-text-secondary mb-3">{competency.description}</p>
+    <div className="flex flex-wrap items-center gap-1.5 mb-3">
+      <span className={`badge ${COMPETENCY_IMPORTANCE_BADGE[competency.importance]}`}>
+        {COMPETENCY_IMPORTANCE_LABELS[competency.importance]} importance
+      </span>
+      <span className="text-xs text-mentor-text-muted">{Math.round(competency.confidence * 100)}% confidence</span>
+    </div>
+    {competency.skillNames.length > 0 && (
+      <div className="mb-3">
+        <p className="text-xs font-medium text-mentor-text-muted mb-1">Linked Skills</p>
+        <div className="flex flex-wrap gap-1.5">
+          {competency.skillNames.map((name) => (
+            <span key={name} className="badge badge-info">
+              {name}
+            </span>
+          ))}
+        </div>
+      </div>
+    )}
+    {competency.evidence.length > 0 && (
+      <details className="text-xs mb-1.5">
+        <summary className="cursor-pointer text-primary-600">Evidence ({competency.evidence.length})</summary>
+        <ul className="list-disc list-inside mt-1.5 space-y-1 text-mentor-text-secondary">
+          {competency.evidence.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </details>
+    )}
+    {competency.interviewSignals.length > 0 && (
+      <details className="text-xs">
+        <summary className="cursor-pointer text-primary-600">Interview Signals ({competency.interviewSignals.length})</summary>
+        <ul className="list-disc list-inside mt-1.5 space-y-1 text-mentor-text-secondary">
+          {competency.interviewSignals.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </details>
+    )}
+  </div>
+);
+
+const CompetenciesView: React.FC<{ competencies: JobDescriptionCompetency[] }> = ({ competencies }) => {
+  if (competencies.length === 0) {
+    return <p className="text-sm text-mentor-text-secondary text-center py-6">No competencies were identified.</p>;
+  }
+  const totalWeight = competencies.reduce((sum, c) => sum + c.weight, 0);
+  const sorted = [...competencies].sort((a, b) => b.weight - a.weight);
+  return (
+    <div>
+      <p className="text-xs font-medium text-mentor-text-muted mb-3">Total weight: {totalWeight}%</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {sorted.map((competency, i) => (
+          <CompetencyCard key={i} competency={competency} />
+        ))}
+      </div>
+    </div>
+  );
+};
+
 /**
  * Job Description intake/editor (17A) — raw text only, no AI parsing/skill
  * extraction/competency generation. Saving ALWAYS creates the next version;
@@ -285,6 +387,15 @@ const EmployerJobDescriptionPage: React.FC = () => {
 
   const [viewingSkills, setViewingSkills] = useState<JobDescriptionSkillsRecord | null>(null);
   const [viewingSkillsLoading, setViewingSkillsLoading] = useState(false);
+
+  const [currentCompetencies, setCurrentCompetencies] = useState<JobDescriptionCompetenciesRecord | null>(null);
+  const [competenciesLoading, setCompetenciesLoading] = useState(true);
+  const [competenciesError, setCompetenciesError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+
+  const [viewingCompetencies, setViewingCompetencies] = useState<JobDescriptionCompetenciesRecord | null>(null);
+  const [viewingCompetenciesLoading, setViewingCompetenciesLoading] = useState(false);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -358,14 +469,38 @@ const EmployerJobDescriptionPage: React.FC = () => {
     }
   }, [organizationId, jobId]);
 
+  const fetchCurrentCompetencies = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setCompetenciesLoading(true);
+    setCompetenciesError(null);
+    try {
+      const response = await employerApi.getCurrentJobDescriptionCompetencies(organizationId, jobId);
+      setCurrentCompetencies(response.data.competencies);
+    } catch (err: any) {
+      setCompetenciesError(err.message || 'Failed to load job description competencies');
+    } finally {
+      setCompetenciesLoading(false);
+    }
+  }, [organizationId, jobId]);
+
   useEffect(() => {
     if (!isSyncing && activeOrganization?.type === 'company' && canView) {
       fetchJob();
       fetchJobDescription();
       fetchCurrentAnalysis();
       fetchCurrentSkills();
+      fetchCurrentCompetencies();
     }
-  }, [isSyncing, activeOrganization, canView, fetchJob, fetchJobDescription, fetchCurrentAnalysis, fetchCurrentSkills]);
+  }, [
+    isSyncing,
+    activeOrganization,
+    canView,
+    fetchJob,
+    fetchJobDescription,
+    fetchCurrentAnalysis,
+    fetchCurrentSkills,
+    fetchCurrentCompetencies,
+  ]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -388,14 +523,16 @@ const EmployerJobDescriptionPage: React.FC = () => {
       setRawText(response.data.source.rawText);
       setSourceType('pasted');
       setViewingVersion(null);
-      // Version awareness: a brand-new version has no analysis or skills of
-      // its own — never carried forward from the previous version. The old
-      // version's analysis/skills remain intact and viewable in their own
-      // history entry.
+      // Version awareness: a brand-new version has no analysis, skills, or
+      // competencies of its own — never carried forward from the previous
+      // version. The old version's analysis/skills/competencies remain
+      // intact and viewable in their own history entry.
       setCurrentAnalysis(null);
       setAnalyzeError(null);
       setCurrentSkills(null);
       setExtractError(null);
+      setCurrentCompetencies(null);
+      setGenerateError(null);
       setSaveSuccess(`Saved as version ${response.data.source.version}.`);
       setTimeout(() => setSaveSuccess(null), 3000);
       const jdResponse = await employerApi.getJobDescriptionSources(organizationId, jobId);
@@ -413,6 +550,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
     setViewingLoading(true);
     setViewingAnalysis(null);
     setViewingSkills(null);
+    setViewingCompetencies(null);
     try {
       const response = await employerApi.getJobDescriptionSource(organizationId, jobId, source.id);
       setViewingVersion(response.data.source);
@@ -423,7 +561,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
     }
     setViewingLoading(false);
 
-    // Historical analysis/skills are read-only display only — never a new parse/extract trigger.
+    // Historical analysis/skills/competencies are read-only display only — never a new parse/extract/generate trigger.
     setViewingAnalysisLoading(true);
     try {
       const analysisResponse = await employerApi.getJobDescriptionAnalysis(organizationId, jobId, source.id);
@@ -443,12 +581,23 @@ const EmployerJobDescriptionPage: React.FC = () => {
     } finally {
       setViewingSkillsLoading(false);
     }
+
+    setViewingCompetenciesLoading(true);
+    try {
+      const competenciesResponse = await employerApi.getJobDescriptionCompetencies(organizationId, jobId, source.id);
+      setViewingCompetencies(competenciesResponse.data.competencies);
+    } catch {
+      setViewingCompetencies(null);
+    } finally {
+      setViewingCompetenciesLoading(false);
+    }
   };
 
   const handleCloseViewingVersion = () => {
     setViewingVersion(null);
     setViewingAnalysis(null);
     setViewingSkills(null);
+    setViewingCompetencies(null);
   };
 
   const handleAnalyze = async () => {
@@ -481,6 +630,21 @@ const EmployerJobDescriptionPage: React.FC = () => {
       fetchCurrentSkills();
     } finally {
       setExtracting(false);
+    }
+  };
+
+  const handleGenerateCompetencies = async () => {
+    if (!organizationId || !jobId) return;
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const response = await employerApi.generateCurrentJobDescriptionCompetencies(organizationId, jobId);
+      setCurrentCompetencies(response.data.competencies);
+    } catch (err: any) {
+      setGenerateError(err.message || 'Failed to generate job description competencies');
+      fetchCurrentCompetencies();
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -674,6 +838,32 @@ const EmployerJobDescriptionPage: React.FC = () => {
                         <p className="text-sm text-mentor-text-secondary">Skill extraction is in progress for this version.</p>
                       ) : (
                         <p className="text-sm text-mentor-text-secondary">Not extracted yet.</p>
+                      )}
+                    </div>
+
+                    <div className="mt-6 pt-6 border-t border-mentor-border">
+                      <h3 className="section-title flex items-center gap-2 mb-3">
+                        <Target size={16} className="text-mentor-text-muted" />
+                        Competencies
+                      </h3>
+                      {viewingCompetenciesLoading ? (
+                        <div className="py-4 text-center">
+                          <Loader2 className="w-5 h-5 text-primary-600 animate-spin mx-auto" />
+                        </div>
+                      ) : viewingCompetencies?.status === 'completed' ? (
+                        <>
+                          <CompetenciesView competencies={viewingCompetencies.competencies} />
+                          {viewingCompetencies.aiUsage && <UsageLine usage={viewingCompetencies.aiUsage} />}
+                        </>
+                      ) : viewingCompetencies?.status === 'failed' ? (
+                        <p className="text-sm text-mentor-error">
+                          Competency generation failed for this version.
+                          {viewingCompetencies.errorMessage ? ` ${viewingCompetencies.errorMessage}` : ''}
+                        </p>
+                      ) : viewingCompetencies?.status === 'processing' ? (
+                        <p className="text-sm text-mentor-text-secondary">Competency generation is in progress for this version.</p>
+                      ) : (
+                        <p className="text-sm text-mentor-text-secondary">Not generated yet.</p>
                       )}
                     </div>
                   </div>
@@ -870,6 +1060,82 @@ const EmployerJobDescriptionPage: React.FC = () => {
                       <>
                         <SkillsGroupedView skills={currentSkills.skills} />
                         {currentSkills.aiUsage && <UsageLine usage={currentSkills.aiUsage} />}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {!viewingVersion && current && (
+                  <div className="card mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="section-title flex items-center gap-2 mb-0">
+                        <Target size={18} className="text-mentor-text-muted" />
+                        Competencies
+                      </h2>
+                      {!competenciesLoading &&
+                        !competenciesError &&
+                        currentAnalysis?.status === 'completed' &&
+                        currentSkills?.status === 'completed' &&
+                        currentCompetencies?.status === 'processing' && (
+                          <button onClick={fetchCurrentCompetencies} className="btn btn-secondary px-3 py-1.5 text-xs">
+                            <RefreshCw size={14} />
+                            Check Status
+                          </button>
+                        )}
+                      {!competenciesLoading &&
+                        !competenciesError &&
+                        currentAnalysis?.status === 'completed' &&
+                        currentSkills?.status === 'completed' &&
+                        currentCompetencies?.status !== 'processing' &&
+                        currentCompetencies?.status !== 'completed' &&
+                        canManage && (
+                          <button onClick={handleGenerateCompetencies} disabled={generating} className="btn btn-primary">
+                            {generating
+                              ? 'Generating...'
+                              : currentCompetencies?.status === 'failed'
+                              ? 'Retry Generation'
+                              : 'Generate Competencies'}
+                          </button>
+                        )}
+                    </div>
+
+                    {generateError && (
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{generateError}</p>
+                      </div>
+                    )}
+
+                    {competenciesLoading ? (
+                      <div className="py-6 text-center">
+                        <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                      </div>
+                    ) : competenciesError ? (
+                      <div className="py-6 text-center">
+                        <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                        <p className="text-sm text-mentor-text-secondary mb-4">{competenciesError}</p>
+                        <button onClick={fetchCurrentCompetencies} className="btn btn-primary">
+                          Try Again
+                        </button>
+                      </div>
+                    ) : currentAnalysis?.status !== 'completed' ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">Analyze the job description first.</p>
+                    ) : currentSkills?.status !== 'completed' ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">Extract skills first.</p>
+                    ) : !currentCompetencies ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">Not generated yet.</p>
+                    ) : currentCompetencies.status === 'processing' ? (
+                      <p className="text-sm text-mentor-text-secondary text-center py-6">
+                        Competency generation is in progress for this job description.
+                      </p>
+                    ) : currentCompetencies.status === 'failed' ? (
+                      <p className="text-sm text-mentor-error text-center py-6">
+                        Competency generation failed.{currentCompetencies.errorMessage ? ` ${currentCompetencies.errorMessage}` : ''}
+                      </p>
+                    ) : (
+                      <>
+                        <CompetenciesView competencies={currentCompetencies.competencies} />
+                        {currentCompetencies.aiUsage && <UsageLine usage={currentCompetencies.aiUsage} />}
                       </>
                     )}
                   </div>
