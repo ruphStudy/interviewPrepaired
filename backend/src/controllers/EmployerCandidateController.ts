@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { OrganizationAuthRequest } from '../middleware/organizationAccess';
 import { employerCandidateService } from '../services/EmployerCandidateService';
+import { employerCandidateSourceAttributionService } from '../services/EmployerCandidateSourceAttributionService';
 import { EmployerCandidateSource, EmployerCandidateStatus } from '../constants/employerCandidate';
 import { ApiError } from '../utils/ApiError';
 import { successResponse } from '../utils/ApiResponse';
@@ -83,6 +84,7 @@ export class EmployerCandidateController {
       source,
       notes,
       tags,
+      sourceDetails,
     } = req.body;
 
     const candidate = await employerCandidateService.createCandidate(
@@ -111,6 +113,36 @@ export class EmployerCandidateController {
         tags,
       }
     );
+
+    // Optional, best-effort: append ONE source-attribution record for the
+    // same source the candidate was just created with (18E). Never blocks
+    // or rolls back candidate creation — a failure here is logged and
+    // swallowed, since the candidate itself was already created
+    // successfully and must never be deleted because of this.
+    if (sourceDetails && typeof sourceDetails === 'object' && !Array.isArray(sourceDetails)) {
+      try {
+        await employerCandidateSourceAttributionService.createAttribution(
+          context.organizationId,
+          context.role,
+          context.member._id.toString(),
+          candidate.id as string,
+          {
+            source: candidate.source as EmployerCandidateSource,
+            sourceName: sourceDetails.sourceName,
+            externalReferenceId: sourceDetails.externalReferenceId,
+            referrerName: sourceDetails.referrerName,
+            referrerEmail: sourceDetails.referrerEmail,
+            agencyName: sourceDetails.agencyName,
+            jobPortalName: sourceDetails.jobPortalName,
+            campaignName: sourceDetails.campaignName,
+            sourceUrl: sourceDetails.sourceUrl,
+          }
+        );
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error(`[EmployerCandidateController] Candidate ${candidate.id} created but its source attribution failed to save`, error);
+      }
+    }
 
     res.status(201).json(successResponse('Candidate created successfully', { candidate }));
   });

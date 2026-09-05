@@ -565,6 +565,22 @@ export interface EmployerCandidatePayload {
   tags?: string[];
 }
 
+/** Optional, create-only (18E) — if supplied, the backend appends ONE source-attribution record for the same `source` the candidate is created with. Never accepted on update. */
+export interface CandidateSourceDetails {
+  sourceName?: string;
+  externalReferenceId?: string;
+  referrerName?: string;
+  referrerEmail?: string;
+  agencyName?: string;
+  jobPortalName?: string;
+  campaignName?: string;
+  sourceUrl?: string;
+}
+
+export interface EmployerCandidateCreatePayload extends EmployerCandidatePayload {
+  sourceDetails?: CandidateSourceDetails;
+}
+
 export type ListCandidatesResponse = ApiEnvelope<{ candidates: EmployerCandidate[]; pagination: Pagination }>;
 export type GetCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
 export type CreateCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
@@ -795,6 +811,50 @@ export type GetApplicationResponse = ApiEnvelope<{ application: EmployerJobAppli
 export type CreateApplicationResponse = ApiEnvelope<{ application: EmployerJobApplication }>;
 export type UpdateApplicationResponse = ApiEnvelope<{ application: EmployerJobApplication }>;
 export type UpdateApplicationStatusResponse = ApiEnvelope<{ application: EmployerJobApplication }>;
+
+// ============================================================================
+// Employer Candidate Source Attribution (Sprint 18E) — historical
+// provenance evidence for how a candidate entered the company's talent
+// pool. NEVER a replacement for EmployerCandidate.source (the candidate's
+// own current PRIMARY source) and NEVER the same thing as
+// EmployerJobApplication.source (which describes one specific job
+// application). Append-only — there is no update/delete endpoint.
+// ============================================================================
+
+export interface CandidateSourceAttribution {
+  id: string;
+  candidateId: string;
+  source: EmployerCandidateSource;
+  sourceName?: string;
+  externalReferenceId?: string;
+  referrerName?: string;
+  referrerEmail?: string;
+  agencyName?: string;
+  jobPortalName?: string;
+  campaignName?: string;
+  sourceUrl?: string;
+  notes?: string;
+  recordedByMembershipId: string;
+  createdAt: string;
+}
+
+/** Never includes organizationId/candidateId/recordedByMembershipId/createdAt — those aren't part of this form at all. */
+export interface CandidateSourceAttributionCreatePayload {
+  source: EmployerCandidateSource;
+  sourceName?: string;
+  externalReferenceId?: string;
+  referrerName?: string;
+  referrerEmail?: string;
+  agencyName?: string;
+  jobPortalName?: string;
+  campaignName?: string;
+  sourceUrl?: string;
+  notes?: string;
+}
+
+export type ListCandidateSourceAttributionsResponse = ApiEnvelope<{ attributions: CandidateSourceAttribution[] }>;
+export type GetCandidateSourceAttributionResponse = ApiEnvelope<{ attribution: CandidateSourceAttribution }>;
+export type CreateCandidateSourceAttributionResponse = ApiEnvelope<{ attribution: CandidateSourceAttribution }>;
 
 class EmployerApiService {
   private api: AxiosInstance;
@@ -1245,8 +1305,8 @@ class EmployerApiService {
     }
   }
 
-  /** `status` always starts at active server-side — never accepted here. */
-  async createCandidate(organizationId: string, payload: EmployerCandidatePayload): Promise<CreateCandidateResponse> {
+  /** `status` always starts at active server-side — never accepted here. `payload.sourceDetails` is optional and, if supplied, appends one source-attribution record (18E) alongside the new candidate. */
+  async createCandidate(organizationId: string, payload: EmployerCandidateCreatePayload): Promise<CreateCandidateResponse> {
     try {
       const response = await this.api.post<CreateCandidateResponse>(`/organizations/${organizationId}/candidates`, payload);
       return response.data;
@@ -1453,6 +1513,51 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to update application status');
+    }
+  }
+
+  // ---- Employer Candidate Source Attribution (Sprint 18E) ----
+
+  async listCandidateSourceAttributions(organizationId: string, candidateId: string): Promise<ListCandidateSourceAttributionsResponse> {
+    try {
+      const response = await this.api.get<ListCandidateSourceAttributionsResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/source-attributions`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load source attributions');
+    }
+  }
+
+  async getCandidateSourceAttribution(
+    organizationId: string,
+    candidateId: string,
+    attributionId: string
+  ): Promise<GetCandidateSourceAttributionResponse> {
+    try {
+      const response = await this.api.get<GetCandidateSourceAttributionResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/source-attributions/${attributionId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load source attribution');
+    }
+  }
+
+  /** Append-only — there is no update/delete method, matching the backend's own contract. Never changes the candidate's own primary `source`. */
+  async createCandidateSourceAttribution(
+    organizationId: string,
+    candidateId: string,
+    payload: CandidateSourceAttributionCreatePayload
+  ): Promise<CreateCandidateSourceAttributionResponse> {
+    try {
+      const response = await this.api.post<CreateCandidateSourceAttributionResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/source-attributions`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to record source attribution');
     }
   }
 }

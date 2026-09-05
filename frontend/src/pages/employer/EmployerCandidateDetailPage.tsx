@@ -5,6 +5,7 @@ import { useOrganization } from '../../contexts/OrganizationContext';
 import employerApi, {
   EmployerCandidate,
   EmployerCandidateStatus,
+  EmployerCandidateSource,
   EMPLOYER_CANDIDATE_SOURCES,
   EMPLOYER_CANDIDATE_STATUS_TRANSITIONS,
   CandidateResume,
@@ -13,6 +14,7 @@ import employerApi, {
   CandidateResumeAnalysis,
   CandidateResumeProfile,
   EmployerJobApplication,
+  CandidateSourceAttribution,
 } from '../../api/employerApi';
 import { EMPTY_CANDIDATE_FORM, CandidateFormState, candidateFormToPayload, candidateToFormState } from './candidateFormUtils';
 import {
@@ -28,6 +30,9 @@ import {
   ChevronDown,
   ChevronUp,
   Briefcase,
+  Tag,
+  Plus,
+  X,
 } from 'lucide-react';
 
 const CANDIDATE_APPLICATIONS_PAGE_LIMIT = 20;
@@ -364,6 +369,24 @@ const EmployerCandidateDetailPage: React.FC = () => {
   const [applicationsLoading, setApplicationsLoading] = useState(true);
   const [applicationsError, setApplicationsError] = useState<string | null>(null);
 
+  const [sourceAttributions, setSourceAttributions] = useState<CandidateSourceAttribution[]>([]);
+  const [sourceAttributionsLoading, setSourceAttributionsLoading] = useState(true);
+  const [sourceAttributionsError, setSourceAttributionsError] = useState<string | null>(null);
+
+  const [showAddAttribution, setShowAddAttribution] = useState(false);
+  const [attrSource, setAttrSource] = useState<EmployerCandidateSource | ''>('');
+  const [attrSourceName, setAttrSourceName] = useState('');
+  const [attrExternalReferenceId, setAttrExternalReferenceId] = useState('');
+  const [attrReferrerName, setAttrReferrerName] = useState('');
+  const [attrReferrerEmail, setAttrReferrerEmail] = useState('');
+  const [attrAgencyName, setAttrAgencyName] = useState('');
+  const [attrJobPortalName, setAttrJobPortalName] = useState('');
+  const [attrCampaignName, setAttrCampaignName] = useState('');
+  const [attrSourceUrl, setAttrSourceUrl] = useState('');
+  const [attrNotes, setAttrNotes] = useState('');
+  const [addAttributionSubmitting, setAddAttributionSubmitting] = useState(false);
+  const [addAttributionError, setAddAttributionError] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -571,6 +594,72 @@ const EmployerCandidateDetailPage: React.FC = () => {
   }, [isSyncing, activeOrganization, canView, fetchApplications]);
 
   const applicationsTotalPages = Math.max(1, Math.ceil(applicationsTotal / CANDIDATE_APPLICATIONS_PAGE_LIMIT));
+
+  const fetchSourceAttributions = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setSourceAttributionsLoading(true);
+    setSourceAttributionsError(null);
+    try {
+      const response = await employerApi.listCandidateSourceAttributions(organizationId, candidateId);
+      setSourceAttributions(response.data.attributions);
+    } catch (err: any) {
+      setSourceAttributionsError(err.message || 'Failed to load source attribution history');
+    } finally {
+      setSourceAttributionsLoading(false);
+    }
+  }, [organizationId, candidateId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchSourceAttributions();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchSourceAttributions]);
+
+  const handleOpenAddAttribution = () => {
+    setShowAddAttribution(true);
+    setAttrSource('');
+    setAttrSourceName('');
+    setAttrExternalReferenceId('');
+    setAttrReferrerName('');
+    setAttrReferrerEmail('');
+    setAttrAgencyName('');
+    setAttrJobPortalName('');
+    setAttrCampaignName('');
+    setAttrSourceUrl('');
+    setAttrNotes('');
+    setAddAttributionError(null);
+  };
+
+  const handleAddAttribution = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !candidateId) return;
+    if (!attrSource) {
+      setAddAttributionError('Source is required');
+      return;
+    }
+    setAddAttributionSubmitting(true);
+    setAddAttributionError(null);
+    try {
+      await employerApi.createCandidateSourceAttribution(organizationId, candidateId, {
+        source: attrSource,
+        sourceName: attrSourceName.trim() || undefined,
+        externalReferenceId: attrExternalReferenceId.trim() || undefined,
+        referrerName: attrReferrerName.trim() || undefined,
+        referrerEmail: attrReferrerEmail.trim() || undefined,
+        agencyName: attrAgencyName.trim() || undefined,
+        jobPortalName: attrJobPortalName.trim() || undefined,
+        campaignName: attrCampaignName.trim() || undefined,
+        sourceUrl: attrSourceUrl.trim() || undefined,
+        notes: attrNotes.trim() || undefined,
+      });
+      setShowAddAttribution(false);
+      await fetchSourceAttributions();
+    } catch (err: any) {
+      setAddAttributionError(err.message || 'Failed to record source attribution');
+    } finally {
+      setAddAttributionSubmitting(false);
+    }
+  };
 
   const field = <K extends keyof CandidateFormState>(key: K, value: CandidateFormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -1102,6 +1191,266 @@ const EmployerCandidateDetailPage: React.FC = () => {
                     <dd className="text-sm text-mentor-text">{formatDate(candidate.updatedAt)}</dd>
                   </div>
                 </dl>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="section-title flex items-center gap-2 mb-0">
+                  <Tag size={18} className="text-mentor-text-muted" />
+                  Source & Attribution
+                </h2>
+                {canManage && candidate.status !== 'archived' && !showAddAttribution && (
+                  <button onClick={handleOpenAddAttribution} className="btn btn-secondary">
+                    <Plus size={16} />
+                    Add Source Attribution
+                  </button>
+                )}
+              </div>
+
+              <div className="surface-muted p-3 mb-4">
+                <p className="text-xs text-mentor-text-muted mb-1">Primary Source</p>
+                <p className="text-sm font-medium text-mentor-text">{sourceLabel(candidate.source)}</p>
+                <p className="text-xs text-mentor-text-muted mt-1">
+                  This is the candidate's current primary source. Changing it (via Edit above) never rewrites the history below.
+                </p>
+              </div>
+
+              {activeOrganization.status === 'archived' && (
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  This organization is archived — adding a source attribution is disabled.
+                </p>
+              )}
+              {activeOrganization.status !== 'archived' && candidate.status === 'archived' && (
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  This candidate is archived — adding a source attribution is disabled.
+                </p>
+              )}
+
+              {showAddAttribution && (
+                <form onSubmit={handleAddAttribution} className="surface-muted p-4 mb-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="label mb-0">Add Source Attribution</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddAttribution(false)}
+                      className="text-mentor-text-muted hover:text-mentor-text"
+                      aria-label="Close"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  {addAttributionError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{addAttributionError}</p>
+                    </div>
+                  )}
+                  <div>
+                    <label className="label">Source</label>
+                    <select
+                      value={attrSource}
+                      onChange={(e) => setAttrSource(e.target.value as EmployerCandidateSource)}
+                      className="input"
+                    >
+                      <option value="">Select</option>
+                      {EMPLOYER_CANDIDATE_SOURCES.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {attrSource === 'referral' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Referrer Name</label>
+                        <input
+                          type="text"
+                          value={attrReferrerName}
+                          onChange={(e) => setAttrReferrerName(e.target.value)}
+                          className="input"
+                          maxLength={200}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Referrer Email</label>
+                        <input
+                          type="email"
+                          value={attrReferrerEmail}
+                          onChange={(e) => setAttrReferrerEmail(e.target.value)}
+                          className="input"
+                          maxLength={254}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {attrSource === 'agency' && (
+                    <div>
+                      <label className="label">Agency Name</label>
+                      <input
+                        type="text"
+                        value={attrAgencyName}
+                        onChange={(e) => setAttrAgencyName(e.target.value)}
+                        className="input"
+                        maxLength={200}
+                      />
+                    </div>
+                  )}
+
+                  {attrSource === 'job_portal' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Job Portal Name</label>
+                        <input
+                          type="text"
+                          value={attrJobPortalName}
+                          onChange={(e) => setAttrJobPortalName(e.target.value)}
+                          className="input"
+                          maxLength={200}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">External Reference ID</label>
+                        <input
+                          type="text"
+                          value={attrExternalReferenceId}
+                          onChange={(e) => setAttrExternalReferenceId(e.target.value)}
+                          className="input"
+                          maxLength={150}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {attrSource === 'careers' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Campaign Name</label>
+                        <input
+                          type="text"
+                          value={attrCampaignName}
+                          onChange={(e) => setAttrCampaignName(e.target.value)}
+                          className="input"
+                          maxLength={200}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Source URL</label>
+                        <input
+                          type="url"
+                          value={attrSourceUrl}
+                          onChange={(e) => setAttrSourceUrl(e.target.value)}
+                          className="input"
+                          maxLength={300}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {attrSource === 'import' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Source Name</label>
+                        <input
+                          type="text"
+                          value={attrSourceName}
+                          onChange={(e) => setAttrSourceName(e.target.value)}
+                          className="input"
+                          maxLength={200}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">External Reference ID</label>
+                        <input
+                          type="text"
+                          value={attrExternalReferenceId}
+                          onChange={(e) => setAttrExternalReferenceId(e.target.value)}
+                          className="input"
+                          maxLength={150}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {(attrSource === 'manual' || attrSource === 'other') && (
+                    <div>
+                      <label className="label">Source Name (optional)</label>
+                      <input
+                        type="text"
+                        value={attrSourceName}
+                        onChange={(e) => setAttrSourceName(e.target.value)}
+                        className="input"
+                        maxLength={200}
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="label">Notes</label>
+                    <textarea value={attrNotes} onChange={(e) => setAttrNotes(e.target.value)} className="input" rows={2} maxLength={1000} />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button type="submit" disabled={addAttributionSubmitting} className="btn btn-primary">
+                      {addAttributionSubmitting ? 'Saving...' : 'Save Attribution'}
+                    </button>
+                    <button type="button" onClick={() => setShowAddAttribution(false)} className="btn btn-secondary">
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <p className="label mb-2">Source History</p>
+              {sourceAttributionsLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : sourceAttributionsError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{sourceAttributionsError}</p>
+                  <button onClick={fetchSourceAttributions} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : sourceAttributions.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary py-2">No additional source attribution recorded.</p>
+              ) : (
+                <div className="divide-y divide-mentor-border">
+                  {sourceAttributions.map((attr) => {
+                    const detailParts = [attr.sourceName, attr.referrerName, attr.agencyName, attr.jobPortalName, attr.campaignName].filter(
+                      Boolean
+                    );
+                    return (
+                      <div key={attr.id} className="py-3">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="badge badge-neutral">{sourceLabel(attr.source)}</span>
+                          {detailParts.length > 0 && <span className="text-sm text-mentor-text">{detailParts.join(' · ')}</span>}
+                        </div>
+                        {attr.referrerEmail && <p className="text-xs text-mentor-text-muted">{attr.referrerEmail}</p>}
+                        {attr.externalReferenceId && <p className="text-xs text-mentor-text-muted">Ref: {attr.externalReferenceId}</p>}
+                        {attr.sourceUrl && (
+                          <a
+                            href={attr.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary-600 hover:underline break-all"
+                          >
+                            {attr.sourceUrl}
+                          </a>
+                        )}
+                        {attr.notes && <p className="text-sm text-mentor-text-secondary mt-1">{attr.notes}</p>}
+                        <p className="text-xs text-mentor-text-muted mt-1">
+                          {formatDate(attr.createdAt)} &middot; recorded by membership {attr.recordedByMembershipId}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
 

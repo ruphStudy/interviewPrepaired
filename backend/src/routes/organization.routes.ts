@@ -30,6 +30,7 @@ import employerJobDescriptionSkillsController from '../controllers/EmployerJobDe
 import employerJobDescriptionCompetencyController from '../controllers/EmployerJobDescriptionCompetencyController';
 import employerJobIntelligenceSnapshotController from '../controllers/EmployerJobIntelligenceSnapshotController';
 import employerCandidateController from '../controllers/EmployerCandidateController';
+import employerCandidateSourceAttributionController from '../controllers/EmployerCandidateSourceAttributionController';
 import employerCandidateResumeController from '../controllers/EmployerCandidateResumeController';
 import employerCandidateResumeAnalysisController from '../controllers/EmployerCandidateResumeAnalysisController';
 import employerJobApplicationController from '../controllers/EmployerJobApplicationController';
@@ -1846,6 +1847,24 @@ const createCandidateValidation = [
     .withMessage('lastName must be between 1 and 100 characters'),
   body('email').notEmpty().withMessage('email is required').isEmail().withMessage('A valid email is required').isLength({ max: 254 }),
   ...candidateOptionalFieldValidators,
+  // Optional (18E) — if supplied, one source-attribution record is appended
+  // for the same source the candidate is created with. Best-effort only:
+  // a failure here never blocks or rolls back candidate creation.
+  body('sourceDetails').optional().isObject().withMessage('sourceDetails must be an object'),
+  body('sourceDetails.sourceName').optional().isString().trim().isLength({ max: 200 }),
+  body('sourceDetails.externalReferenceId').optional().isString().trim().isLength({ max: 150 }),
+  body('sourceDetails.referrerName').optional().isString().trim().isLength({ max: 200 }),
+  body('sourceDetails.referrerEmail').optional().isEmail().withMessage('sourceDetails.referrerEmail must be a valid email'),
+  body('sourceDetails.agencyName').optional().isString().trim().isLength({ max: 200 }),
+  body('sourceDetails.jobPortalName').optional().isString().trim().isLength({ max: 200 }),
+  body('sourceDetails.campaignName').optional().isString().trim().isLength({ max: 200 }),
+  body('sourceDetails.sourceUrl')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ max: 300 })
+    .isURL()
+    .withMessage('sourceDetails.sourceUrl must be a valid URL'),
 ];
 
 const updateCandidateValidation = [
@@ -1936,6 +1955,70 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerCandidateController.updateCandidateStatus
+);
+
+// ============================================================================
+// Employer Candidate Source Attribution (18E) — historical provenance
+// evidence only (e.g. "referred by X", "sourced via agency Y"), NEVER a
+// replacement for `EmployerCandidate.source` (the candidate's own PRIMARY
+// source, unchanged by this section) and never a rewrite of application
+// source (EmployerJobApplication.source describes a single job
+// application, not the talent-pool-wide provenance tracked here).
+// Append-only — no update/delete endpoint exists. Reads use
+// ORGANIZATION_VIEW (readable even on an archived organization/candidate);
+// the create mutation uses INTERVIEWS_MANAGE and is blocked on an archived
+// organization or candidate.
+// ============================================================================
+
+const candidateSourceAttributionIdValidation = [param('attributionId').isMongoId().withMessage('Invalid source attribution ID')];
+
+const createSourceAttributionValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('candidateId').not().exists().withMessage('candidateId cannot be set'),
+  body('recordedByMembershipId').not().exists().withMessage('recordedByMembershipId cannot be set'),
+  body('createdAt').not().exists().withMessage('createdAt cannot be set'),
+  body('source').notEmpty().withMessage('source is required').isIn(Object.values(EmployerCandidateSource)).withMessage('Invalid source'),
+  body('sourceName').optional().isString().trim().isLength({ max: 200 }),
+  body('externalReferenceId').optional().isString().trim().isLength({ max: 150 }),
+  body('referrerName').optional().isString().trim().isLength({ max: 200 }),
+  body('referrerEmail').optional().isEmail().withMessage('referrerEmail must be a valid email'),
+  body('agencyName').optional().isString().trim().isLength({ max: 200 }),
+  body('jobPortalName').optional().isString().trim().isLength({ max: 200 }),
+  body('campaignName').optional().isString().trim().isLength({ max: 200 }),
+  body('sourceUrl').optional().isString().trim().isLength({ max: 300 }).isURL().withMessage('sourceUrl must be a valid URL'),
+  body('notes').optional().isString().trim().isLength({ max: 1000 }),
+];
+
+router.get(
+  '/:organizationId/candidates/:candidateId/source-attributions',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateSourceAttributionController.getAttributions
+);
+
+router.post(
+  '/:organizationId/candidates/:candidateId/source-attributions',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  ...createSourceAttributionValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateSourceAttributionController.createAttribution
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId/source-attributions/:attributionId',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  ...candidateSourceAttributionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateSourceAttributionController.getAttribution
 );
 
 // ============================================================================
