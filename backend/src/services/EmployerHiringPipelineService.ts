@@ -149,10 +149,11 @@ export class EmployerHiringPipelineService {
   async moveApplicationStage(
     organizationId: string,
     actingRole: OrganizationMemberRole,
+    actingMembershipId: string,
     applicationId: string,
     targetStatus: EmployerJobApplicationStatus
   ): Promise<Record<string, unknown>> {
-    return employerJobApplicationService.updateApplicationStatus(organizationId, actingRole, applicationId, targetStatus);
+    return employerJobApplicationService.updateApplicationStatus(organizationId, actingRole, actingMembershipId, applicationId, targetStatus);
   }
 
   /** Deterministic column order: finalized candidates first, then overallScore DESC (finalized only), then appliedAt ASC, then applicationId — never called "ranking". */

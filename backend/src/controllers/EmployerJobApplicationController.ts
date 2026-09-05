@@ -109,6 +109,7 @@ export class EmployerJobApplicationController {
     const application = await employerJobApplicationService.updateApplicationStatus(
       context.organizationId,
       context.role,
+      context.member._id.toString(),
       applicationId,
       status
     );

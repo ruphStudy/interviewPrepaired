@@ -198,6 +198,7 @@ export class EmployerCandidateShortlistService {
       await employerJobApplicationService.updateApplicationStatus(
         organizationId,
         actingRole,
+        actorMembershipId,
         applicationId,
         EmployerJobApplicationStatus.SHORTLISTED
       );

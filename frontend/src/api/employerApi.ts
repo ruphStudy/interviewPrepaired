@@ -1831,6 +1831,37 @@ export type GetHiringAssessmentFinalizationResponse = ApiEnvelope<{
 }>;
 export type CreateHiringAssessmentFinalizationResponse = ApiEnvelope<{ finalization: EmployerHiringAssessmentFinalization }>;
 
+// ============================================================================
+// Application Activity Timeline (Sprint 23C) — read-only audit/activity
+// history. Never decides pipeline stage, never computes comparison
+// position, never alters lifecycle. Distinct from the 23B pipeline board.
+// ============================================================================
+
+export type ApplicationActivityType = 'application_created' | 'status_changed' | 'assessment_finalized';
+
+export interface ApplicationActivityActor {
+  type: 'member' | 'system';
+  membershipId?: string;
+  displayName?: string;
+}
+
+export interface ApplicationActivityItem {
+  type: ApplicationActivityType;
+  occurredAt: string;
+  actor: ApplicationActivityActor;
+  fromStatus?: EmployerJobApplicationStatus;
+  toStatus?: EmployerJobApplicationStatus;
+  metadata?: { overallScore?: number; competencyCoveragePercent?: number };
+}
+
+export interface ApplicationTimeline {
+  applicationId: string;
+  currentStatus: EmployerJobApplicationStatus;
+  timeline: ApplicationActivityItem[];
+}
+
+export type GetApplicationTimelineResponse = ApiEnvelope<ApplicationTimeline>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -3061,6 +3092,17 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to finalize assessment package');
+    }
+  }
+
+  async getApplicationTimeline(organizationId: string, applicationId: string): Promise<GetApplicationTimelineResponse> {
+    try {
+      const response = await this.api.get<GetApplicationTimelineResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/timeline`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load application timeline');
     }
   }
 }

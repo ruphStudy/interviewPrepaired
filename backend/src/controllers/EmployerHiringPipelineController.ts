@@ -38,6 +38,7 @@ export class EmployerHiringPipelineController {
     const application = await employerHiringPipelineService.moveApplicationStage(
       context.organizationId,
       context.role,
+      context.member._id.toString(),
       applicationId,
       status
     );

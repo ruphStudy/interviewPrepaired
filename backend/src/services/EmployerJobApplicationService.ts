@@ -5,6 +5,7 @@ import EmployerCandidate from '../models/EmployerCandidate.model';
 import EmployerCandidateResumeSource from '../models/EmployerCandidateResumeSource.model';
 import EmployerCandidateResumeAnalysis from '../models/EmployerCandidateResumeAnalysis.model';
 import EmployerJobApplication from '../models/EmployerJobApplication.model';
+import EmployerJobApplicationActivity, { EmployerJobApplicationActivityType } from '../models/EmployerJobApplicationActivity.model';
 import { EmployerJobStatus } from '../constants/employerJob';
 import { EmployerCandidateStatus } from '../constants/employerCandidate';
 import { EmployerCandidateResumeAnalysisStatus } from '../constants/employerCandidateResumeAnalysis';
@@ -42,6 +43,9 @@ interface UpdateApplicationFields {
   notes?: string;
   source?: EmployerJobApplicationSource;
 }
+
+/** Never a fake role/membership — `member` always carries the ACTING organization context's own membership id; `system` is used only by trusted internal workflows (e.g. 21C) with no real acting member. */
+type ActivityActor = { type: 'member'; membershipId: string } | { type: 'system' };
 
 /**
  * Links an existing company candidate to an existing company job (18D) and
@@ -200,6 +204,17 @@ export class EmployerJobApplicationService {
         notes: fields.notes?.trim() || undefined,
         createdByMembershipId: new Types.ObjectId(creatorMembershipId),
       });
+
+      await this.recordActivity({
+        organizationId: organization._id,
+        applicationId: application._id as Types.ObjectId,
+        jobId: application.jobId,
+        candidateId: application.candidateId,
+        type: 'application_created',
+        actor: { type: 'member', membershipId: creatorMembershipId },
+        occurredAt: application.appliedAt,
+      });
+
       return this.toDetail(application.toObject(), job.toObject(), candidate.toObject());
     } catch (error: any) {
       if (error?.code === 11000) {
@@ -258,11 +273,12 @@ export class EmployerJobApplicationService {
   async updateApplicationStatus(
     organizationId: string,
     actingRole: OrganizationMemberRole,
+    actingMembershipId: string,
     applicationId: string,
     targetStatus: EmployerJobApplicationStatus
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
-    return this.transitionApplicationStatus(organizationId, applicationId, targetStatus);
+    return this.transitionApplicationStatus(organizationId, applicationId, targetStatus, { type: 'member', membershipId: actingMembershipId });
   }
 
   /**
@@ -281,7 +297,7 @@ export class EmployerJobApplicationService {
     applicationId: string,
     targetStatus: EmployerJobApplicationStatus
   ): Promise<Record<string, unknown>> {
-    return this.transitionApplicationStatus(organizationId, applicationId, targetStatus);
+    return this.transitionApplicationStatus(organizationId, applicationId, targetStatus, { type: 'system' });
   }
 
   /**
@@ -297,7 +313,8 @@ export class EmployerJobApplicationService {
   private async transitionApplicationStatus(
     organizationId: string,
     applicationId: string,
-    targetStatus: EmployerJobApplicationStatus
+    targetStatus: EmployerJobApplicationStatus,
+    actor: ActivityActor
   ): Promise<Record<string, unknown>> {
     if (!targetStatus || !Object.values(EmployerJobApplicationStatus).includes(targetStatus)) {
       throw new ApiError(400, 'A valid status is required');
@@ -322,11 +339,64 @@ export class EmployerJobApplicationService {
 
     await this.assertReferencedEntitiesMutable(organization._id, application.jobId, application.candidateId);
 
+    const fromStatus = application.status;
     application.status = targetStatus;
     await application.save();
 
+    // Written only AFTER the transition has successfully persisted — a
+    // failure here is logged and swallowed, never undoing the successful
+    // status change (see `recordActivity`).
+    await this.recordActivity({
+      organizationId: organization._id,
+      applicationId: application._id as Types.ObjectId,
+      jobId: application.jobId,
+      candidateId: application.candidateId,
+      type: 'status_changed',
+      fromStatus,
+      toStatus: targetStatus,
+      actor,
+      occurredAt: new Date(),
+    });
+
     const [job, candidate] = await this.getReferencedJobAndCandidate(organization._id, application.jobId, application.candidateId);
     return this.toDetail(application.toObject(), job, candidate);
+  }
+
+  /**
+   * Append-only activity write — NEVER allowed to affect lifecycle
+   * behavior. Called only after a status change (or application creation)
+   * has already succeeded; a failure here is logged and swallowed, not
+   * rethrown, since there is no transaction spanning both writes and the
+   * successful lifecycle change must never be rolled back for an audit-row
+   * failure.
+   */
+  private async recordActivity(params: {
+    organizationId: Types.ObjectId;
+    applicationId: Types.ObjectId;
+    jobId: Types.ObjectId;
+    candidateId: Types.ObjectId;
+    type: EmployerJobApplicationActivityType;
+    fromStatus?: EmployerJobApplicationStatus;
+    toStatus?: EmployerJobApplicationStatus;
+    actor: ActivityActor;
+    occurredAt: Date;
+  }): Promise<void> {
+    try {
+      await EmployerJobApplicationActivity.create({
+        organizationId: params.organizationId,
+        applicationId: params.applicationId,
+        jobId: params.jobId,
+        candidateId: params.candidateId,
+        type: params.type,
+        fromStatus: params.fromStatus,
+        toStatus: params.toStatus,
+        actorType: params.actor.type,
+        actorMembershipId: params.actor.type === 'member' ? new Types.ObjectId(params.actor.membershipId) : undefined,
+        occurredAt: params.occurredAt,
+      });
+    } catch (error) {
+      console.error('[EmployerJobApplicationService] Failed to record application activity (non-fatal)', error);
+    }
   }
 
   /** Batch-fetches the distinct jobs/candidates referenced by a page of applications, then maps each row to its enriched detail shape. */

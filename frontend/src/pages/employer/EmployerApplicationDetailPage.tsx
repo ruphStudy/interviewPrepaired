@@ -30,6 +30,7 @@ import employerApi, {
   HiringReportReviewSummary,
   FinalizationReadinessChecklist,
   EmployerHiringAssessmentFinalization,
+  ApplicationTimeline,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -44,6 +45,7 @@ import {
   ListChecks,
   Send,
   MonitorPlay,
+  History,
 } from 'lucide-react';
 
 const INVITATION_STATUS_LABELS: Record<string, string> = {
@@ -649,6 +651,7 @@ function actionLabel(targetStatus: EmployerJobApplicationStatus): string {
 const sourceLabel = (value?: string) => EMPLOYER_JOB_APPLICATION_SOURCES.find((s) => s.value === value)?.label || value;
 const formatDate = (value?: string) => (value ? new Date(value).toLocaleDateString() : '—');
 const formatDateTime = (value?: string) => (value ? new Date(value).toLocaleString() : '—');
+const capitalizeStatus = (value?: string) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : '—');
 
 /**
  * Application detail (18D). Readable with only ORGANIZATION_VIEW — editing
@@ -794,6 +797,10 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [finalizationError, setFinalizationError] = useState<string | null>(null);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
+
+  const [timeline, setTimeline] = useState<ApplicationTimeline | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(true);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
@@ -1386,6 +1393,26 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setFinalizing(false);
     }
   };
+
+  const fetchTimeline = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setTimelineLoading(true);
+    setTimelineError(null);
+    try {
+      const response = await employerApi.getApplicationTimeline(organizationId, applicationId);
+      setTimeline(response.data);
+    } catch (err: any) {
+      setTimelineError(err.message || 'Failed to load application timeline');
+    } finally {
+      setTimelineLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchTimeline();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchTimeline]);
 
   const handleCreateInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2832,6 +2859,51 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 <p className="text-sm text-mentor-text-secondary">Candidate has accepted; session not prepared yet.</p>
               ) : (
                 <p className="text-sm text-mentor-text-secondary">Waiting for the candidate to accept the interview invitation.</p>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <History size={18} className="text-mentor-text-muted" />
+                Activity Timeline
+              </h2>
+
+              {timelineLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : timelineError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{timelineError}</p>
+                  <button onClick={fetchTimeline} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !timeline || timeline.timeline.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No activity recorded yet.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {timeline.timeline.map((item, index) => (
+                    <li key={index} className="surface-muted p-3">
+                      <p className="text-sm text-mentor-text">
+                        {item.type === 'application_created'
+                          ? 'Application created'
+                          : item.type === 'status_changed'
+                          ? `Stage changed: ${capitalizeStatus(item.fromStatus)} → ${capitalizeStatus(item.toStatus)}`
+                          : 'Assessment package finalized'}
+                      </p>
+                      <p className="text-xs text-mentor-text-muted mt-0.5">
+                        {formatDateTime(item.occurredAt)} &middot; {item.actor.type === 'member' ? item.actor.displayName || 'Member' : 'System'}
+                      </p>
+                      {item.type === 'assessment_finalized' && item.metadata && (
+                        <p className="text-xs text-mentor-text-secondary mt-1">
+                          Overall score: {item.metadata.overallScore}/100 &middot; Coverage: {item.metadata.competencyCoveragePercent}%
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           </>

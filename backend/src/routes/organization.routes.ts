@@ -40,6 +40,7 @@ import employerCandidateScreeningGapController from '../controllers/EmployerCand
 import employerCandidateRankingController from '../controllers/EmployerCandidateRankingController';
 import employerHiringCandidateComparisonController from '../controllers/EmployerHiringCandidateComparisonController';
 import employerHiringPipelineController from '../controllers/EmployerHiringPipelineController';
+import employerJobApplicationTimelineController from '../controllers/EmployerJobApplicationTimelineController';
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
@@ -2291,6 +2292,20 @@ router.patch(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerHiringPipelineController.moveApplicationStage
+);
+
+// GET .../applications/:applicationId/timeline (23C) — append-only audit
+// history: stored activities + a deterministic fallback creation milestone
+// + a live-derived assessment_finalized milestone. Read-only; archived
+// applications remain readable.
+router.get(
+  '/:organizationId/applications/:applicationId/timeline',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobApplicationTimelineController.getTimeline
 );
 
 // ============================================================================
