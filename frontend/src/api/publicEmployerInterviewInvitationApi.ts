@@ -141,6 +141,20 @@ export interface SubmitPublicAnswerPayload {
 export type GetPublicAssessmentResponse = ApiEnvelope<{ session: PublicAssessmentDetail | null }>;
 export type SubmitPublicAnswerResponse = ApiEnvelope<{ session: PublicAssessmentDetail }>;
 
+// ============================================================================
+// Explicit final submit (Sprint 21C). Status-only — no evaluation/report.
+// ============================================================================
+
+export interface PublicAssessmentCompletion {
+  sessionId: string;
+  status: PublicInterviewSessionStatus;
+  totalQuestions: number;
+  answeredQuestions: number;
+  completedAt?: string;
+}
+
+export type CompletePublicSessionResponse = ApiEnvelope<{ session: PublicAssessmentCompletion }>;
+
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
 
@@ -256,6 +270,18 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to save answer');
+    }
+  }
+
+  /** Status-only, idempotent — an already-completed session returns success again. */
+  async completePublicSession(token: string): Promise<CompletePublicSessionResponse> {
+    try {
+      const response = await this.api.post<CompletePublicSessionResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/complete`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to submit assessment');
     }
   }
 }

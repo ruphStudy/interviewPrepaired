@@ -14,6 +14,9 @@ import Interview, { IInterview } from '../models/interview.model';
 import { InterviewPurpose, InterviewStatus } from '../constants/interview';
 import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
+import { employerJobApplicationService } from './EmployerJobApplicationService';
+import { EmployerJobApplicationStatus } from '../constants/employerJobApplication';
+import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationStatus } from '../constants/organization';
 import { ApiError } from '../utils/ApiError';
 
@@ -356,6 +359,93 @@ export class PublicEmployerInterviewInvitationService {
   }
 
   /**
+   * POST /public/employer-interview-invitations/:token/session/complete
+   * (21C) — explicit, hiring-specific, status-only completion. Deliberately
+   * does NOT reuse the practice-interview completion path: no evaluation,
+   * no final report, no AI call, no credit consumption. IN_PROGRESS ->
+   * COMPLETED is an atomic conditional update (never `.save()`, so no
+   * practice-side pre-save side effects run); a lost race safely converges
+   * on whatever the winner produced. Already COMPLETED/EVALUATED is treated
+   * as an idempotent success.
+   */
+  async completeSession(rawToken: string): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+
+    const chain = await this.resolveChain(invitation);
+
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACCEPTED) {
+      throw new ApiError(409, 'Accept the invitation first.');
+    }
+    if (!invitation.interviewId) {
+      throw new ApiError(409, 'Prepare the interview session first.');
+    }
+
+    const interview = await Interview.findById(invitation.interviewId);
+    if (!interview || interview.purpose !== InterviewPurpose.HIRING_ASSESSMENT) {
+      throw new ApiError(404, 'Interview session not found');
+    }
+
+    // Idempotent — already submitted (evaluation, if ever added, moves
+    // COMPLETED -> EVALUATED separately; both are a "already done" success here).
+    if (interview.status === InterviewStatus.COMPLETED || interview.status === InterviewStatus.EVALUATED) {
+      return this.toCompletionDetail(interview);
+    }
+
+    if (interview.status !== InterviewStatus.IN_PROGRESS) {
+      // CREATED (no answers yet, so completion is inherently inconsistent) or PAUSED (unsupported here).
+      throw new ApiError(409, 'This interview is not ready to be submitted.');
+    }
+
+    if (interview.questionMaterializationStatus !== 'completed' || interview.questions.length === 0) {
+      throw new ApiError(409, 'Interview questions are not ready yet.');
+    }
+
+    const unanswered = interview.questions.filter((q) => !q.answerText || q.answerText.trim().length === 0).length;
+    if (unanswered > 0) {
+      throw new ApiError(409, `${unanswered} question${unanswered === 1 ? '' : 's'} still need${unanswered === 1 ? 's' : ''} an answer before submitting.`);
+    }
+
+    const completed = await Interview.findOneAndUpdate(
+      { _id: interview._id, status: InterviewStatus.IN_PROGRESS },
+      { $set: { status: InterviewStatus.COMPLETED, completedAt: new Date() } },
+      { new: true }
+    );
+
+    if (!completed) {
+      // Lost the race — someone else already completed it; converge on that state.
+      const winner = await Interview.findById(interview._id);
+      if (!winner || (winner.status !== InterviewStatus.COMPLETED && winner.status !== InterviewStatus.EVALUATED)) {
+        throw new ApiError(409, 'This interview is not ready to be submitted.');
+      }
+      return this.toCompletionDetail(winner);
+    }
+
+    // Best-effort application status sync (18D: shortlisted -> interview).
+    // Interview completion above is authoritative — no transaction spans
+    // both writes, so any failure here (already "interview", archived
+    // job/candidate, etc.) is logged and swallowed, never undoing or
+    // failing the completion the candidate already accomplished.
+    try {
+      await employerJobApplicationService.updateApplicationStatus(
+        chain.organization._id.toString(),
+        OrganizationMemberRole.OWNER,
+        invitation.applicationId.toString(),
+        EmployerJobApplicationStatus.INTERVIEW
+      );
+    } catch (error) {
+      console.error('[PublicEmployerInterviewInvitationService] Best-effort application status sync to "interview" failed', error);
+    }
+
+    return this.toCompletionDetail(completed);
+  }
+
+  /**
    * Validates the invitation's full reference chain and lazily expires it
    * first (never trusts the caller's clock). Throws a generic 404 for any
    * broken/archived reference, and a 410 specifically for an expired
@@ -544,6 +634,19 @@ export class PublicEmployerInterviewInvitationService {
         difficulty: q.difficulty,
         answerText: q.answerText && q.answerText.trim().length > 0 ? q.answerText : undefined,
       })),
+    };
+  }
+
+  /** Candidate-safe completion result (21C) — no question text/metadata. */
+  private toCompletionDetail(interview: IInterview): Record<string, unknown> {
+    const totalQuestions = interview.questions.length;
+    const answeredQuestions = interview.questions.filter((q) => q.answerText && q.answerText.trim().length > 0).length;
+    return {
+      sessionId: interview._id.toString(),
+      status: interview.status,
+      totalQuestions,
+      answeredQuestions,
+      completedAt: interview.completedAt,
     };
   }
 }

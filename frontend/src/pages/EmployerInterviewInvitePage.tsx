@@ -50,6 +50,9 @@ const EmployerInterviewInvitePage: React.FC = () => {
   const [savingAnswer, setSavingAnswer] = useState(false);
   const [saveAnswerError, setSaveAnswerError] = useState<string | null>(null);
 
+  const [submittingAssessment, setSubmittingAssessment] = useState(false);
+  const [submitAssessmentError, setSubmitAssessmentError] = useState<string | null>(null);
+
   const fetchInvitation = useCallback(async () => {
     if (!token) return;
     setLoading(true);
@@ -195,6 +198,22 @@ const EmployerInterviewInvitePage: React.FC = () => {
     }
   };
 
+  const handleSubmitAssessment = async () => {
+    if (!token) return;
+    if (!window.confirm('After submission, answers cannot be changed.')) return;
+    setSubmittingAssessment(true);
+    setSubmitAssessmentError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.completePublicSession(token);
+      const completion = response.data.session;
+      setAssessment((prev) => (prev ? { ...prev, status: completion.status } : prev));
+    } catch (err: any) {
+      setSubmitAssessmentError(err.message || 'Failed to submit assessment');
+    } finally {
+      setSubmittingAssessment(false);
+    }
+  };
+
   const handlePrepareQuestions = async () => {
     if (!token) return;
     setPreparingQuestions(true);
@@ -261,6 +280,11 @@ const EmployerInterviewInvitePage: React.FC = () => {
                         <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
                       ) : assessmentError ? (
                         <p className="text-sm text-mentor-error">{assessmentError}</p>
+                      ) : assessment && (assessment.status === 'completed' || assessment.status === 'evaluated') ? (
+                        <div className="surface-muted p-4 text-center">
+                          <CheckCircle2 className="w-8 h-8 text-mentor-success mx-auto mb-2" />
+                          <p className="text-sm font-medium text-mentor-text">Assessment submitted successfully.</p>
+                        </div>
                       ) : assessment ? (
                         <div className="text-left space-y-3">
                           <p className="text-xs text-mentor-text-muted">
@@ -309,7 +333,20 @@ const EmployerInterviewInvitePage: React.FC = () => {
                             </button>
                           </div>
 
-                          {assessment.completed && <p className="text-sm text-mentor-success text-center pt-1">All answers saved.</p>}
+                          {assessment.completed && (
+                            <div className="pt-2 space-y-2">
+                              <p className="text-sm text-mentor-success text-center">All answers saved.</p>
+                              {submitAssessmentError && <p className="text-sm text-mentor-error text-center">{submitAssessmentError}</p>}
+                              <button
+                                onClick={handleSubmitAssessment}
+                                disabled={submittingAssessment}
+                                className="btn btn-primary w-full justify-center"
+                              >
+                                {submittingAssessment ? 'Submitting...' : 'Submit Assessment'}
+                              </button>
+                              <p className="text-xs text-mentor-text-muted text-center">After submission, answers cannot be changed.</p>
+                            </div>
+                          )}
                         </div>
                       ) : null}
                     </>

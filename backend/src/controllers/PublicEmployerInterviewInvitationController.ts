@@ -65,6 +65,13 @@ export class PublicEmployerInterviewInvitationController {
     const session = await publicEmployerInterviewInvitationService.submitAnswer(token, questionIndex, answerText, duration);
     res.status(200).json(successResponse('Answer saved successfully', { session }));
   });
+
+  /** POST /api/v1/public/employer-interview-invitations/:token/session/complete */
+  public completeSession = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token } = req.params;
+    const session = await publicEmployerInterviewInvitationService.completeSession(token);
+    res.status(200).json(successResponse('Assessment submitted successfully', { session }));
+  });
 }
 
 export default new PublicEmployerInterviewInvitationController();

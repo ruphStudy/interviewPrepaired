@@ -80,4 +80,13 @@ router.post(
   publicEmployerInterviewInvitationController.submitAnswer
 );
 
+// POST /api/v1/public/employer-interview-invitations/:token/session/complete
+// (21C) — explicit, hiring-specific completion (status-only, no evaluation).
+router.post(
+  '/:token/session/complete',
+  ...tokenValidation,
+  validate,
+  publicEmployerInterviewInvitationController.completeSession
+);
+
 export default router;
