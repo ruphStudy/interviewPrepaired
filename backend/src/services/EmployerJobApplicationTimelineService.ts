@@ -6,6 +6,7 @@ import EmployerJobApplicationActivity from '../models/EmployerJobApplicationActi
 import EmployerHiringAssessmentFinalization from '../models/EmployerHiringAssessmentFinalization.model';
 import EmployerJobApplicationDecision from '../models/EmployerJobApplicationDecision.model';
 import EmployerJobApplicationNote from '../models/EmployerJobApplicationNote.model';
+import EmployerCandidateCommunication from '../models/EmployerCandidateCommunication.model';
 import OrganizationMember from '../models/OrganizationMember.model';
 import { User } from '../models/user.model';
 import { OrganizationType } from '../constants/organization';
@@ -14,7 +15,13 @@ import { OrganizationPermission, hasOrganizationPermission } from '../constants/
 import { ApiError } from '../utils/ApiError';
 
 interface TimelineItemInternal {
-  type: 'application_created' | 'status_changed' | 'assessment_finalized' | 'employer_decision' | 'internal_note_added';
+  type:
+    | 'application_created'
+    | 'status_changed'
+    | 'assessment_finalized'
+    | 'employer_decision'
+    | 'internal_note_added'
+    | 'candidate_communication';
   occurredAt: Date;
   actorType: 'member' | 'system';
   actorMembershipId?: string;
@@ -134,6 +141,31 @@ export class EmployerJobApplicationTimelineService {
         actorType: 'member',
         actorMembershipId: note.createdByMembershipId.toString(),
         metadata: { noteId: note._id.toString() },
+      });
+    }
+
+    // Communication rows (24D) remain authoritative in
+    // EmployerCandidateCommunication — never duplicated into
+    // EmployerJobApplicationActivity storage, and the full subject/summary
+    // is NEVER included here, only safe metadata.
+    const communications = await EmployerCandidateCommunication.find({
+      organizationId: organization._id,
+      applicationId: application._id,
+    })
+      .select('_id direction channel communicationType occurredAt recordedByMembershipId')
+      .lean();
+    for (const communication of communications) {
+      items.push({
+        type: 'candidate_communication',
+        occurredAt: communication.occurredAt,
+        actorType: 'member',
+        actorMembershipId: communication.recordedByMembershipId.toString(),
+        metadata: {
+          communicationId: communication._id.toString(),
+          direction: communication.direction,
+          channel: communication.channel,
+          communicationType: communication.communicationType,
+        },
       });
     }
 

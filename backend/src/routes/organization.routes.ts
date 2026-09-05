@@ -47,6 +47,12 @@ import employerJobApplicationNoteController from '../controllers/EmployerJobAppl
 import employerJobApplicationCollaborationController from '../controllers/EmployerJobApplicationCollaborationController';
 import employerCollaborationMentionsController from '../controllers/EmployerCollaborationMentionsController';
 import employerCollaborationNotificationController from '../controllers/EmployerCollaborationNotificationController';
+import employerCandidateCommunicationController from '../controllers/EmployerCandidateCommunicationController';
+import {
+  EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
+  EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
+  EMPLOYER_CANDIDATE_COMMUNICATION_TYPES,
+} from '../models/EmployerCandidateCommunication.model';
 import { EmployerJobApplicationCollaborationRole } from '../constants/employerJobApplicationCollaboration';
 import {
   EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
@@ -2473,6 +2479,45 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCollaborationNotificationController.markAllRead
+);
+
+// POST/GET .../applications/:applicationId/communications (24D) — an
+// auditable LOG of candidate communication that happened outside/around
+// the platform. Creating a row NEVER sends an actual message.
+const createCommunicationValidation = [
+  body('direction').isIn(EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS).withMessage('Invalid direction'),
+  body('channel').isIn(EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS).withMessage('Invalid channel'),
+  body('communicationType').isIn(EMPLOYER_CANDIDATE_COMMUNICATION_TYPES).withMessage('Invalid communicationType'),
+  body('subject').optional().isString().trim().isLength({ max: 300 }).withMessage('subject must be at most 300 characters'),
+  body('summary').isString().trim().isLength({ min: 1, max: 3000 }).withMessage('summary is required (max 3000 characters)'),
+  body('occurredAt').optional().isISO8601().withMessage('occurredAt must be a valid timestamp'),
+];
+const listCommunicationsValidation = [
+  query('direction').optional().isIn(EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS).withMessage('Invalid direction'),
+  query('channel').optional().isIn(EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS).withMessage('Invalid channel'),
+  query('communicationType').optional().isIn(EMPLOYER_CANDIDATE_COMMUNICATION_TYPES).withMessage('Invalid communicationType'),
+];
+
+router.post(
+  '/:organizationId/applications/:applicationId/communications',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...createCommunicationValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateCommunicationController.createCommunication
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/communications',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...listCommunicationsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateCommunicationController.getCommunications
 );
 
 // ============================================================================

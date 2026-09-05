@@ -1897,7 +1897,8 @@ export type ApplicationActivityType =
   | 'status_changed'
   | 'assessment_finalized'
   | 'employer_decision'
-  | 'internal_note_added';
+  | 'internal_note_added'
+  | 'candidate_communication';
 
 export interface ApplicationActivityActor {
   type: 'member' | 'system';
@@ -1918,6 +1919,10 @@ export interface ApplicationActivityItem {
     reasonCode?: EmployerJobApplicationDecisionReasonCode;
     notes?: string;
     noteId?: string;
+    communicationId?: string;
+    direction?: EmployerCandidateCommunicationDirection;
+    channel?: EmployerCandidateCommunicationChannel;
+    communicationType?: EmployerCandidateCommunicationType;
   };
 }
 
@@ -2126,6 +2131,74 @@ export interface EmployerCollaborationNotificationsResponseData {
 export type GetEmployerCollaborationNotificationsResponse = ApiEnvelope<EmployerCollaborationNotificationsResponseData>;
 export type MarkEmployerNotificationReadResponse = ApiEnvelope<{ id: string; read: boolean; readAt: string }>;
 export type MarkAllEmployerNotificationsReadResponse = ApiEnvelope<{ updatedCount: number }>;
+
+// ============================================================================
+// Employer-to-Candidate Communication Log (Sprint 24D) — RECORDS
+// communication history only; creating a row never sends an actual
+// message. Distinct from 24A notes, 24B collaborators/mentions, 24C
+// notifications. Never visible to the candidate.
+// ============================================================================
+
+export type EmployerCandidateCommunicationDirection = 'outbound' | 'inbound';
+export type EmployerCandidateCommunicationChannel = 'email' | 'phone' | 'sms' | 'whatsapp' | 'video_call' | 'in_person' | 'other';
+export type EmployerCandidateCommunicationType =
+  | 'outreach'
+  | 'interview_scheduling'
+  | 'interview_update'
+  | 'follow_up'
+  | 'offer_discussion'
+  | 'rejection_notice'
+  | 'candidate_question'
+  | 'general'
+  | 'other';
+
+export const EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS: EmployerCandidateCommunicationDirection[] = ['outbound', 'inbound'];
+
+export const EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS: EmployerCandidateCommunicationChannel[] = [
+  'email',
+  'phone',
+  'sms',
+  'whatsapp',
+  'video_call',
+  'in_person',
+  'other',
+];
+
+export const EMPLOYER_CANDIDATE_COMMUNICATION_TYPES: EmployerCandidateCommunicationType[] = [
+  'outreach',
+  'interview_scheduling',
+  'interview_update',
+  'follow_up',
+  'offer_discussion',
+  'rejection_notice',
+  'candidate_question',
+  'general',
+  'other',
+];
+
+export interface EmployerCandidateCommunicationRecord {
+  id: string;
+  direction: EmployerCandidateCommunicationDirection;
+  channel: EmployerCandidateCommunicationChannel;
+  communicationType: EmployerCandidateCommunicationType;
+  subject?: string;
+  summary: string;
+  occurredAt: string;
+  createdAt: string;
+  recordedBy: { membershipId: string; displayName?: string };
+}
+
+export interface CreateEmployerCandidateCommunicationPayload {
+  direction: EmployerCandidateCommunicationDirection;
+  channel: EmployerCandidateCommunicationChannel;
+  communicationType: EmployerCandidateCommunicationType;
+  subject?: string;
+  summary: string;
+  occurredAt?: string;
+}
+
+export type GetEmployerCandidateCommunicationsResponse = ApiEnvelope<{ communications: EmployerCandidateCommunicationRecord[] }>;
+export type CreateEmployerCandidateCommunicationResponse = ApiEnvelope<{ communication: EmployerCandidateCommunicationRecord }>;
 
 class EmployerApiService {
   private api: AxiosInstance;
@@ -3536,6 +3609,37 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to mark all notifications as read');
+    }
+  }
+
+  async getEmployerCandidateCommunications(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerCandidateCommunicationsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCandidateCommunicationsResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/communications`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load communication history');
+    }
+  }
+
+  /** Records communication history only — never sends an actual message. */
+  async createEmployerCandidateCommunication(
+    organizationId: string,
+    applicationId: string,
+    payload: CreateEmployerCandidateCommunicationPayload
+  ): Promise<CreateEmployerCandidateCommunicationResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerCandidateCommunicationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/communications`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to record communication');
     }
   }
 }

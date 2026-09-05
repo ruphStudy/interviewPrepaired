@@ -41,6 +41,13 @@ import employerApi, {
   EmployerAvailableCollaborationMember,
   EmployerJobApplicationCollaborationRole,
   EMPLOYER_JOB_APPLICATION_COLLABORATION_ROLES,
+  EmployerCandidateCommunicationRecord,
+  EmployerCandidateCommunicationDirection,
+  EmployerCandidateCommunicationChannel,
+  EmployerCandidateCommunicationType,
+  EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
+  EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
+  EMPLOYER_CANDIDATE_COMMUNICATION_TYPES,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -58,6 +65,7 @@ import {
   History,
   X,
   UserPlus,
+  MessageSquare,
 } from 'lucide-react';
 
 const INVITATION_STATUS_LABELS: Record<string, string> = {
@@ -844,6 +852,19 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [saveCollaboratorError, setSaveCollaboratorError] = useState<string | null>(null);
   const [removingCollaboratorId, setRemovingCollaboratorId] = useState<string | null>(null);
 
+  const [communications, setCommunications] = useState<EmployerCandidateCommunicationRecord[]>([]);
+  const [communicationsLoading, setCommunicationsLoading] = useState(true);
+  const [communicationsError, setCommunicationsError] = useState<string | null>(null);
+  const [showCommunicationForm, setShowCommunicationForm] = useState(false);
+  const [commDirection, setCommDirection] = useState<EmployerCandidateCommunicationDirection>('outbound');
+  const [commChannel, setCommChannel] = useState<EmployerCandidateCommunicationChannel>('email');
+  const [commType, setCommType] = useState<EmployerCandidateCommunicationType>('outreach');
+  const [commSubject, setCommSubject] = useState('');
+  const [commSummary, setCommSummary] = useState('');
+  const [commOccurredAt, setCommOccurredAt] = useState('');
+  const [savingCommunication, setSavingCommunication] = useState(false);
+  const [saveCommunicationError, setSaveCommunicationError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1602,6 +1623,52 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setSaveCollaboratorError(err.message || 'Failed to remove collaborator');
     } finally {
       setRemovingCollaboratorId(null);
+    }
+  };
+
+  const fetchCommunications = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setCommunicationsLoading(true);
+    setCommunicationsError(null);
+    try {
+      const response = await employerApi.getEmployerCandidateCommunications(organizationId, applicationId);
+      setCommunications(response.data.communications);
+    } catch (err: any) {
+      setCommunicationsError(err.message || 'Failed to load communication history');
+    } finally {
+      setCommunicationsLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchCommunications();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchCommunications]);
+
+  const handleLogCommunication = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !applicationId || !commSummary.trim()) return;
+    setSavingCommunication(true);
+    setSaveCommunicationError(null);
+    try {
+      await employerApi.createEmployerCandidateCommunication(organizationId, applicationId, {
+        direction: commDirection,
+        channel: commChannel,
+        communicationType: commType,
+        subject: commSubject.trim() || undefined,
+        summary: commSummary.trim(),
+        occurredAt: commOccurredAt ? new Date(commOccurredAt).toISOString() : undefined,
+      });
+      setCommSubject('');
+      setCommSummary('');
+      setCommOccurredAt('');
+      setShowCommunicationForm(false);
+      await Promise.all([fetchCommunications(), fetchTimeline()]);
+    } catch (err: any) {
+      setSaveCommunicationError(err.message || 'Failed to record communication');
+    } finally {
+      setSavingCommunication(false);
     }
   };
 
@@ -3086,7 +3153,9 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           ? 'Assessment package finalized'
                           : item.type === 'employer_decision'
                           ? 'Employer decision recorded'
-                          : 'Internal note added'}
+                          : item.type === 'internal_note_added'
+                          ? 'Internal note added'
+                          : 'Candidate communication logged'}
                       </p>
                       <p className="text-xs text-mentor-text-muted mt-0.5">
                         {formatDateTime(item.occurredAt)} &middot; {item.actor.type === 'member' ? item.actor.displayName || 'Member' : 'System'}
@@ -3100,6 +3169,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
                         <p className="text-xs text-mentor-text-secondary mt-1">
                           {labelizeCode(item.metadata.decisionType)} &middot; {labelizeCode(item.metadata.reasonCode)}
                           {item.metadata.notes ? ` — ${item.metadata.notes}` : ''}
+                        </p>
+                      )}
+                      {item.type === 'candidate_communication' && item.metadata && (
+                        <p className="text-xs text-mentor-text-secondary mt-1">
+                          {item.metadata.direction === 'outbound' ? 'Employer → Candidate' : 'Candidate → Employer'} &middot;{' '}
+                          {labelizeCode(item.metadata.channel)} &middot; {labelizeCode(item.metadata.communicationType)}
                         </p>
                       )}
                     </li>
@@ -3382,6 +3457,150 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           {removingCollaboratorId === c.membershipId ? 'Removing...' : 'Remove'}
                         </button>
                       )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <MessageSquare size={18} className="text-mentor-text-muted" />
+                Candidate Communication
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">Internal communication history — the candidate cannot see this.</p>
+
+              {canManage && (
+                <div className="mb-4">
+                  {!showCommunicationForm ? (
+                    <button onClick={() => setShowCommunicationForm(true)} className="btn btn-secondary">
+                      Log Communication
+                    </button>
+                  ) : (
+                    <form onSubmit={handleLogCommunication} className="surface-muted p-3 space-y-3">
+                      <p className="text-xs text-mentor-text-secondary">
+                        This records communication history only. EnterSkill will not send a message.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="label mb-1 block">Direction</label>
+                          <select
+                            value={commDirection}
+                            onChange={(e) => setCommDirection(e.target.value as EmployerCandidateCommunicationDirection)}
+                            className="input w-full"
+                          >
+                            {EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS.map((d) => (
+                              <option key={d} value={d}>
+                                {d === 'outbound' ? 'Employer → Candidate' : 'Candidate → Employer'}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="label mb-1 block">Channel</label>
+                          <select
+                            value={commChannel}
+                            onChange={(e) => setCommChannel(e.target.value as EmployerCandidateCommunicationChannel)}
+                            className="input w-full"
+                          >
+                            {EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS.map((c) => (
+                              <option key={c} value={c}>
+                                {labelizeCode(c)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="label mb-1 block">Type</label>
+                          <select
+                            value={commType}
+                            onChange={(e) => setCommType(e.target.value as EmployerCandidateCommunicationType)}
+                            className="input w-full"
+                          >
+                            {EMPLOYER_CANDIDATE_COMMUNICATION_TYPES.map((t) => (
+                              <option key={t} value={t}>
+                                {labelizeCode(t)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label mb-1 block">Subject (optional)</label>
+                        <input
+                          type="text"
+                          value={commSubject}
+                          onChange={(e) => setCommSubject(e.target.value)}
+                          maxLength={300}
+                          className="input w-full"
+                          placeholder="Subject..."
+                        />
+                      </div>
+                      <div>
+                        <label className="label mb-1 block">Summary</label>
+                        <textarea
+                          value={commSummary}
+                          onChange={(e) => setCommSummary(e.target.value)}
+                          rows={3}
+                          maxLength={3000}
+                          className="input w-full"
+                          placeholder="What was discussed..."
+                        />
+                      </div>
+                      <div>
+                        <label className="label mb-1 block">Date/time (optional)</label>
+                        <input
+                          type="datetime-local"
+                          value={commOccurredAt}
+                          onChange={(e) => setCommOccurredAt(e.target.value)}
+                          className="input w-full"
+                        />
+                      </div>
+                      {saveCommunicationError && <p className="text-sm text-mentor-error">{saveCommunicationError}</p>}
+                      <div className="flex gap-2">
+                        <button type="submit" disabled={savingCommunication || !commSummary.trim()} className="btn btn-primary">
+                          {savingCommunication ? 'Saving...' : 'Save'}
+                        </button>
+                        <button type="button" onClick={() => setShowCommunicationForm(false)} className="btn btn-secondary">
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
+
+              {communicationsLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : communicationsError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{communicationsError}</p>
+                  <button onClick={fetchCommunications} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : communications.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No communication recorded yet.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {communications.map((c) => (
+                    <li key={c.id} className="surface-muted p-3">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className={`badge ${c.direction === 'outbound' ? 'badge-info' : 'badge-neutral'}`}>
+                          {c.direction === 'outbound' ? 'Employer → Candidate' : 'Candidate → Employer'}
+                        </span>
+                        <span className="text-xs text-mentor-text-muted">
+                          {labelizeCode(c.channel)} &middot; {labelizeCode(c.communicationType)}
+                        </span>
+                      </div>
+                      {c.subject && <p className="text-sm font-medium text-mentor-text">{c.subject}</p>}
+                      <p className="text-sm text-mentor-text whitespace-pre-wrap">{c.summary}</p>
+                      <p className="text-xs text-mentor-text-muted mt-1">
+                        {formatDateTime(c.occurredAt)} &middot; Recorded by {c.recordedBy.displayName || 'Member'}
+                      </p>
                     </li>
                   ))}
                 </ul>
