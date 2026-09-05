@@ -32,6 +32,7 @@ import employerJobIntelligenceSnapshotController from '../controllers/EmployerJo
 import employerCandidateController from '../controllers/EmployerCandidateController';
 import employerCandidateResumeController from '../controllers/EmployerCandidateResumeController';
 import employerCandidateResumeAnalysisController from '../controllers/EmployerCandidateResumeAnalysisController';
+import employerJobApplicationController from '../controllers/EmployerJobApplicationController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -55,6 +56,7 @@ import { EmployerJobHiringTeamRole } from '../constants/employerJobHiringTeam';
 import { EmployerJobDescriptionSourceType, JD_RAW_TEXT_MIN_LENGTH, JD_RAW_TEXT_MAX_LENGTH } from '../constants/employerJobDescription';
 import { EmployerCandidateSource, EmployerCandidateStatus } from '../constants/employerCandidate';
 import { ALLOWED_RESUME_EXTENSIONS, MAX_RESUME_FILE_SIZE_BYTES, isAllowedResumeFile } from '../constants/employerCandidateResume';
+import { EmployerJobApplicationSource, EmployerJobApplicationStatus } from '../constants/employerJobApplication';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
@@ -2050,6 +2052,130 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateResumeAnalysisController.getAnalysisForSource
+);
+
+// ============================================================================
+// Employer Job Applications (18D) — company-only, links an existing
+// candidate to an existing job within ONE organization. No screening/
+// ranking (19), no interview blueprint/invitations (20), no AI. Reads use
+// ORGANIZATION_VIEW; mutations (create, generic update, and the dedicated
+// status endpoint) use INTERVIEWS_MANAGE. `jobId`/`candidateId`/`status`/
+// `organizationId`/`createdByMembershipId`/timestamps are rejected on the
+// generic update; status only ever changes through
+// POST .../applications/:applicationId/status. One application per
+// candidate per job — duplicate create is rejected with 409.
+// ============================================================================
+
+const applicationIdValidation = [param('applicationId').isMongoId().withMessage('Invalid application ID')];
+
+const listApplicationsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('jobId').optional().isMongoId().withMessage('Invalid jobId'),
+  query('candidateId').optional().isMongoId().withMessage('Invalid candidateId'),
+  query('status').optional().isIn(Object.values(EmployerJobApplicationStatus)).withMessage('Invalid status'),
+  query('source').optional().isIn(Object.values(EmployerJobApplicationSource)).withMessage('Invalid source'),
+  query('search').optional().isString().trim().isLength({ max: 200 }),
+];
+
+const APPLICATION_UPDATE_FIELD_KEYS = ['notes', 'source'];
+
+const rejectApplicationImmutableFieldsValidation = [
+  body('jobId').not().exists().withMessage('jobId cannot be changed'),
+  body('candidateId').not().exists().withMessage('candidateId cannot be changed'),
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('createdByMembershipId').not().exists().withMessage('createdByMembershipId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use POST .../status'),
+  body('createdAt').not().exists().withMessage('createdAt cannot be set'),
+  body('updatedAt').not().exists().withMessage('updatedAt cannot be set'),
+];
+
+const createApplicationValidation = [
+  ...rejectApplicationImmutableFieldsValidation,
+  body('jobId').isMongoId().withMessage('A valid jobId is required'),
+  body('candidateId').isMongoId().withMessage('A valid candidateId is required'),
+  body('source').optional().isIn(Object.values(EmployerJobApplicationSource)).withMessage('Invalid source'),
+  body('notes').optional().isString().trim().isLength({ max: 2000 }).withMessage('notes must be at most 2000 characters'),
+];
+
+const updateApplicationValidation = [
+  ...rejectApplicationImmutableFieldsValidation,
+  body('source').optional().isIn(Object.values(EmployerJobApplicationSource)).withMessage('Invalid source'),
+  body('notes').optional().isString().trim().isLength({ max: 2000 }).withMessage('notes must be at most 2000 characters'),
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !APPLICATION_UPDATE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
+const updateApplicationStatusValidation = [
+  body('status')
+    .notEmpty()
+    .withMessage('status is required')
+    .isIn(Object.values(EmployerJobApplicationStatus))
+    .withMessage('Invalid status'),
+];
+
+router.get(
+  '/:organizationId/applications',
+  protect,
+  ...organizationIdValidation,
+  ...listApplicationsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobApplicationController.getApplications
+);
+
+router.post(
+  '/:organizationId/applications',
+  protect,
+  ...organizationIdValidation,
+  ...createApplicationValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationController.createApplication
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobApplicationController.getApplication
+);
+
+router.put(
+  '/:organizationId/applications/:applicationId',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...updateApplicationValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationController.updateApplication
+);
+
+router.post(
+  '/:organizationId/applications/:applicationId/status',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...updateApplicationStatusValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationController.updateApplicationStatus
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

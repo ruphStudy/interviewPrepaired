@@ -12,6 +12,8 @@ import employerApi, {
   JobDescriptionSource,
   JobIntelligenceSnapshotRecord,
   JobIntelligenceReadiness,
+  EmployerJobApplication,
+  EmployerCandidate,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
@@ -31,7 +33,35 @@ import {
   Trash2,
   FileText,
   ShieldCheck,
+  Briefcase,
+  X,
 } from 'lucide-react';
+
+const APPLICATIONS_PAGE_LIMIT = 20;
+
+const APPLICATION_STATUS_LABELS: Record<string, string> = {
+  applied: 'Applied',
+  screening: 'Screening',
+  shortlisted: 'Shortlisted',
+  interview: 'Interview',
+  offer: 'Offer',
+  hired: 'Hired',
+  rejected: 'Rejected',
+  withdrawn: 'Withdrawn',
+  archived: 'Archived',
+};
+
+const APPLICATION_STATUS_BADGE: Record<string, string> = {
+  applied: 'badge-info',
+  screening: 'badge-info',
+  shortlisted: 'badge-warning',
+  interview: 'badge-warning',
+  offer: 'badge-success',
+  hired: 'badge-success',
+  rejected: 'badge-neutral',
+  withdrawn: 'badge-neutral',
+  archived: 'badge-neutral',
+};
 
 const HISTORY_PAGE_LIMIT = 20;
 
@@ -167,6 +197,20 @@ const EmployerJobDetailPage: React.FC = () => {
   const [intelligenceReadiness, setIntelligenceReadiness] = useState<JobIntelligenceReadiness | null>(null);
   const [intelligenceLoading, setIntelligenceLoading] = useState(true);
 
+  const [applications, setApplications] = useState<EmployerJobApplication[]>([]);
+  const [applicationsPage, setApplicationsPage] = useState(1);
+  const [applicationsTotal, setApplicationsTotal] = useState(0);
+  const [applicationsLoading, setApplicationsLoading] = useState(true);
+  const [applicationsError, setApplicationsError] = useState<string | null>(null);
+
+  const [showAddCandidate, setShowAddCandidate] = useState(false);
+  const [candidateSearch, setCandidateSearch] = useState('');
+  const [candidateSearchResults, setCandidateSearchResults] = useState<EmployerCandidate[]>([]);
+  const [candidateSearchLoading, setCandidateSearchLoading] = useState(false);
+  const [candidateSearchError, setCandidateSearchError] = useState<string | null>(null);
+  const [addingCandidateId, setAddingCandidateId] = useState<string | null>(null);
+  const [addCandidateError, setAddCandidateError] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -279,6 +323,72 @@ const EmployerJobDetailPage: React.FC = () => {
       fetchIntelligenceStatus();
     }
   }, [isSyncing, activeOrganization, canView, fetchIntelligenceStatus]);
+
+  const fetchApplications = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setApplicationsLoading(true);
+    setApplicationsError(null);
+    try {
+      const response = await employerApi.listApplications(organizationId, { jobId, page: applicationsPage, limit: APPLICATIONS_PAGE_LIMIT });
+      setApplications(response.data.applications);
+      setApplicationsTotal(response.data.pagination.total);
+    } catch (err: any) {
+      setApplicationsError(err.message || 'Failed to load applications');
+    } finally {
+      setApplicationsLoading(false);
+    }
+  }, [organizationId, jobId, applicationsPage]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchApplications();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchApplications]);
+
+  const applicationsTotalPages = Math.max(1, Math.ceil(applicationsTotal / APPLICATIONS_PAGE_LIMIT));
+  const appliedCandidateIds = new Set(applications.map((a) => a.candidateId));
+
+  const canAddCandidate =
+    canManage && !!job && job.status !== 'archived' && job.status !== 'closed';
+
+  const handleOpenAddCandidate = () => {
+    setShowAddCandidate(true);
+    setCandidateSearch('');
+    setCandidateSearchResults([]);
+    setCandidateSearchError(null);
+    setAddCandidateError(null);
+  };
+
+  const handleSearchCandidates = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId) return;
+    setCandidateSearchLoading(true);
+    setCandidateSearchError(null);
+    try {
+      const response = await employerApi.listCandidates(organizationId, { search: candidateSearch || undefined, status: 'active', limit: 20 });
+      setCandidateSearchResults(response.data.candidates);
+    } catch (err: any) {
+      setCandidateSearchError(err.message || 'Failed to search candidates');
+    } finally {
+      setCandidateSearchLoading(false);
+    }
+  };
+
+  const handleAddCandidate = async (candidate: EmployerCandidate) => {
+    if (!organizationId || !jobId) return;
+    setAddCandidateError(null);
+    setAddingCandidateId(candidate.id);
+    try {
+      await employerApi.createApplication(organizationId, { jobId, candidateId: candidate.id, source: 'manual' });
+      setShowAddCandidate(false);
+      setApplicationsPage(1);
+      await fetchApplications();
+    } catch (err: any) {
+      setAddCandidateError(err.message || 'Failed to add candidate to this job');
+    } finally {
+      setAddingCandidateId(null);
+    }
+  };
 
   const handleOpenAddMember = async () => {
     if (!organizationId || !jobId) return;
@@ -1090,6 +1200,158 @@ const EmployerJobDetailPage: React.FC = () => {
                   </>
                 );
               })()}
+            </div>
+
+            <div className="card mt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="section-title flex items-center gap-2 mb-0">
+                  <Briefcase size={18} className="text-mentor-text-muted" />
+                  Applications
+                </h2>
+                {canAddCandidate && !showAddCandidate && (
+                  <button onClick={handleOpenAddCandidate} className="btn btn-secondary">
+                    <Plus size={16} />
+                    Add Candidate
+                  </button>
+                )}
+              </div>
+
+              {job.status === 'archived' && (
+                <p className="text-xs text-mentor-text-muted mb-4">This job is archived — applications are read-only.</p>
+              )}
+              {job.status === 'closed' && (
+                <p className="text-xs text-mentor-text-muted mb-4">This job is closed — no new candidates can be added.</p>
+              )}
+
+              {showAddCandidate && (
+                <div className="surface-muted p-4 mb-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="label mb-0">Add Candidate</p>
+                    <button onClick={() => setShowAddCandidate(false)} className="text-mentor-text-muted hover:text-mentor-text" aria-label="Close">
+                      <X size={16} />
+                    </button>
+                  </div>
+                  {addCandidateError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-3">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{addCandidateError}</p>
+                    </div>
+                  )}
+                  <form onSubmit={handleSearchCandidates} className="flex items-center gap-2 mb-3">
+                    <input
+                      type="text"
+                      value={candidateSearch}
+                      onChange={(e) => setCandidateSearch(e.target.value)}
+                      placeholder="Search candidates by name or email..."
+                      className="input flex-1"
+                    />
+                    <button type="submit" disabled={candidateSearchLoading} className="btn btn-primary">
+                      {candidateSearchLoading ? 'Searching...' : 'Search'}
+                    </button>
+                  </form>
+
+                  {candidateSearchError ? (
+                    <p className="text-sm text-mentor-error">{candidateSearchError}</p>
+                  ) : candidateSearchResults.length === 0 ? (
+                    <p className="text-sm text-mentor-text-secondary">
+                      {candidateSearchLoading ? 'Searching...' : 'Search for a candidate to add to this job.'}
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-mentor-border max-h-72 overflow-y-auto">
+                      {candidateSearchResults.map((candidate) => {
+                        const alreadyApplied = appliedCandidateIds.has(candidate.id);
+                        return (
+                          <div key={candidate.id} className="flex items-center justify-between gap-3 py-2.5">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-mentor-text truncate">
+                                {candidate.firstName} {candidate.lastName}
+                              </p>
+                              <p className="text-xs text-mentor-text-muted truncate">{candidate.email}</p>
+                            </div>
+                            <button
+                              onClick={() => handleAddCandidate(candidate)}
+                              disabled={alreadyApplied || addingCandidateId === candidate.id}
+                              className="btn btn-secondary px-3 py-1.5 text-xs shrink-0"
+                            >
+                              {alreadyApplied ? 'Already Applied' : addingCandidateId === candidate.id ? 'Adding...' : 'Add'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {applicationsLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : applicationsError ? (
+                <div className="p-8 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{applicationsError}</p>
+                  <button onClick={fetchApplications} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : applications.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No candidates have applied to this job yet.</p>
+              ) : (
+                <div className="divide-y divide-mentor-border">
+                  {applications.map((application) => (
+                    <div
+                      key={application.id}
+                      onClick={() => navigate(`/organizations/${organizationId}/employer/applications/${application.id}`)}
+                      className="flex flex-col sm:flex-row sm:items-center gap-2 py-3 cursor-pointer hover:bg-mentor-surface transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <Link
+                          to={`/organizations/${organizationId}/employer/candidates/${application.candidateId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-sm font-medium text-mentor-text hover:underline"
+                        >
+                          {application.candidate ? `${application.candidate.firstName} ${application.candidate.lastName}` : 'Unknown candidate'}
+                        </Link>
+                        <p className="text-xs text-mentor-text-muted">{application.candidate?.email || '—'}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        <span className="badge badge-neutral">{application.source}</span>
+                        <span className={`badge ${APPLICATION_STATUS_BADGE[application.status]}`}>
+                          {APPLICATION_STATUS_LABELS[application.status]}
+                        </span>
+                        <span className="text-xs text-mentor-text-muted whitespace-nowrap">{formatDate(application.appliedAt)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!applicationsLoading && !applicationsError && applicationsTotalPages > 1 && (
+                <div className="px-1 py-4 border-t border-mentor-border flex items-center justify-between gap-4 mt-2">
+                  <p className="text-xs text-mentor-text-muted">
+                    Page {applicationsPage} of {applicationsTotalPages}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setApplicationsPage((p) => Math.max(1, p - 1))}
+                      disabled={applicationsPage <= 1}
+                      className="btn btn-secondary px-3 py-2"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      onClick={() => setApplicationsPage((p) => Math.min(applicationsTotalPages, p + 1))}
+                      disabled={applicationsPage >= applicationsTotalPages}
+                      className="btn btn-secondary px-3 py-2"
+                      aria-label="Next page"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}

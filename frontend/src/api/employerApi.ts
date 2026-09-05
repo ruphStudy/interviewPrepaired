@@ -705,6 +705,97 @@ export type AnalyzeCandidateResumeResponse = ApiEnvelope<{ analysis: CandidateRe
 export type GetCurrentCandidateResumeAnalysisResponse = ApiEnvelope<{ analysis: CandidateResumeAnalysis | null }>;
 export type GetCandidateResumeAnalysisResponse = ApiEnvelope<{ analysis: CandidateResumeAnalysis | null }>;
 
+// ============================================================================
+// Employer Job Applications (Sprint 18D) — links an existing candidate to
+// an existing job within one organization. No screening/ranking (19), no
+// interview blueprint/invitations (20), no AI.
+// ============================================================================
+
+export type EmployerJobApplicationSource = 'manual' | 'careers' | 'referral' | 'agency' | 'job_portal' | 'import' | 'other';
+export type EmployerJobApplicationStatus =
+  | 'applied'
+  | 'screening'
+  | 'shortlisted'
+  | 'interview'
+  | 'offer'
+  | 'hired'
+  | 'rejected'
+  | 'withdrawn'
+  | 'archived';
+
+export const EMPLOYER_JOB_APPLICATION_SOURCES: Array<{ value: EmployerJobApplicationSource; label: string }> = [
+  { value: 'manual', label: 'Manual' },
+  { value: 'careers', label: 'Careers Page' },
+  { value: 'referral', label: 'Referral' },
+  { value: 'agency', label: 'Agency' },
+  { value: 'job_portal', label: 'Job Portal' },
+  { value: 'import', label: 'Import' },
+  { value: 'other', label: 'Other' },
+];
+
+/** Mirrors the backend's EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS exactly — used only to decide which status-action buttons to render. The backend remains the sole authority and re-validates every transition independently. */
+export const EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS: Record<EmployerJobApplicationStatus, EmployerJobApplicationStatus[]> = {
+  applied: ['screening', 'rejected', 'withdrawn', 'archived'],
+  screening: ['shortlisted', 'rejected', 'withdrawn', 'archived'],
+  shortlisted: ['interview', 'rejected', 'withdrawn', 'archived'],
+  interview: ['offer', 'rejected', 'withdrawn', 'archived'],
+  offer: ['hired', 'rejected', 'withdrawn', 'archived'],
+  hired: ['archived'],
+  rejected: ['archived'],
+  withdrawn: ['archived'],
+  archived: [],
+};
+
+export interface EmployerJobApplicationJobRef {
+  id: string;
+  title: string;
+  jobCode?: string;
+  status: string;
+}
+
+export interface EmployerJobApplicationCandidateRef {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  status: string;
+}
+
+export interface EmployerJobApplication {
+  id: string;
+  organizationId: string;
+  jobId: string;
+  candidateId: string;
+  job: EmployerJobApplicationJobRef | null;
+  candidate: EmployerJobApplicationCandidateRef | null;
+  status: EmployerJobApplicationStatus;
+  source: EmployerJobApplicationSource;
+  appliedAt: string;
+  notes?: string;
+  createdByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployerJobApplicationCreatePayload {
+  jobId: string;
+  candidateId: string;
+  source?: EmployerJobApplicationSource;
+  notes?: string;
+}
+
+/** Never includes jobId/candidateId/status/organizationId/createdByMembershipId/timestamps — those aren't part of this form at all. */
+export interface EmployerJobApplicationUpdatePayload {
+  notes?: string;
+  source?: EmployerJobApplicationSource;
+}
+
+export type ListApplicationsResponse = ApiEnvelope<{ applications: EmployerJobApplication[]; pagination: Pagination }>;
+export type GetApplicationResponse = ApiEnvelope<{ application: EmployerJobApplication }>;
+export type CreateApplicationResponse = ApiEnvelope<{ application: EmployerJobApplication }>;
+export type UpdateApplicationResponse = ApiEnvelope<{ application: EmployerJobApplication }>;
+export type UpdateApplicationStatusResponse = ApiEnvelope<{ application: EmployerJobApplication }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1287,6 +1378,81 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load resume analysis');
+    }
+  }
+
+  // ---- Employer Job Applications (Sprint 18D) ----
+
+  async listApplications(
+    organizationId: string,
+    params: {
+      jobId?: string;
+      candidateId?: string;
+      status?: EmployerJobApplicationStatus;
+      source?: EmployerJobApplicationSource;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {}
+  ): Promise<ListApplicationsResponse> {
+    try {
+      const response = await this.api.get<ListApplicationsResponse>(`/organizations/${organizationId}/applications`, { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load applications');
+    }
+  }
+
+  async getApplication(organizationId: string, applicationId: string): Promise<GetApplicationResponse> {
+    try {
+      const response = await this.api.get<GetApplicationResponse>(`/organizations/${organizationId}/applications/${applicationId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load application');
+    }
+  }
+
+  /** `status` always starts at "applied" server-side — never accepted here. Duplicate {jobId, candidateId} is rejected with 409. */
+  async createApplication(organizationId: string, payload: EmployerJobApplicationCreatePayload): Promise<CreateApplicationResponse> {
+    try {
+      const response = await this.api.post<CreateApplicationResponse>(`/organizations/${organizationId}/applications`, payload);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create application');
+    }
+  }
+
+  /** PATCH-like merge (despite being a PUT) — only notes/source. Never changes status. */
+  async updateApplication(
+    organizationId: string,
+    applicationId: string,
+    payload: EmployerJobApplicationUpdatePayload
+  ): Promise<UpdateApplicationResponse> {
+    try {
+      const response = await this.api.put<UpdateApplicationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update application');
+    }
+  }
+
+  /** The ONLY way an application's status changes. The backend rejects same/invalid transitions with a 409. */
+  async updateApplicationStatus(
+    organizationId: string,
+    applicationId: string,
+    status: EmployerJobApplicationStatus
+  ): Promise<UpdateApplicationStatusResponse> {
+    try {
+      const response = await this.api.post<UpdateApplicationStatusResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/status`,
+        { status }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update application status');
     }
   }
 }

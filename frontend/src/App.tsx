@@ -39,6 +39,7 @@ import EmployerJobDescriptionPage from './pages/employer/EmployerJobDescriptionP
 import EmployerCandidatesPage from './pages/employer/EmployerCandidatesPage';
 import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
 import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
+import EmployerApplicationDetailPage from './pages/employer/EmployerApplicationDetailPage';
 import InstituteReadinessPage from './pages/institute/InstituteReadinessPage';
 import InstituteBillingPage from './pages/institute/InstituteBillingPage';
 import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
@@ -340,6 +341,16 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerCandidateDetailPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Employer Job Applications Routes (Sprint 18D) — company-only, guarded inside the page. No sidebar nav — reached from Job/Candidate detail pages. */}
+          <Route
+            path="/organizations/:organizationId/employer/applications/:applicationId"
+            element={
+              <ProtectedRoute>
+                <EmployerApplicationDetailPage />
               </ProtectedRoute>
             }
           />

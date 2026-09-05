@@ -12,9 +12,49 @@ import employerApi, {
   CANDIDATE_RESUME_MAX_FILE_SIZE_BYTES,
   CandidateResumeAnalysis,
   CandidateResumeProfile,
+  EmployerJobApplication,
 } from '../../api/employerApi';
 import { EMPTY_CANDIDATE_FORM, CandidateFormState, candidateFormToPayload, candidateToFormState } from './candidateFormUtils';
-import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2, FileText, Download, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  AlertCircle,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+  CheckCircle2,
+  FileText,
+  Download,
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Briefcase,
+} from 'lucide-react';
+
+const CANDIDATE_APPLICATIONS_PAGE_LIMIT = 20;
+
+const APPLICATION_STATUS_LABELS: Record<string, string> = {
+  applied: 'Applied',
+  screening: 'Screening',
+  shortlisted: 'Shortlisted',
+  interview: 'Interview',
+  offer: 'Offer',
+  hired: 'Hired',
+  rejected: 'Rejected',
+  withdrawn: 'Withdrawn',
+  archived: 'Archived',
+};
+
+const APPLICATION_STATUS_BADGE: Record<string, string> = {
+  applied: 'badge-info',
+  screening: 'badge-info',
+  shortlisted: 'badge-warning',
+  interview: 'badge-warning',
+  offer: 'badge-success',
+  hired: 'badge-success',
+  rejected: 'badge-neutral',
+  withdrawn: 'badge-neutral',
+  archived: 'badge-neutral',
+};
 
 const RESUME_FILE_TYPE_LABELS: Record<string, string> = {
   '.pdf': 'PDF',
@@ -318,6 +358,12 @@ const EmployerCandidateDetailPage: React.FC = () => {
   const [historyAnalysisLoadingId, setHistoryAnalysisLoadingId] = useState<string | null>(null);
   const [historyAnalysisError, setHistoryAnalysisError] = useState<Record<string, string>>({});
 
+  const [applications, setApplications] = useState<EmployerJobApplication[]>([]);
+  const [applicationsPage, setApplicationsPage] = useState(1);
+  const [applicationsTotal, setApplicationsTotal] = useState(0);
+  const [applicationsLoading, setApplicationsLoading] = useState(true);
+  const [applicationsError, setApplicationsError] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -498,6 +544,33 @@ const EmployerCandidateDetailPage: React.FC = () => {
       setDownloadingId(null);
     }
   };
+
+  const fetchApplications = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setApplicationsLoading(true);
+    setApplicationsError(null);
+    try {
+      const response = await employerApi.listApplications(organizationId, {
+        candidateId,
+        page: applicationsPage,
+        limit: CANDIDATE_APPLICATIONS_PAGE_LIMIT,
+      });
+      setApplications(response.data.applications);
+      setApplicationsTotal(response.data.pagination.total);
+    } catch (err: any) {
+      setApplicationsError(err.message || 'Failed to load job applications');
+    } finally {
+      setApplicationsLoading(false);
+    }
+  }, [organizationId, candidateId, applicationsPage]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchApplications();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchApplications]);
+
+  const applicationsTotalPages = Math.max(1, Math.ceil(applicationsTotal / CANDIDATE_APPLICATIONS_PAGE_LIMIT));
 
   const field = <K extends keyof CandidateFormState>(key: K, value: CandidateFormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -1271,6 +1344,83 @@ const EmployerCandidateDetailPage: React.FC = () => {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <Briefcase size={18} className="text-mentor-text-muted" />
+                Job Applications
+              </h2>
+
+              {applicationsLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : applicationsError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{applicationsError}</p>
+                  <button onClick={fetchApplications} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : applications.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">This candidate hasn't applied to any jobs yet.</p>
+              ) : (
+                <div className="divide-y divide-mentor-border">
+                  {applications.map((application) => (
+                    <div
+                      key={application.id}
+                      onClick={() => navigate(`/organizations/${organizationId}/employer/applications/${application.id}`)}
+                      className="flex flex-col sm:flex-row sm:items-center gap-2 py-3 cursor-pointer hover:bg-mentor-surface transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <Link
+                          to={`/organizations/${organizationId}/employer/jobs/${application.jobId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-sm font-medium text-mentor-text hover:underline"
+                        >
+                          {application.job?.title || 'Unknown job'}
+                        </Link>
+                        <p className="text-xs text-mentor-text-muted">{application.job?.jobCode || '—'}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        <span className="badge badge-neutral">{application.source}</span>
+                        <span className={`badge ${APPLICATION_STATUS_BADGE[application.status]}`}>
+                          {APPLICATION_STATUS_LABELS[application.status]}
+                        </span>
+                        <span className="text-xs text-mentor-text-muted whitespace-nowrap">{formatDate(application.appliedAt)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!applicationsLoading && !applicationsError && applicationsTotalPages > 1 && (
+                <div className="px-1 py-4 border-t border-mentor-border flex items-center justify-between gap-4 mt-2">
+                  <p className="text-xs text-mentor-text-muted">
+                    Page {applicationsPage} of {applicationsTotalPages}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setApplicationsPage((p) => Math.max(1, p - 1))}
+                      disabled={applicationsPage <= 1}
+                      className="btn btn-secondary px-3 py-2"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      onClick={() => setApplicationsPage((p) => Math.min(applicationsTotalPages, p + 1))}
+                      disabled={applicationsPage >= applicationsTotalPages}
+                      className="btn btn-secondary px-3 py-2"
+                      aria-label="Next page"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </>
