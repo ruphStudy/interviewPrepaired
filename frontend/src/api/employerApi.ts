@@ -1457,6 +1457,63 @@ export interface EmployerHiringAssessmentResult {
 export type CreateEmployerHiringAssessmentResultResponse = ApiEnvelope<{ result: EmployerHiringAssessmentResult }>;
 export type GetEmployerHiringAssessmentResultResponse = ApiEnvelope<{ result: EmployerHiringAssessmentResult | null }>;
 
+// ============================================================================
+// Employer Hiring Evidence Matrix — deterministic (no AI) evidence
+// intelligence built from 21D evaluations + 21E result (Sprint 22A).
+// Employer-only; never exposed to the candidate.
+// ============================================================================
+
+export type EvidenceStatus = 'strong' | 'sufficient' | 'partial' | 'insufficient';
+
+export interface EvidenceSourceQuestion {
+  questionIndex: number;
+  questionText: string;
+  rubricScore: number;
+  evidence: string[];
+  missingEvidence: string[];
+}
+
+export interface EvidenceCompetency {
+  competencyName: string;
+  importance: string;
+  jdWeight: number;
+  score: number;
+  evidenceStatus: EvidenceStatus;
+  supportingEvidence: string[];
+  missingEvidence: string[];
+  sourceQuestions: EvidenceSourceQuestion[];
+  requiresFollowUp: boolean;
+  followUpReasons: string[];
+}
+
+export interface EvidenceSummary {
+  strongCount: number;
+  sufficientCount: number;
+  partialCount: number;
+  insufficientCount: number;
+  followUpCompetencyCount: number;
+  criticalFollowUpCount: number;
+}
+
+export interface HiringEvidenceMatrix {
+  competencies: EvidenceCompetency[];
+  summary: EvidenceSummary;
+  calculationVersion: string;
+}
+
+export interface EmployerHiringEvidenceMatrix {
+  id: string;
+  interviewId: string;
+  blueprintId: string;
+  rubricId: string;
+  assessmentResultId: string;
+  matrix: HiringEvidenceMatrix;
+  createdAt: string;
+}
+
+export type CreateEmployerHiringEvidenceMatrixResponse = ApiEnvelope<{ evidence: EmployerHiringEvidenceMatrix }>;
+export type GetEmployerHiringEvidenceMatrixResponse = ApiEnvelope<{ evidence: EmployerHiringEvidenceMatrix | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2472,6 +2529,35 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load assessment result');
+    }
+  }
+
+  /** Idempotent — an existing matrix is returned as-is, never recomputed. */
+  async createEmployerHiringEvidenceMatrix(
+    organizationId: string,
+    applicationId: string
+  ): Promise<CreateEmployerHiringEvidenceMatrixResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerHiringEvidenceMatrixResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/evidence`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate evidence analysis');
+    }
+  }
+
+  async getEmployerHiringEvidenceMatrix(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerHiringEvidenceMatrixResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringEvidenceMatrixResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/evidence`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load evidence analysis');
     }
   }
 }

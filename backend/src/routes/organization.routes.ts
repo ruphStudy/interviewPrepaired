@@ -44,6 +44,7 @@ import employerInterviewCompetencyRubricController from '../controllers/Employer
 import employerInterviewInvitationController from '../controllers/EmployerInterviewInvitationController';
 import employerInterviewSessionController from '../controllers/EmployerInterviewSessionController';
 import employerHiringAssessmentResultController from '../controllers/EmployerHiringAssessmentResultController';
+import employerHiringEvidenceMatrixController from '../controllers/EmployerHiringEvidenceMatrixController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2704,6 +2705,28 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringAssessmentResultController.getResult
+);
+
+// POST/GET .../interview-session/evidence (22A) — deterministic (no AI)
+// evidence matrix built from 21D evaluations + 21E assessment result.
+router.post(
+  '/:organizationId/applications/:applicationId/interview-session/evidence',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringEvidenceMatrixController.createMatrix
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/evidence',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringEvidenceMatrixController.getMatrix
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

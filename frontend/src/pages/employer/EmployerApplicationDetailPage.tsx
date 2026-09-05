@@ -24,6 +24,7 @@ import employerApi, {
   EmployerInterviewSessionQuestions,
   EmployerInterviewSessionAnswers,
   EmployerHiringAssessmentResult,
+  EmployerHiringEvidenceMatrix,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -754,6 +755,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [generatingResult, setGeneratingResult] = useState(false);
   const [generateResultError, setGenerateResultError] = useState<string | null>(null);
 
+  const [evidenceMatrix, setEvidenceMatrix] = useState<EmployerHiringEvidenceMatrix | null>(null);
+  const [evidenceMatrixLoading, setEvidenceMatrixLoading] = useState(false);
+  const [evidenceMatrixError, setEvidenceMatrixError] = useState<string | null>(null);
+  const [generatingEvidence, setGeneratingEvidence] = useState(false);
+  const [generateEvidenceError, setGenerateEvidenceError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1151,6 +1158,40 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setGenerateResultError(err.message || 'Failed to generate assessment result');
     } finally {
       setGeneratingResult(false);
+    }
+  };
+
+  const fetchEvidenceMatrix = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setEvidenceMatrixLoading(true);
+    setEvidenceMatrixError(null);
+    try {
+      const response = await employerApi.getEmployerHiringEvidenceMatrix(organizationId, applicationId);
+      setEvidenceMatrix(response.data.evidence);
+    } catch (err: any) {
+      setEvidenceMatrixError(err.message || 'Failed to load evidence analysis');
+    } finally {
+      setEvidenceMatrixLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && assessmentResult) {
+      fetchEvidenceMatrix();
+    }
+  }, [isSyncing, activeOrganization, canView, assessmentResult, fetchEvidenceMatrix]);
+
+  const handleGenerateEvidence = async () => {
+    if (!organizationId || !applicationId) return;
+    setGeneratingEvidence(true);
+    setGenerateEvidenceError(null);
+    try {
+      const response = await employerApi.createEmployerHiringEvidenceMatrix(organizationId, applicationId);
+      setEvidenceMatrix(response.data.evidence);
+    } catch (err: any) {
+      setGenerateEvidenceError(err.message || 'Failed to generate evidence analysis');
+    } finally {
+      setGeneratingEvidence(false);
     }
   };
 
@@ -2208,6 +2249,99 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           {generateResultError && <p className="text-sm text-mentor-error mb-2">{generateResultError}</p>}
                           <button onClick={handleGenerateResult} disabled={generatingResult} className="btn btn-primary">
                             {generatingResult ? 'Generating...' : 'Generate Assessment Result'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isEvaluated && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Evidence Intelligence</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">Employer Evidence Analysis — not visible to candidate.</p>
+
+                      {!assessmentResult ? (
+                        <p className="text-sm text-mentor-text-secondary">Generate the assessment result first.</p>
+                      ) : evidenceMatrixLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : evidenceMatrixError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{evidenceMatrixError}</p>
+                          <button onClick={fetchEvidenceMatrix} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : evidenceMatrix ? (
+                        <div className="space-y-4">
+                          <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Strong</dt>
+                              <dd className="text-sm text-mentor-text">{evidenceMatrix.matrix.summary.strongCount}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Sufficient</dt>
+                              <dd className="text-sm text-mentor-text">{evidenceMatrix.matrix.summary.sufficientCount}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Partial</dt>
+                              <dd className="text-sm text-mentor-text">{evidenceMatrix.matrix.summary.partialCount}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Insufficient</dt>
+                              <dd className="text-sm text-mentor-text">{evidenceMatrix.matrix.summary.insufficientCount}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Needs Follow-up</dt>
+                              <dd className="text-sm text-mentor-text">{evidenceMatrix.matrix.summary.followUpCompetencyCount}</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Critical Follow-up</dt>
+                              <dd className="text-sm text-mentor-text">{evidenceMatrix.matrix.summary.criticalFollowUpCount}</dd>
+                            </div>
+                          </dl>
+
+                          <ul className="space-y-3">
+                            {evidenceMatrix.matrix.competencies.map((c) => (
+                              <li key={c.competencyName} className="surface-muted p-3">
+                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                  <p className="text-sm text-mentor-text">
+                                    {c.competencyName} <span className="text-xs text-mentor-text-muted capitalize">({c.importance})</span>
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <span className="badge capitalize">{c.evidenceStatus}</span>
+                                    {c.requiresFollowUp && <span className="badge">Follow-up required</span>}
+                                  </div>
+                                </div>
+                                <p className="text-xs text-mentor-text-secondary mt-1">
+                                  JD Weight: {c.jdWeight}% &middot; Score: {c.score}/5 &middot; Questions: {c.sourceQuestions.length}
+                                </p>
+                                {c.supportingEvidence.length > 0 && (
+                                  <p className="text-xs text-mentor-success mt-1">Evidence: {c.supportingEvidence.join('; ')}</p>
+                                )}
+                                {c.missingEvidence.length > 0 && (
+                                  <p className="text-xs text-mentor-warning mt-1">Missing: {c.missingEvidence.join('; ')}</p>
+                                )}
+                                {c.followUpReasons.length > 0 && (
+                                  <p className="text-xs text-mentor-warning mt-1">Reasons: {c.followUpReasons.join('; ')}</p>
+                                )}
+                                {c.sourceQuestions.length > 0 && (
+                                  <ul className="mt-2 pt-2 border-t border-mentor-border space-y-1">
+                                    {c.sourceQuestions.map((sq) => (
+                                      <li key={sq.questionIndex} className="text-xs text-mentor-text-muted">
+                                        Q{sq.questionIndex + 1}: {sq.questionText} — {sq.rubricScore}/5
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div>
+                          {generateEvidenceError && <p className="text-sm text-mentor-error mb-2">{generateEvidenceError}</p>}
+                          <button onClick={handleGenerateEvidence} disabled={generatingEvidence} className="btn btn-primary">
+                            {generatingEvidence ? 'Generating...' : 'Generate Evidence Analysis'}
                           </button>
                         </div>
                       )}
