@@ -16,7 +16,6 @@ import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { employerJobApplicationService } from './EmployerJobApplicationService';
 import { EmployerJobApplicationStatus } from '../constants/employerJobApplication';
-import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationStatus } from '../constants/organization';
 import { ApiError } from '../utils/ApiError';
 
@@ -426,15 +425,17 @@ export class PublicEmployerInterviewInvitationService {
       return this.toCompletionDetail(winner);
     }
 
-    // Best-effort application status sync (18D: shortlisted -> interview).
-    // Interview completion above is authoritative — no transaction spans
-    // both writes, so any failure here (already "interview", archived
-    // job/candidate, etc.) is logged and swallowed, never undoing or
-    // failing the completion the candidate already accomplished.
+    // Best-effort application status sync (18D: shortlisted -> interview),
+    // via the trusted-internal-caller-only workflow method — this is a
+    // system action with no acting organization member, so it must never
+    // impersonate a fake RBAC role. Interview completion above is
+    // authoritative — no transaction spans both writes, so any failure here
+    // (already "interview", archived job/candidate, etc.) is logged and
+    // swallowed, never undoing or failing the completion the candidate
+    // already accomplished.
     try {
-      await employerJobApplicationService.updateApplicationStatus(
+      await employerJobApplicationService.syncApplicationStatusFromHiringWorkflow(
         chain.organization._id.toString(),
-        OrganizationMemberRole.OWNER,
         invitation.applicationId.toString(),
         EmployerJobApplicationStatus.INTERVIEW
       );

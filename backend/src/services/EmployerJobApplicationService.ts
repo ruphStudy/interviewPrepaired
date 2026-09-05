@@ -262,7 +262,43 @@ export class EmployerJobApplicationService {
     targetStatus: EmployerJobApplicationStatus
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
+    return this.transitionApplicationStatus(organizationId, applicationId, targetStatus);
+  }
 
+  /**
+   * INTERNAL, backend-only entry point for a trusted system workflow to
+   * advance an application's status (e.g. 21C: hiring-assessment
+   * completion moving shortlisted -> interview). No RBAC check — there is
+   * no acting organization member in a public/system workflow, and
+   * impersonating one (a fake role) is exactly what this method exists to
+   * avoid. Never exposed by a controller/route. Runs the SAME transition
+   * map, mutability checks, and persistence as `updateApplicationStatus` —
+   * see `transitionApplicationStatus`, the one lifecycle authority both
+   * methods share.
+   */
+  async syncApplicationStatusFromHiringWorkflow(
+    organizationId: string,
+    applicationId: string,
+    targetStatus: EmployerJobApplicationStatus
+  ): Promise<Record<string, unknown>> {
+    return this.transitionApplicationStatus(organizationId, applicationId, targetStatus);
+  }
+
+  /**
+   * The ONLY place an application's status actually changes. Explicit
+   * transition map (EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS); an
+   * unlisted or same-status "transition" is rejected with a clear 409,
+   * never silently accepted. No reopening a hired/rejected/withdrawn
+   * application — the only outgoing transition from those is to
+   * `archived`. Callers are responsible for their own authorization
+   * (RBAC for `updateApplicationStatus`, trusted-internal-caller-only for
+   * `syncApplicationStatusFromHiringWorkflow`) before reaching this helper.
+   */
+  private async transitionApplicationStatus(
+    organizationId: string,
+    applicationId: string,
+    targetStatus: EmployerJobApplicationStatus
+  ): Promise<Record<string, unknown>> {
     if (!targetStatus || !Object.values(EmployerJobApplicationStatus).includes(targetStatus)) {
       throw new ApiError(400, 'A valid status is required');
     }
