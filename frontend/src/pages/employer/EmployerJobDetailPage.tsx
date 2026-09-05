@@ -17,6 +17,8 @@ import employerApi, {
   EmployerCandidate,
   JobRanking,
   JobRankingFilters,
+  JobCandidateComparison,
+  JobCandidateComparisonFilters,
   JobShortlistRow,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
@@ -41,6 +43,9 @@ import {
   X,
   ListOrdered,
   Star,
+  Scale,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 const APPLICATIONS_PAGE_LIMIT = 20;
@@ -248,6 +253,15 @@ const EmployerJobDetailPage: React.FC = () => {
   const [rankingSearchInput, setRankingSearchInput] = useState('');
   const [appliedRankingFilters, setAppliedRankingFilters] = useState<JobRankingFilters>({});
 
+  const [comparison, setComparison] = useState<JobCandidateComparison | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(true);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [comparisonStatusInput, setComparisonStatusInput] = useState<EmployerJobApplicationStatus | ''>('');
+  const [comparisonMinScoreInput, setComparisonMinScoreInput] = useState('');
+  const [comparisonSearchInput, setComparisonSearchInput] = useState('');
+  const [appliedComparisonFilters, setAppliedComparisonFilters] = useState<JobCandidateComparisonFilters>({});
+  const [expandedComparisonRow, setExpandedComparisonRow] = useState<string | null>(null);
+
   const [shortlistingApplicationId, setShortlistingApplicationId] = useState<string | null>(null);
   const [shortlistActionError, setShortlistActionError] = useState<string | null>(null);
 
@@ -431,6 +445,42 @@ const EmployerJobDetailPage: React.FC = () => {
     setRankingMinScoreInput('');
     setRankingSearchInput('');
     setAppliedRankingFilters({});
+  };
+
+  const fetchComparison = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setComparisonLoading(true);
+    setComparisonError(null);
+    try {
+      const response = await employerApi.getEmployerJobCandidateComparison(organizationId, jobId, appliedComparisonFilters);
+      setComparison(response.data);
+    } catch (err: any) {
+      setComparisonError(err.message || 'Failed to load candidate comparison');
+    } finally {
+      setComparisonLoading(false);
+    }
+  }, [organizationId, jobId, appliedComparisonFilters]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchComparison();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchComparison]);
+
+  const handleApplyComparisonFilters = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAppliedComparisonFilters({
+      status: comparisonStatusInput || undefined,
+      minOverallScore: comparisonMinScoreInput ? Number(comparisonMinScoreInput) : undefined,
+      search: comparisonSearchInput || undefined,
+    });
+  };
+
+  const handleClearComparisonFilters = () => {
+    setComparisonStatusInput('');
+    setComparisonMinScoreInput('');
+    setComparisonSearchInput('');
+    setAppliedComparisonFilters({});
   };
 
   const fetchJobShortlist = useCallback(async () => {
@@ -1663,6 +1713,213 @@ const EmployerJobDetailPage: React.FC = () => {
                               <p className="text-xs text-mentor-text-muted truncate">{row.candidate.email}</p>
                             </div>
                             <span className="badge badge-neutral shrink-0">{UNRANKED_REASON_LABELS[row.reason] || row.reason}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <Scale size={18} className="text-mentor-text-muted" />
+                Assessment Comparison
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Ordered by finalized post-assessment evidence (comparisonPosition) — distinct from Candidate Ranking above, which uses
+                pre-interview screening scores.
+              </p>
+
+              <form onSubmit={handleApplyComparisonFilters} className="flex flex-wrap items-end gap-3 mb-4">
+                <div>
+                  <label className="label mb-1 block">Status</label>
+                  <select
+                    value={comparisonStatusInput}
+                    onChange={(e) => setComparisonStatusInput(e.target.value as EmployerJobApplicationStatus | '')}
+                    className="input"
+                  >
+                    <option value="">All statuses</option>
+                    {APPLICATION_STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {APPLICATION_STATUS_LABELS[status]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label mb-1 block">Min. Overall Score</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={comparisonMinScoreInput}
+                    onChange={(e) => setComparisonMinScoreInput(e.target.value)}
+                    placeholder="0"
+                    className="input w-24"
+                  />
+                </div>
+                <div className="flex-1 min-w-[180px]">
+                  <label className="label mb-1 block">Search Candidate</label>
+                  <input
+                    type="text"
+                    value={comparisonSearchInput}
+                    onChange={(e) => setComparisonSearchInput(e.target.value)}
+                    placeholder="First or last name..."
+                    className="input w-full"
+                  />
+                </div>
+                <button type="submit" className="btn btn-primary">
+                  Apply
+                </button>
+                <button type="button" onClick={handleClearComparisonFilters} className="btn btn-secondary">
+                  Clear
+                </button>
+              </form>
+
+              {comparisonLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : comparisonError ? (
+                <div className="p-8 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{comparisonError}</p>
+                  <button onClick={fetchComparison} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !comparison || comparison.summary.totalApplications === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No applications yet.</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Finalized</p>
+                      <p className="text-lg font-semibold text-mentor-text">{comparison.summary.finalizedCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Awaiting Finalization</p>
+                      <p className="text-lg font-semibold text-mentor-text">{comparison.summary.notReadyCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Average Score</p>
+                      <p className="text-lg font-semibold text-mentor-text">
+                        {comparison.summary.averageOverallScore !== undefined ? `${comparison.summary.averageOverallScore}/100` : '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {comparison.comparison.length === 0 ? (
+                    <p className="text-sm text-mentor-text-secondary py-4">
+                      {Object.keys(appliedComparisonFilters).some((k) => (appliedComparisonFilters as any)[k])
+                        ? 'No finalized candidates match these filters.'
+                        : 'No candidates have a finalized assessment yet.'}
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto -mx-2">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs text-mentor-text-muted border-b border-mentor-border">
+                            <th className="px-2 py-2 font-medium">#</th>
+                            <th className="px-2 py-2 font-medium">Candidate</th>
+                            <th className="px-2 py-2 font-medium">Status</th>
+                            <th className="px-2 py-2 font-medium">Overall</th>
+                            <th className="px-2 py-2 font-medium">Rubric</th>
+                            <th className="px-2 py-2 font-medium">Coverage</th>
+                            <th className="px-2 py-2 font-medium">Weight</th>
+                            <th className="px-2 py-2 font-medium">Evidence</th>
+                            <th className="px-2 py-2 font-medium">Follow-up</th>
+                            <th className="px-2 py-2 font-medium">Finalized</th>
+                            <th className="px-2 py-2 font-medium" />
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-mentor-border">
+                          {comparison.comparison.map((row) => (
+                            <React.Fragment key={row.applicationId}>
+                              <tr>
+                                <td className="px-2 py-2.5 font-semibold text-mentor-text">#{row.comparisonPosition}</td>
+                                <td className="px-2 py-2.5">
+                                  <Link
+                                    to={`/organizations/${organizationId}/employer/applications/${row.applicationId}`}
+                                    className="font-medium text-mentor-text hover:underline"
+                                  >
+                                    {row.candidate.firstName} {row.candidate.lastName}
+                                  </Link>
+                                </td>
+                                <td className="px-2 py-2.5">
+                                  <span className={`badge ${APPLICATION_STATUS_BADGE[row.applicationStatus]}`}>
+                                    {APPLICATION_STATUS_LABELS[row.applicationStatus]}
+                                  </span>
+                                </td>
+                                <td className="px-2 py-2.5 font-semibold text-mentor-text">{row.assessment.overallScore}/100</td>
+                                <td className="px-2 py-2.5 text-mentor-text-secondary">{row.assessment.averageRubricScore}/5</td>
+                                <td className="px-2 py-2.5 text-mentor-text-secondary">{row.assessment.competencyCoveragePercent}%</td>
+                                <td className="px-2 py-2.5 text-mentor-text-secondary">{row.assessment.assessedWeight}%</td>
+                                <td className="px-2 py-2.5 text-xs text-mentor-text-secondary whitespace-nowrap">
+                                  {row.assessment.evidenceSummary.strongCount}s/{row.assessment.evidenceSummary.sufficientCount}sf/
+                                  {row.assessment.evidenceSummary.partialCount}p/{row.assessment.evidenceSummary.insufficientCount}i
+                                </td>
+                                <td className="px-2 py-2.5 text-xs text-mentor-text-secondary whitespace-nowrap">
+                                  {row.assessment.evidenceSummary.followUpCompetencyCount} (
+                                  {row.assessment.evidenceSummary.criticalFollowUpCount} critical)
+                                </td>
+                                <td className="px-2 py-2.5 text-xs text-mentor-text-muted whitespace-nowrap">
+                                  {formatDate(row.assessment.finalizedAt)}
+                                </td>
+                                <td className="px-2 py-2.5 whitespace-nowrap">
+                                  <button
+                                    onClick={() =>
+                                      setExpandedComparisonRow(expandedComparisonRow === row.applicationId ? null : row.applicationId)
+                                    }
+                                    className="btn btn-secondary px-2 py-1"
+                                    aria-label="Toggle competency detail"
+                                  >
+                                    {expandedComparisonRow === row.applicationId ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                  </button>
+                                </td>
+                              </tr>
+                              {expandedComparisonRow === row.applicationId && (
+                                <tr>
+                                  <td colSpan={11} className="px-2 py-3 bg-mentor-surface">
+                                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                      {row.competencies.map((c) => (
+                                        <div key={c.competencyName} className="surface-muted p-2">
+                                          <p className="text-xs font-medium text-mentor-text">
+                                            {c.competencyName} <span className="text-mentor-text-muted capitalize">({c.importance})</span>
+                                          </p>
+                                          <p className="text-xs text-mentor-text-secondary">
+                                            JD Weight: {c.jdWeight}% &middot; Score: {c.score}/5 &middot;{' '}
+                                            <span className="capitalize">{c.evidenceStatus}</span>
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {comparison.notReady.length > 0 && (
+                    <div className="mt-5 pt-4 border-t border-mentor-border">
+                      <p className="label mb-2">Assessment not finalized</p>
+                      <div className="divide-y divide-mentor-border">
+                        {comparison.notReady.map((row) => (
+                          <Link
+                            key={row.applicationId}
+                            to={`/organizations/${organizationId}/employer/applications/${row.applicationId}`}
+                            className="flex items-center justify-between gap-3 py-2.5 hover:bg-mentor-surface transition-colors -mx-2 px-2 rounded"
+                          >
+                            <p className="text-sm font-medium text-mentor-text truncate">
+                              {row.candidate.firstName} {row.candidate.lastName}
+                            </p>
+                            <span className="badge badge-neutral shrink-0">Assessment not finalized</span>
                           </Link>
                         ))}
                       </div>

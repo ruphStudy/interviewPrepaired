@@ -38,6 +38,7 @@ import employerCandidateScreeningController from '../controllers/EmployerCandida
 import employerCandidateScreeningScoreController from '../controllers/EmployerCandidateScreeningScoreController';
 import employerCandidateScreeningGapController from '../controllers/EmployerCandidateScreeningGapController';
 import employerCandidateRankingController from '../controllers/EmployerCandidateRankingController';
+import employerHiringCandidateComparisonController from '../controllers/EmployerHiringCandidateComparisonController';
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
@@ -2432,6 +2433,34 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateRankingController.getJobRanking
+);
+
+// ============================================================================
+// Job Candidate Comparison (23A) — a live, deterministic, job-level read
+// across candidates with a COMPLETED 22E finalization. Distinct from 19D's
+// pre-interview screening ranking above: this orders ONLY by finalized
+// post-assessment evidence metrics (comparisonPosition), never resume/
+// screening scores. No AI, no persisted comparison document, no
+// recommendation. Read-only, so an archived organization/job remains
+// readable.
+// ============================================================================
+
+const candidateComparisonQueryValidation = [
+  query('status').optional().isIn(Object.values(EmployerJobApplicationStatus)).withMessage('Invalid application status'),
+  query('minOverallScore').optional().isFloat({ min: 0, max: 100 }).withMessage('minOverallScore must be between 0 and 100'),
+  query('search').optional().isString().trim().isLength({ max: 200 }).withMessage('search must be at most 200 characters'),
+  query('finalizedOnly').optional().isBoolean().withMessage('finalizedOnly must be a boolean'),
+];
+
+router.get(
+  '/:organizationId/jobs/:jobId/candidate-comparison',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...candidateComparisonQueryValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringCandidateComparisonController.getComparison
 );
 
 // ============================================================================

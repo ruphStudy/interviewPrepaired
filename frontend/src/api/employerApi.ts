@@ -1103,6 +1103,87 @@ export interface JobRankingFilters {
 export type GetEmployerJobRankingResponse = ApiEnvelope<JobRanking>;
 
 // ============================================================================
+// Job Candidate Comparison (Sprint 23A) — a live, deterministic, job-level
+// read across candidates with a COMPLETED 22E finalization. Distinct from
+// 19D screening ranking above: orders ONLY by finalized post-assessment
+// evidence metrics (`comparisonPosition`), never resume/screening scores.
+// No persisted comparison, no recommendation.
+// ============================================================================
+
+export interface ComparisonCandidateRef {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+export interface ComparisonEvidenceSummary {
+  strongCount: number;
+  sufficientCount: number;
+  partialCount: number;
+  insufficientCount: number;
+  followUpCompetencyCount: number;
+  criticalFollowUpCount: number;
+}
+
+export interface ComparisonCompetencyRow {
+  competencyName: string;
+  importance: string;
+  jdWeight: number;
+  score: number;
+  evidenceStatus: string;
+}
+
+export interface ComparisonApplicationRow {
+  comparisonPosition: number;
+  applicationId: string;
+  candidate: ComparisonCandidateRef;
+  applicationStatus: EmployerJobApplicationStatus;
+  assessment: {
+    overallScore: number;
+    averageRubricScore: number;
+    competencyCoveragePercent: number;
+    assessedWeight: number;
+    evidenceSummary: ComparisonEvidenceSummary;
+    followUpQuestionCount: number;
+    reviewedCount: number;
+    finalizedAt: string;
+  };
+  competencies: ComparisonCompetencyRow[];
+}
+
+export type ComparisonNotReadyReason = 'assessment_not_finalized';
+
+export interface ComparisonNotReadyRow {
+  applicationId: string;
+  candidate: ComparisonCandidateRef;
+  applicationStatus: EmployerJobApplicationStatus;
+  reason: ComparisonNotReadyReason;
+}
+
+export interface JobCandidateComparison {
+  job: { id: string; title: string; jobCode?: string; status: EmployerJobStatus };
+  comparison: ComparisonApplicationRow[];
+  notReady: ComparisonNotReadyRow[];
+  summary: {
+    totalApplications: number;
+    finalizedCount: number;
+    notReadyCount: number;
+    averageOverallScore?: number;
+    highestOverallScore?: number;
+    lowestOverallScore?: number;
+  };
+}
+
+export interface JobCandidateComparisonFilters {
+  status?: EmployerJobApplicationStatus;
+  minOverallScore?: number;
+  search?: string;
+  finalizedOnly?: boolean;
+}
+
+export type GetJobCandidateComparisonResponse = ApiEnvelope<JobCandidateComparison>;
+
+// ============================================================================
 // Employer Shortlist Workflow (Sprint 19E) — an explicit recruiter action
 // only, never automatic. Reuses the existing 18D application status
 // transition (screening -> shortlisted) under the hood; this is purely an
@@ -2489,6 +2570,25 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load candidate ranking');
+    }
+  }
+
+  // ---- Job Candidate Comparison (Sprint 23A) ----
+
+  /** Live, deterministic, server-computed comparison — never client-sorted or client-reordered. Distinct from 19D ranking. */
+  async getEmployerJobCandidateComparison(
+    organizationId: string,
+    jobId: string,
+    filters: JobCandidateComparisonFilters = {}
+  ): Promise<GetJobCandidateComparisonResponse> {
+    try {
+      const response = await this.api.get<GetJobCandidateComparisonResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/candidate-comparison`,
+        { params: filters }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load candidate comparison');
     }
   }
 
