@@ -5,6 +5,7 @@ import { EmployerJobApplicationStatus } from '../constants/employerJobApplicatio
 import EmployerJobApplicationActivity from '../models/EmployerJobApplicationActivity.model';
 import EmployerHiringAssessmentFinalization from '../models/EmployerHiringAssessmentFinalization.model';
 import EmployerJobApplicationDecision from '../models/EmployerJobApplicationDecision.model';
+import EmployerJobApplicationNote from '../models/EmployerJobApplicationNote.model';
 import OrganizationMember from '../models/OrganizationMember.model';
 import { User } from '../models/user.model';
 import { OrganizationType } from '../constants/organization';
@@ -13,7 +14,7 @@ import { OrganizationPermission, hasOrganizationPermission } from '../constants/
 import { ApiError } from '../utils/ApiError';
 
 interface TimelineItemInternal {
-  type: 'application_created' | 'status_changed' | 'assessment_finalized' | 'employer_decision';
+  type: 'application_created' | 'status_changed' | 'assessment_finalized' | 'employer_decision' | 'internal_note_added';
   occurredAt: Date;
   actorType: 'member' | 'system';
   actorMembershipId?: string;
@@ -114,6 +115,25 @@ export class EmployerJobApplicationTimelineService {
           reasonCode: decision.reasonCode,
           notes: decision.notes,
         },
+      });
+    }
+
+    // Note rows (24A) remain authoritative in EmployerJobApplicationNote —
+    // never duplicated into EmployerJobApplicationActivity storage, and
+    // the full note body is NEVER included here, only its id.
+    const notes = await EmployerJobApplicationNote.find({
+      organizationId: organization._id,
+      applicationId: application._id,
+    })
+      .select('_id createdByMembershipId createdAt')
+      .lean();
+    for (const note of notes) {
+      items.push({
+        type: 'internal_note_added',
+        occurredAt: note.createdAt,
+        actorType: 'member',
+        actorMembershipId: note.createdByMembershipId.toString(),
+        metadata: { noteId: note._id.toString() },
       });
     }
 

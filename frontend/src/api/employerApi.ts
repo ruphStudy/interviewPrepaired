@@ -1892,7 +1892,12 @@ export type CreateHiringAssessmentFinalizationResponse = ApiEnvelope<{ finalizat
 // position, never alters lifecycle. Distinct from the 23B pipeline board.
 // ============================================================================
 
-export type ApplicationActivityType = 'application_created' | 'status_changed' | 'assessment_finalized' | 'employer_decision';
+export type ApplicationActivityType =
+  | 'application_created'
+  | 'status_changed'
+  | 'assessment_finalized'
+  | 'employer_decision'
+  | 'internal_note_added';
 
 export interface ApplicationActivityActor {
   type: 'member' | 'system';
@@ -1912,6 +1917,7 @@ export interface ApplicationActivityItem {
     decisionType?: EmployerJobApplicationDecisionType;
     reasonCode?: EmployerJobApplicationDecisionReasonCode;
     notes?: string;
+    noteId?: string;
   };
 }
 
@@ -2004,6 +2010,28 @@ export interface CreateEmployerJobApplicationDecisionPayload {
 
 export type GetEmployerJobApplicationDecisionsResponse = ApiEnvelope<{ decisions: EmployerJobApplicationDecisionRecord[] }>;
 export type CreateEmployerJobApplicationDecisionResponse = ApiEnvelope<{ decision: EmployerJobApplicationDecisionRecord }>;
+
+// ============================================================================
+// Internal Employer Notes (Sprint 24A) — discussion/context only, immutable
+// after creation. Never affects scores, recommendations, or pipeline
+// status. Distinct from the 23E structured decision log. Never exposed to
+// the candidate.
+// ============================================================================
+
+export interface EmployerJobApplicationNoteAuthor {
+  membershipId: string;
+  displayName?: string;
+}
+
+export interface EmployerJobApplicationNoteRecord {
+  id: string;
+  body: string;
+  createdAt: string;
+  author: EmployerJobApplicationNoteAuthor;
+}
+
+export type GetEmployerJobApplicationNotesResponse = ApiEnvelope<{ notes: EmployerJobApplicationNoteRecord[] }>;
+export type CreateEmployerJobApplicationNoteResponse = ApiEnvelope<{ note: EmployerJobApplicationNoteRecord }>;
 
 class EmployerApiService {
   private api: AxiosInstance;
@@ -3290,6 +3318,34 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to record decision');
+    }
+  }
+
+  async getEmployerJobApplicationNotes(organizationId: string, applicationId: string): Promise<GetEmployerJobApplicationNotesResponse> {
+    try {
+      const response = await this.api.get<GetEmployerJobApplicationNotesResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/notes`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load notes');
+    }
+  }
+
+  /** Immutable after creation — no edit/delete in 24A. */
+  async createEmployerJobApplicationNote(
+    organizationId: string,
+    applicationId: string,
+    body: string
+  ): Promise<CreateEmployerJobApplicationNoteResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerJobApplicationNoteResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/notes`,
+        { body }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to add note');
     }
   }
 }

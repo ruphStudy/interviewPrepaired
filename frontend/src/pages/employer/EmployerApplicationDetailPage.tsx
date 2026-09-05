@@ -36,6 +36,7 @@ import employerApi, {
   EmployerJobApplicationDecisionReasonCode,
   EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
   EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES,
+  EmployerJobApplicationNoteRecord,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -819,6 +820,13 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [savingDecision, setSavingDecision] = useState(false);
   const [saveDecisionError, setSaveDecisionError] = useState<string | null>(null);
 
+  const [internalNotes, setInternalNotes] = useState<EmployerJobApplicationNoteRecord[]>([]);
+  const [notesLoading, setNotesLoading] = useState(true);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [newNoteBody, setNewNoteBody] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [saveNoteError, setSaveNoteError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1469,6 +1477,42 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setSaveDecisionError(err.message || 'Failed to record decision');
     } finally {
       setSavingDecision(false);
+    }
+  };
+
+  const fetchNotes = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setNotesLoading(true);
+    setNotesError(null);
+    try {
+      const response = await employerApi.getEmployerJobApplicationNotes(organizationId, applicationId);
+      setInternalNotes(response.data.notes);
+    } catch (err: any) {
+      setNotesError(err.message || 'Failed to load notes');
+    } finally {
+      setNotesLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchNotes();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchNotes]);
+
+  const handleAddNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !applicationId || !newNoteBody.trim()) return;
+    setSavingNote(true);
+    setSaveNoteError(null);
+    try {
+      await employerApi.createEmployerJobApplicationNote(organizationId, applicationId, newNoteBody.trim());
+      setNewNoteBody('');
+      await Promise.all([fetchNotes(), fetchTimeline()]);
+    } catch (err: any) {
+      setSaveNoteError(err.message || 'Failed to add note');
+    } finally {
+      setSavingNote(false);
     }
   };
 
@@ -2951,7 +2995,9 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           ? `Stage changed: ${capitalizeStatus(item.fromStatus)} → ${capitalizeStatus(item.toStatus)}`
                           : item.type === 'assessment_finalized'
                           ? 'Assessment package finalized'
-                          : 'Employer decision recorded'}
+                          : item.type === 'employer_decision'
+                          ? 'Employer decision recorded'
+                          : 'Internal note added'}
                       </p>
                       <p className="text-xs text-mentor-text-muted mt-0.5">
                         {formatDateTime(item.occurredAt)} &middot; {item.actor.type === 'member' ? item.actor.displayName || 'Member' : 'System'}
@@ -3070,6 +3116,58 @@ const EmployerApplicationDetailPage: React.FC = () => {
                         {capitalizeStatus(d.applicationStatusAtDecision)}
                       </p>
                       {d.notes && <p className="text-xs text-mentor-text-secondary mt-1">{d.notes}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <Send size={18} className="text-mentor-text-muted" />
+                Internal Notes
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">Internal employer notes — not visible to candidate.</p>
+
+              {canManage && (
+                <form onSubmit={handleAddNote} className="mb-4 space-y-2">
+                  <textarea
+                    value={newNoteBody}
+                    onChange={(e) => setNewNoteBody(e.target.value)}
+                    rows={3}
+                    maxLength={3000}
+                    className="input w-full"
+                    placeholder="Add an internal note..."
+                  />
+                  {saveNoteError && <p className="text-sm text-mentor-error">{saveNoteError}</p>}
+                  <button type="submit" disabled={savingNote || !newNoteBody.trim()} className="btn btn-primary">
+                    {savingNote ? 'Saving...' : 'Add Note'}
+                  </button>
+                </form>
+              )}
+
+              {notesLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : notesError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{notesError}</p>
+                  <button onClick={fetchNotes} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : internalNotes.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No internal notes yet.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {internalNotes.map((n) => (
+                    <li key={n.id} className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted mb-1">
+                        {n.author.displayName || 'Member'} &middot; {formatDateTime(n.createdAt)}
+                      </p>
+                      <p className="text-sm text-mentor-text whitespace-pre-wrap">{n.body}</p>
                     </li>
                   ))}
                 </ul>

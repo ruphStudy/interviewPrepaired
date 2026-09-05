@@ -43,6 +43,7 @@ import employerHiringPipelineController from '../controllers/EmployerHiringPipel
 import employerJobApplicationTimelineController from '../controllers/EmployerJobApplicationTimelineController';
 import employerHiringPipelineAnalyticsController from '../controllers/EmployerHiringPipelineAnalyticsController';
 import employerJobApplicationDecisionController from '../controllers/EmployerJobApplicationDecisionController';
+import employerJobApplicationNoteController from '../controllers/EmployerJobApplicationNoteController';
 import {
   EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
   EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES,
@@ -2342,6 +2343,34 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobApplicationDecisionController.getDecisions
+);
+
+// POST/GET .../applications/:applicationId/notes (24A) — internal employer
+// collaboration notes, immutable after creation. Discussion/context only —
+// never affects scores, recommendations, or pipeline status.
+const createNoteValidation = [
+  body('body').isString().trim().isLength({ min: 1, max: 3000 }).withMessage('body is required (max 3000 characters)'),
+];
+
+router.post(
+  '/:organizationId/applications/:applicationId/notes',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...createNoteValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationNoteController.createNote
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/notes',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobApplicationNoteController.getNotes
 );
 
 // ============================================================================
