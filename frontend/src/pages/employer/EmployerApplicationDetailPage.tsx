@@ -23,6 +23,7 @@ import employerApi, {
   EmployerInterviewSessionSummary,
   EmployerInterviewSessionQuestions,
   EmployerInterviewSessionAnswers,
+  EmployerHiringAssessmentResult,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -747,6 +748,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [evaluating, setEvaluating] = useState(false);
   const [evaluateError, setEvaluateError] = useState<string | null>(null);
 
+  const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
+  const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
+  const [assessmentResultError, setAssessmentResultError] = useState<string | null>(null);
+  const [generatingResult, setGeneratingResult] = useState(false);
+  const [generateResultError, setGenerateResultError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1108,6 +1115,42 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setEvaluateError(err.message || 'Failed to evaluate interview');
     } finally {
       setEvaluating(false);
+    }
+  };
+
+  const fetchAssessmentResult = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setAssessmentResultLoading(true);
+    setAssessmentResultError(null);
+    try {
+      const response = await employerApi.getEmployerHiringAssessmentResult(organizationId, applicationId);
+      setAssessmentResult(response.data.result);
+    } catch (err: any) {
+      setAssessmentResultError(err.message || 'Failed to load assessment result');
+    } finally {
+      setAssessmentResultLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  const isEvaluated = sessionAnswers?.hiringEvaluationStatus === 'completed';
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && isEvaluated) {
+      fetchAssessmentResult();
+    }
+  }, [isSyncing, activeOrganization, canView, isEvaluated, fetchAssessmentResult]);
+
+  const handleGenerateResult = async () => {
+    if (!organizationId || !applicationId) return;
+    setGeneratingResult(true);
+    setGenerateResultError(null);
+    try {
+      const response = await employerApi.createEmployerHiringAssessmentResult(organizationId, applicationId);
+      setAssessmentResult(response.data.result);
+    } catch (err: any) {
+      setGenerateResultError(err.message || 'Failed to generate assessment result');
+    } finally {
+      setGeneratingResult(false);
     }
   };
 
@@ -2091,6 +2134,80 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           {evaluateError && <p className="text-sm text-mentor-error mb-2">{evaluateError}</p>}
                           <button onClick={handleEvaluateAssessment} disabled={evaluating} className="btn btn-primary">
                             {evaluating ? 'Evaluating...' : 'Evaluate Assessment'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isEvaluated && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Employer Assessment Result</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">Employer Assessment Result — not visible to candidate.</p>
+
+                      {assessmentResultLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : assessmentResultError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{assessmentResultError}</p>
+                          <button onClick={fetchAssessmentResult} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : assessmentResult ? (
+                        <div className="space-y-4">
+                          <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Overall Score</dt>
+                              <dd className="text-sm text-mentor-text">{assessmentResult.result.overallScore} / 100</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Avg Rubric Score</dt>
+                              <dd className="text-sm text-mentor-text">{assessmentResult.result.averageRubricScore} / 5</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Assessed JD Weight</dt>
+                              <dd className="text-sm text-mentor-text">{assessmentResult.result.assessedWeight}%</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Competency Coverage</dt>
+                              <dd className="text-sm text-mentor-text">{assessmentResult.result.competencyCoveragePercent}%</dd>
+                            </div>
+                          </dl>
+
+                          {assessmentResult.result.competencies.length > 0 && (
+                            <ul className="space-y-2">
+                              {assessmentResult.result.competencies.map((c) => (
+                                <li key={c.competencyName} className="surface-muted p-3">
+                                  <p className="text-sm text-mentor-text">
+                                    {c.competencyName} <span className="text-xs text-mentor-text-muted capitalize">({c.importance})</span>
+                                  </p>
+                                  <p className="text-xs text-mentor-text-secondary mt-1">
+                                    JD Weight: {c.jdWeight}% &middot; Score: {c.score}/5 &middot; Questions: {c.questionCount}
+                                  </p>
+                                  {c.evidence.length > 0 && (
+                                    <p className="text-xs text-mentor-success mt-1">Evidence: {c.evidence.join('; ')}</p>
+                                  )}
+                                  {c.missingEvidence.length > 0 && (
+                                    <p className="text-xs text-mentor-warning mt-1">Missing: {c.missingEvidence.join('; ')}</p>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          {assessmentResult.result.strengths.length > 0 && (
+                            <p className="text-sm text-mentor-success">Strengths: {assessmentResult.result.strengths.join('; ')}</p>
+                          )}
+                          {assessmentResult.result.concerns.length > 0 && (
+                            <p className="text-sm text-mentor-warning">Concerns: {assessmentResult.result.concerns.join('; ')}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <div>
+                          {generateResultError && <p className="text-sm text-mentor-error mb-2">{generateResultError}</p>}
+                          <button onClick={handleGenerateResult} disabled={generatingResult} className="btn btn-primary">
+                            {generatingResult ? 'Generating...' : 'Generate Assessment Result'}
                           </button>
                         </div>
                       )}

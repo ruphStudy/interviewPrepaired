@@ -1418,6 +1418,45 @@ export interface EmployerInterviewSessionAnswers {
 export type GetEmployerInterviewSessionAnswersResponse = ApiEnvelope<{ session: EmployerInterviewSessionAnswers | null }>;
 export type EvaluateEmployerInterviewSessionResponse = ApiEnvelope<{ session: EmployerInterviewSessionAnswers }>;
 
+// ============================================================================
+// Employer Hiring Assessment Result — deterministic (no AI) competency
+// aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
+// to the candidate.
+// ============================================================================
+
+export interface HiringAssessmentCompetencyResult {
+  competencyName: string;
+  importance: string;
+  jdWeight: number;
+  score: number;
+  questionCount: number;
+  evidence: string[];
+  missingEvidence: string[];
+}
+
+export interface HiringAssessmentResult {
+  overallScore: number;
+  averageRubricScore: number;
+  assessedWeight: number;
+  competencyCoveragePercent: number;
+  competencies: HiringAssessmentCompetencyResult[];
+  strengths: string[];
+  concerns: string[];
+  calculationVersion: string;
+}
+
+export interface EmployerHiringAssessmentResult {
+  id: string;
+  interviewId: string;
+  blueprintId: string;
+  rubricId: string;
+  result: HiringAssessmentResult;
+  createdAt: string;
+}
+
+export type CreateEmployerHiringAssessmentResultResponse = ApiEnvelope<{ result: EmployerHiringAssessmentResult }>;
+export type GetEmployerHiringAssessmentResultResponse = ApiEnvelope<{ result: EmployerHiringAssessmentResult | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2404,6 +2443,35 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to evaluate interview');
+    }
+  }
+
+  /** Idempotent — an existing result is returned as-is, never recomputed. */
+  async createEmployerHiringAssessmentResult(
+    organizationId: string,
+    applicationId: string
+  ): Promise<CreateEmployerHiringAssessmentResultResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerHiringAssessmentResultResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/result`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate assessment result');
+    }
+  }
+
+  async getEmployerHiringAssessmentResult(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerHiringAssessmentResultResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringAssessmentResultResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/result`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load assessment result');
     }
   }
 }

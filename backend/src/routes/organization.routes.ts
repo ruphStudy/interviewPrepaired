@@ -43,6 +43,7 @@ import employerInterviewBlueprintController from '../controllers/EmployerIntervi
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
 import employerInterviewInvitationController from '../controllers/EmployerInterviewInvitationController';
 import employerInterviewSessionController from '../controllers/EmployerInterviewSessionController';
+import employerHiringAssessmentResultController from '../controllers/EmployerHiringAssessmentResultController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2681,6 +2682,28 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewSessionController.evaluateCurrentSession
+);
+
+// POST/GET .../interview-session/result (21E) — deterministic (no AI)
+// aggregate of 21D question evaluations into one immutable result.
+router.post(
+  '/:organizationId/applications/:applicationId/interview-session/result',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringAssessmentResultController.createResult
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/result',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringAssessmentResultController.getResult
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
