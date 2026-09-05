@@ -27,6 +27,7 @@ import employerJobDescriptionController from '../controllers/EmployerJobDescript
 import employerJobDescriptionAnalysisController from '../controllers/EmployerJobDescriptionAnalysisController';
 import employerJobDescriptionSkillsController from '../controllers/EmployerJobDescriptionSkillsController';
 import employerJobDescriptionCompetencyController from '../controllers/EmployerJobDescriptionCompetencyController';
+import employerJobIntelligenceSnapshotController from '../controllers/EmployerJobIntelligenceSnapshotController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -1658,6 +1659,40 @@ router.post(
   employerJobDescriptionCompetencyController.generateCurrentCompetencies
 );
 
+// ============================================================================
+// Job Intelligence Finalization (17E) — deterministic, NO-AI persistence of
+// an immutable snapshot integrating the CURRENT JD's already-completed 17B
+// analysis, 17C skills, and 17D competencies. Reads use ORGANIZATION_VIEW;
+// finalizing uses INTERVIEWS_MANAGE. Archived organization or archived job:
+// reads allowed, finalization blocked (enforced service-side). There is no
+// PUT/update/delete route for a snapshot — it is permanent once created.
+// NOTE: `GET .../jd/intelligence` is registered BEFORE `GET .../jd/:jdSourceId`
+// (below) so the literal "intelligence" segment is matched before it could
+// ever fall through to the `:jdSourceId` wildcard route — same ordering
+// requirement as `GET .../jd/analysis`, `GET .../jd/skills`, and
+// `GET .../jd/competencies` above.
+// ============================================================================
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd/intelligence',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobIntelligenceSnapshotController.getCurrentIntelligence
+);
+
+router.post(
+  '/:organizationId/jobs/:jobId/jd/intelligence/finalize',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobIntelligenceSnapshotController.finalizeCurrentIntelligence
+);
+
 router.get(
   '/:organizationId/jobs/:jobId/jd/:jdSourceId',
   protect,
@@ -1700,6 +1735,17 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobDescriptionCompetencyController.getCompetenciesForSource
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId/jd/:jdSourceId/intelligence',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...jdSourceIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobIntelligenceSnapshotController.getIntelligenceForSource
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

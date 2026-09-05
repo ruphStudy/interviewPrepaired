@@ -18,8 +18,24 @@ import employerApi, {
   JobDescriptionCompetency,
   EmployerJobCompetencyCategory,
   EmployerJobCompetencyImportance,
+  JobIntelligenceSnapshotRecord,
+  JobIntelligenceReadiness,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Eye, X, FileText, Sparkles, RefreshCw, ListChecks, Target } from 'lucide-react';
+import {
+  AlertCircle,
+  Loader2,
+  ChevronLeft,
+  CheckCircle2,
+  Circle,
+  Eye,
+  X,
+  FileText,
+  Sparkles,
+  RefreshCw,
+  ListChecks,
+  Target,
+  ShieldCheck,
+} from 'lucide-react';
 
 const JD_MIN_LENGTH = 50;
 const JD_MAX_LENGTH = 50000;
@@ -333,6 +349,63 @@ const CompetenciesView: React.FC<{ competencies: JobDescriptionCompetency[] }> =
   );
 };
 
+const READINESS_CHECKLIST: Array<{ key: keyof JobIntelligenceReadiness; label: string }> = [
+  { key: 'jdExists', label: 'JD added' },
+  { key: 'analysisCompleted', label: 'Analysis completed' },
+  { key: 'skillsCompleted', label: 'Skills extracted' },
+  { key: 'competenciesCompleted', label: 'Competencies generated' },
+  { key: 'finalized', label: 'Intelligence finalized' },
+];
+
+/** DB-derived readiness only — never a client-side guess at what's "done". */
+const ReadinessChecklist: React.FC<{ readiness: JobIntelligenceReadiness }> = ({ readiness }) => (
+  <ul className="space-y-1.5">
+    {READINESS_CHECKLIST.map(({ key, label }) => (
+      <li key={key} className="flex items-center gap-2 text-sm">
+        {readiness[key] ? (
+          <CheckCircle2 size={16} className="text-mentor-success shrink-0" />
+        ) : (
+          <Circle size={16} className="text-mentor-text-muted shrink-0" />
+        )}
+        <span className={readiness[key] ? 'text-mentor-text' : 'text-mentor-text-muted'}>{label}</span>
+      </li>
+    ))}
+  </ul>
+);
+
+/** Read-only summary of a finalized snapshot — no edit action exists anywhere for a snapshot. */
+const IntelligenceSnapshotSummary: React.FC<{ snapshot: JobIntelligenceSnapshotRecord }> = ({ snapshot }) => (
+  <div className="space-y-4">
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="badge badge-success">Finalized</span>
+      <span className="badge badge-info">Version {snapshot.jdVersion}</span>
+      <span className="text-xs text-mentor-text-muted">on {formatDateTime(snapshot.finalizedAt)}</span>
+    </div>
+    {snapshot.snapshot.role.summary && <p className="text-sm text-mentor-text-secondary">{snapshot.snapshot.role.summary}</p>}
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="stat-tile">
+        <div className="stat-tile-value">{snapshot.snapshot.metadata.skillCount}</div>
+        <div className="stat-tile-label">Skills</div>
+      </div>
+      <div className="stat-tile">
+        <div className="stat-tile-value">{snapshot.snapshot.metadata.competencyCount}</div>
+        <div className="stat-tile-label">Competencies</div>
+      </div>
+      <div className="stat-tile">
+        <div className="stat-tile-value">{snapshot.snapshot.metadata.totalCompetencyWeight}%</div>
+        <div className="stat-tile-label">Total Weight</div>
+      </div>
+      {snapshot.snapshot.metadata.analysisConfidence !== undefined && (
+        <div className="stat-tile">
+          <div className="stat-tile-value">{Math.round(snapshot.snapshot.metadata.analysisConfidence * 100)}%</div>
+          <div className="stat-tile-label">Analysis Confidence</div>
+        </div>
+      )}
+    </div>
+    <p className="text-xs text-mentor-text-muted">Finalized by membership {snapshot.finalizedByMembershipId}</p>
+  </div>
+);
+
 /**
  * Job Description intake/editor (17A) — raw text only, no AI parsing/skill
  * extraction/competency generation. Saving ALWAYS creates the next version;
@@ -396,6 +469,16 @@ const EmployerJobDescriptionPage: React.FC = () => {
 
   const [viewingCompetencies, setViewingCompetencies] = useState<JobDescriptionCompetenciesRecord | null>(null);
   const [viewingCompetenciesLoading, setViewingCompetenciesLoading] = useState(false);
+
+  const [currentIntelligence, setCurrentIntelligence] = useState<JobIntelligenceSnapshotRecord | null>(null);
+  const [readiness, setReadiness] = useState<JobIntelligenceReadiness | null>(null);
+  const [intelligenceLoading, setIntelligenceLoading] = useState(true);
+  const [intelligenceError, setIntelligenceError] = useState<string | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
+
+  const [viewingIntelligence, setViewingIntelligence] = useState<JobIntelligenceSnapshotRecord | null>(null);
+  const [viewingIntelligenceLoading, setViewingIntelligenceLoading] = useState(false);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -483,6 +566,21 @@ const EmployerJobDescriptionPage: React.FC = () => {
     }
   }, [organizationId, jobId]);
 
+  const fetchCurrentIntelligence = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setIntelligenceLoading(true);
+    setIntelligenceError(null);
+    try {
+      const response = await employerApi.getCurrentJobIntelligence(organizationId, jobId);
+      setCurrentIntelligence(response.data.snapshot);
+      setReadiness(response.data.readiness);
+    } catch (err: any) {
+      setIntelligenceError(err.message || 'Failed to load job description intelligence');
+    } finally {
+      setIntelligenceLoading(false);
+    }
+  }, [organizationId, jobId]);
+
   useEffect(() => {
     if (!isSyncing && activeOrganization?.type === 'company' && canView) {
       fetchJob();
@@ -490,6 +588,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
       fetchCurrentAnalysis();
       fetchCurrentSkills();
       fetchCurrentCompetencies();
+      fetchCurrentIntelligence();
     }
   }, [
     isSyncing,
@@ -500,6 +599,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
     fetchCurrentAnalysis,
     fetchCurrentSkills,
     fetchCurrentCompetencies,
+    fetchCurrentIntelligence,
   ]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -533,6 +633,12 @@ const EmployerJobDescriptionPage: React.FC = () => {
       setExtractError(null);
       setCurrentCompetencies(null);
       setGenerateError(null);
+      // The new version has no intelligence snapshot yet either — a brand
+      // new source version deterministically starts with every readiness
+      // flag false except jdExists (we just created it).
+      setCurrentIntelligence(null);
+      setReadiness({ jdExists: true, analysisCompleted: false, skillsCompleted: false, competenciesCompleted: false, finalized: false });
+      setFinalizeError(null);
       setSaveSuccess(`Saved as version ${response.data.source.version}.`);
       setTimeout(() => setSaveSuccess(null), 3000);
       const jdResponse = await employerApi.getJobDescriptionSources(organizationId, jobId);
@@ -551,6 +657,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
     setViewingAnalysis(null);
     setViewingSkills(null);
     setViewingCompetencies(null);
+    setViewingIntelligence(null);
     try {
       const response = await employerApi.getJobDescriptionSource(organizationId, jobId, source.id);
       setViewingVersion(response.data.source);
@@ -591,6 +698,19 @@ const EmployerJobDescriptionPage: React.FC = () => {
     } finally {
       setViewingCompetenciesLoading(false);
     }
+
+    // Historical intelligence is read-only display only — never a
+    // finalize trigger. The main finalize endpoint always targets the
+    // CURRENT JD version, never a historical one.
+    setViewingIntelligenceLoading(true);
+    try {
+      const intelligenceResponse = await employerApi.getJobIntelligence(organizationId, jobId, source.id);
+      setViewingIntelligence(intelligenceResponse.data.snapshot);
+    } catch {
+      setViewingIntelligence(null);
+    } finally {
+      setViewingIntelligenceLoading(false);
+    }
   };
 
   const handleCloseViewingVersion = () => {
@@ -598,6 +718,7 @@ const EmployerJobDescriptionPage: React.FC = () => {
     setViewingAnalysis(null);
     setViewingSkills(null);
     setViewingCompetencies(null);
+    setViewingIntelligence(null);
   };
 
   const handleAnalyze = async () => {
@@ -645,6 +766,22 @@ const EmployerJobDescriptionPage: React.FC = () => {
       fetchCurrentCompetencies();
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleFinalize = async () => {
+    if (!organizationId || !jobId) return;
+    setFinalizing(true);
+    setFinalizeError(null);
+    try {
+      const response = await employerApi.finalizeCurrentJobIntelligence(organizationId, jobId);
+      setCurrentIntelligence(response.data.snapshot);
+      setReadiness((prev) => (prev ? { ...prev, finalized: true } : prev));
+    } catch (err: any) {
+      setFinalizeError(err.message || 'Failed to finalize job description intelligence');
+      fetchCurrentIntelligence();
+    } finally {
+      setFinalizing(false);
     }
   };
 
@@ -864,6 +1001,22 @@ const EmployerJobDescriptionPage: React.FC = () => {
                         <p className="text-sm text-mentor-text-secondary">Competency generation is in progress for this version.</p>
                       ) : (
                         <p className="text-sm text-mentor-text-secondary">Not generated yet.</p>
+                      )}
+                    </div>
+
+                    <div className="mt-6 pt-6 border-t border-mentor-border">
+                      <h3 className="section-title flex items-center gap-2 mb-3">
+                        <ShieldCheck size={16} className="text-mentor-text-muted" />
+                        JD Intelligence
+                      </h3>
+                      {viewingIntelligenceLoading ? (
+                        <div className="py-4 text-center">
+                          <Loader2 className="w-5 h-5 text-primary-600 animate-spin mx-auto" />
+                        </div>
+                      ) : viewingIntelligence ? (
+                        <IntelligenceSnapshotSummary snapshot={viewingIntelligence} />
+                      ) : (
+                        <p className="text-sm text-mentor-text-secondary">This JD version was not finalized.</p>
                       )}
                     </div>
                   </div>
@@ -1136,6 +1289,59 @@ const EmployerJobDescriptionPage: React.FC = () => {
                       <>
                         <CompetenciesView competencies={currentCompetencies.competencies} />
                         {currentCompetencies.aiUsage && <UsageLine usage={currentCompetencies.aiUsage} />}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {!viewingVersion && current && (
+                  <div className="card mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="section-title flex items-center gap-2 mb-0">
+                        <ShieldCheck size={18} className="text-mentor-text-muted" />
+                        JD Intelligence
+                      </h2>
+                    </div>
+
+                    {finalizeError && (
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{finalizeError}</p>
+                      </div>
+                    )}
+
+                    {intelligenceLoading ? (
+                      <div className="py-6 text-center">
+                        <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                      </div>
+                    ) : intelligenceError ? (
+                      <div className="py-6 text-center">
+                        <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                        <p className="text-sm text-mentor-text-secondary mb-4">{intelligenceError}</p>
+                        <button onClick={fetchCurrentIntelligence} className="btn btn-primary">
+                          Try Again
+                        </button>
+                      </div>
+                    ) : !readiness ? null : readiness.finalized && currentIntelligence ? (
+                      <IntelligenceSnapshotSummary snapshot={currentIntelligence} />
+                    ) : (
+                      <>
+                        <ReadinessChecklist readiness={readiness} />
+                        {readiness.jdExists &&
+                          readiness.analysisCompleted &&
+                          readiness.skillsCompleted &&
+                          readiness.competenciesCompleted &&
+                          !readiness.finalized &&
+                          canManage && (
+                            <div className="mt-4 pt-4 border-t border-mentor-border">
+                              <p className="text-xs text-mentor-text-muted mb-3">
+                                Finalization creates an immutable snapshot used by downstream hiring workflows.
+                              </p>
+                              <button onClick={handleFinalize} disabled={finalizing} className="btn btn-primary">
+                                {finalizing ? 'Finalizing...' : 'Finalize JD Intelligence'}
+                              </button>
+                            </div>
+                          )}
                       </>
                     )}
                   </div>

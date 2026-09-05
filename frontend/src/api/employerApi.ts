@@ -410,6 +410,79 @@ export interface JobDescriptionCompetenciesRecord {
 export type GenerateJobDescriptionCompetenciesResponse = ApiEnvelope<{ competencies: JobDescriptionCompetenciesRecord }>;
 export type GetJobDescriptionCompetenciesResponse = ApiEnvelope<{ competencies: JobDescriptionCompetenciesRecord | null }>;
 
+// ============================================================================
+// Job Intelligence Finalization (Sprint 17E) — deterministic, NO-AI
+// persistence of an immutable snapshot integrating the already-completed
+// 17B analysis + 17C skills + 17D competencies for one JD version. Intended
+// as the future stable read source for candidate screening/ranking/
+// interview-blueprint generation/matching — none of which exist yet.
+// ============================================================================
+
+export interface JobIntelligenceSnapshotExperience {
+  minYears?: number;
+  maxYears?: number;
+  description?: string;
+}
+
+export interface JobIntelligenceSnapshotRole {
+  jobTitle?: string;
+  summary?: string;
+  rolePurpose?: string;
+  experience?: JobIntelligenceSnapshotExperience;
+  education: string[];
+  domainKnowledge: string[];
+  location?: string;
+  workplaceType?: string;
+  employmentType?: string;
+}
+
+export interface JobIntelligenceSnapshotMetadata {
+  sourceVersion: number;
+  analysisConfidence?: number;
+  skillCount: number;
+  competencyCount: number;
+  totalCompetencyWeight: number;
+}
+
+export interface JobIntelligenceSnapshotContent {
+  role: JobIntelligenceSnapshotRole;
+  /** Copied verbatim from the completed 17C skill set. */
+  skills: JobDescriptionSkill[];
+  /** Copied verbatim from the completed 17D competency set. */
+  competencies: JobDescriptionCompetency[];
+  metadata: JobIntelligenceSnapshotMetadata;
+}
+
+export interface JobIntelligenceSnapshotRecord {
+  id: string;
+  jobId: string;
+  jdSourceId: string;
+  jdVersion: number;
+  analysisId: string;
+  skillsId: string;
+  competenciesId: string;
+  snapshot: JobIntelligenceSnapshotContent;
+  finalizedByMembershipId: string;
+  finalizedAt: string;
+  createdAt: string;
+}
+
+/** DB-derived only — never a client-side guess. */
+export interface JobIntelligenceReadiness {
+  jdExists: boolean;
+  analysisCompleted: boolean;
+  skillsCompleted: boolean;
+  competenciesCompleted: boolean;
+  finalized: boolean;
+}
+
+export type GetCurrentJobIntelligenceResponse = ApiEnvelope<{
+  snapshot: JobIntelligenceSnapshotRecord | null;
+  readiness: JobIntelligenceReadiness;
+}>;
+export type GetJobIntelligenceResponse = ApiEnvelope<{ snapshot: JobIntelligenceSnapshotRecord | null }>;
+export type FinalizeJobIntelligenceResponse = ApiEnvelope<{ snapshot: JobIntelligenceSnapshotRecord }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -782,6 +855,51 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load job description competencies');
+    }
+  }
+
+  // ---- Job Intelligence Finalization (Sprint 17E) — NO AI call. ----
+
+  /**
+   * Finalizes the CURRENT JD source's intelligence into an immutable
+   * snapshot — no body. Requires a completed 17B analysis, completed 17C
+   * skills, and completed 17D competencies (the backend returns 409 naming
+   * whichever prerequisite is missing). If already finalized for this
+   * exact source version, the backend returns the existing snapshot
+   * without doing any new work.
+   */
+  async finalizeCurrentJobIntelligence(organizationId: string, jobId: string): Promise<FinalizeJobIntelligenceResponse> {
+    try {
+      const response = await this.api.post<FinalizeJobIntelligenceResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/intelligence/finalize`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to finalize job description intelligence');
+    }
+  }
+
+  /** Current JD source's snapshot (or null) plus a DB-derived readiness checklist. */
+  async getCurrentJobIntelligence(organizationId: string, jobId: string): Promise<GetCurrentJobIntelligenceResponse> {
+    try {
+      const response = await this.api.get<GetCurrentJobIntelligenceResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/intelligence`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description intelligence');
+    }
+  }
+
+  /** Snapshot for one EXACT historical source version, or `snapshot: null` if that version was never finalized. */
+  async getJobIntelligence(organizationId: string, jobId: string, jdSourceId: string): Promise<GetJobIntelligenceResponse> {
+    try {
+      const response = await this.api.get<GetJobIntelligenceResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/jd/${jdSourceId}/intelligence`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job description intelligence');
     }
   }
 }

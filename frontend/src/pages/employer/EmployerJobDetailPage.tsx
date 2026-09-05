@@ -10,6 +10,8 @@ import employerApi, {
   AvailableMember,
   EmployerJobHiringTeamRole,
   JobDescriptionSource,
+  JobIntelligenceSnapshotRecord,
+  JobIntelligenceReadiness,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
@@ -28,6 +30,7 @@ import {
   Plus,
   Trash2,
   FileText,
+  ShieldCheck,
 } from 'lucide-react';
 
 const HISTORY_PAGE_LIMIT = 20;
@@ -46,6 +49,29 @@ const STATUS_LABELS: Record<EmployerJobStatus, string> = {
   closed: 'Closed',
   archived: 'Archived',
 };
+
+/**
+ * Purely a presentational mapping of the backend's own DB-derived readiness
+ * booleans (never an independent client-side guess) into the four compact
+ * states this page shows: Not started / In progress / Ready to finalize /
+ * Finalized (vN).
+ */
+function getIntelligenceStatus(
+  readiness: JobIntelligenceReadiness | null,
+  snapshot: JobIntelligenceSnapshotRecord | null
+): { label: string; badge: string } | null {
+  if (!readiness) return null;
+  if (readiness.finalized && snapshot) {
+    return { label: `Finalized (v${snapshot.jdVersion})`, badge: 'badge-success' };
+  }
+  if (!readiness.jdExists) {
+    return { label: 'Not started', badge: 'badge-neutral' };
+  }
+  if (readiness.analysisCompleted && readiness.skillsCompleted && readiness.competenciesCompleted) {
+    return { label: 'Ready to finalize', badge: 'badge-info' };
+  }
+  return { label: 'In progress', badge: 'badge-warning' };
+}
 
 const STATUS_BADGE: Record<EmployerJobStatus, string> = {
   draft: 'badge-neutral',
@@ -136,6 +162,10 @@ const EmployerJobDetailPage: React.FC = () => {
   const [jdCurrent, setJdCurrent] = useState<JobDescriptionSource | null>(null);
   const [jdLoading, setJdLoading] = useState(true);
   const [jdError, setJdError] = useState<string | null>(null);
+
+  const [intelligenceSnapshot, setIntelligenceSnapshot] = useState<JobIntelligenceSnapshotRecord | null>(null);
+  const [intelligenceReadiness, setIntelligenceReadiness] = useState<JobIntelligenceReadiness | null>(null);
+  const [intelligenceLoading, setIntelligenceLoading] = useState(true);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -228,6 +258,27 @@ const EmployerJobDetailPage: React.FC = () => {
       fetchJobDescription();
     }
   }, [isSyncing, activeOrganization, canView, fetchJobDescription]);
+
+  /** Uses the SAME DB-derived readiness the JD page shows — never a client-side guess. */
+  const fetchIntelligenceStatus = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setIntelligenceLoading(true);
+    try {
+      const response = await employerApi.getCurrentJobIntelligence(organizationId, jobId);
+      setIntelligenceSnapshot(response.data.snapshot);
+      setIntelligenceReadiness(response.data.readiness);
+    } catch {
+      // Non-fatal for the job detail page — the compact status line just won't render.
+    } finally {
+      setIntelligenceLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchIntelligenceStatus();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchIntelligenceStatus]);
 
   const handleOpenAddMember = async () => {
     if (!organizationId || !jobId) return;
@@ -788,6 +839,24 @@ const EmployerJobDetailPage: React.FC = () => {
                   {jdCurrent ? 'View / Edit' : 'Add Job Description'}
                 </button>
               </div>
+
+              {!intelligenceLoading &&
+                jdCurrent &&
+                (() => {
+                  const status = getIntelligenceStatus(intelligenceReadiness, intelligenceSnapshot);
+                  if (!status) return null;
+                  return (
+                    <button
+                      onClick={() => navigate(`/organizations/${organizationId}/employer/jobs/${jobId}/jd`)}
+                      className="flex items-center gap-2 mb-4 text-left"
+                    >
+                      <ShieldCheck size={14} className="text-mentor-text-muted" />
+                      <span className="text-xs text-mentor-text-muted">JD Intelligence:</span>
+                      <span className={`badge ${status.badge}`}>{status.label}</span>
+                    </button>
+                  );
+                })()}
+
               {jdLoading ? (
                 <div className="p-6 text-center">
                   <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
