@@ -2671,6 +2671,18 @@ router.get(
   employerInterviewSessionController.getCurrentSessionAnswers
 );
 
+// POST .../interview-session/evaluate (21D) — question-level evaluation only,
+// no final report. Mutation, so INTERVIEWS_MANAGE (not ORGANIZATION_VIEW).
+router.post(
+  '/:organizationId/applications/:applicationId/interview-session/evaluate',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewSessionController.evaluateCurrentSession
+);
+
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
 
 router.get(

@@ -22,6 +22,7 @@ import employerApi, {
   ApplicationInterviewInvitation,
   EmployerInterviewSessionSummary,
   EmployerInterviewSessionQuestions,
+  EmployerInterviewSessionAnswers,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -740,6 +741,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
   const [sessionQuestionsError, setSessionQuestionsError] = useState<string | null>(null);
 
+  const [sessionAnswers, setSessionAnswers] = useState<EmployerInterviewSessionAnswers | null>(null);
+  const [sessionAnswersLoading, setSessionAnswersLoading] = useState(false);
+  const [sessionAnswersError, setSessionAnswersError] = useState<string | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
+  const [evaluateError, setEvaluateError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1067,6 +1074,42 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchSessionQuestions();
     }
   }, [isSyncing, activeOrganization, canView, interviewSession, fetchSessionQuestions]);
+
+  const fetchSessionAnswers = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setSessionAnswersLoading(true);
+    setSessionAnswersError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewSessionAnswers(organizationId, applicationId);
+      setSessionAnswers(response.data.session);
+    } catch (err: any) {
+      setSessionAnswersError(err.message || 'Failed to load interview answers');
+    } finally {
+      setSessionAnswersLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  const isSessionCompleted = interviewSession?.status === 'completed' || interviewSession?.status === 'evaluated';
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && isSessionCompleted) {
+      fetchSessionAnswers();
+    }
+  }, [isSyncing, activeOrganization, canView, isSessionCompleted, fetchSessionAnswers]);
+
+  const handleEvaluateAssessment = async () => {
+    if (!organizationId || !applicationId) return;
+    setEvaluating(true);
+    setEvaluateError(null);
+    try {
+      const response = await employerApi.evaluateEmployerInterviewSession(organizationId, applicationId);
+      setSessionAnswers(response.data.session);
+    } catch (err: any) {
+      setEvaluateError(err.message || 'Failed to evaluate interview');
+    } finally {
+      setEvaluating(false);
+    }
+  };
 
   const handleCreateInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1983,6 +2026,76 @@ const EmployerApplicationDetailPage: React.FC = () => {
                       <p className="text-sm text-mentor-text-secondary">Not prepared yet.</p>
                     )}
                   </div>
+
+                  {isSessionCompleted && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Employer Evaluation</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">Employer Evaluation — not visible to candidate.</p>
+
+                      {sessionAnswersLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : sessionAnswersError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{sessionAnswersError}</p>
+                          <button onClick={fetchSessionAnswers} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : sessionAnswers?.hiringEvaluationStatus === 'processing' ? (
+                        <p className="text-sm text-mentor-text-secondary">Evaluating assessment...</p>
+                      ) : sessionAnswers?.hiringEvaluationStatus === 'failed' ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">Evaluation failed.</p>
+                          {evaluateError && <p className="text-sm text-mentor-error mb-2">{evaluateError}</p>}
+                          <button onClick={handleEvaluateAssessment} disabled={evaluating} className="btn btn-secondary">
+                            {evaluating ? 'Retrying...' : 'Retry'}
+                          </button>
+                        </div>
+                      ) : sessionAnswers?.hiringEvaluationStatus === 'completed' ? (
+                        <div className="space-y-3">
+                          {sessionAnswers.questions.map((q) => (
+                            <div key={q.id} className="surface-muted p-3">
+                              <p className="text-sm text-mentor-text">{q.question}</p>
+                              {q.answerText && <p className="text-sm text-mentor-text-secondary mt-1 whitespace-pre-wrap">{q.answerText}</p>}
+                              {q.evaluation && (
+                                <div className="mt-2 pt-2 border-t border-mentor-border space-y-1.5">
+                                  <p className="text-xs font-medium text-mentor-text">
+                                    Score: {q.evaluation.overallScore ?? 'n/a'} / 5
+                                  </p>
+                                  {q.evaluation.competencyScores.length > 0 && (
+                                    <ul className="text-xs text-mentor-text-secondary space-y-0.5">
+                                      {q.evaluation.competencyScores.map((cs) => (
+                                        <li key={cs.competencyName}>
+                                          {cs.competencyName}: {cs.score}/5
+                                          {cs.evidence.length > 0 ? ` — ${cs.evidence.join('; ')}` : ''}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  {q.evaluation.strengths.length > 0 && (
+                                    <p className="text-xs text-mentor-success">Strengths: {q.evaluation.strengths.join('; ')}</p>
+                                  )}
+                                  {q.evaluation.concerns.length > 0 && (
+                                    <p className="text-xs text-mentor-warning">Concerns: {q.evaluation.concerns.join('; ')}</p>
+                                  )}
+                                  {q.evaluation.evidenceSummary && (
+                                    <p className="text-xs text-mentor-text-muted">{q.evaluation.evidenceSummary}</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div>
+                          {evaluateError && <p className="text-sm text-mentor-error mb-2">{evaluateError}</p>}
+                          <button onClick={handleEvaluateAssessment} disabled={evaluating} className="btn btn-primary">
+                            {evaluating ? 'Evaluating...' : 'Evaluate Assessment'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               ) : invitation?.status === 'accepted' ? (
                 <p className="text-sm text-mentor-text-secondary">Candidate has accepted; session not prepared yet.</p>

@@ -29,26 +29,44 @@ export interface IPointComparison {
   improvementPoint: string;
 }
 
+/** Employer hiring-assessment competency score (21D) — 1-5 rubric scale, never conflated with the 0-10 practice `dimensions` scale above. */
+export interface IHiringCompetencyScore {
+  competencyName: string;
+  score: number; // 1-5
+  evidence: string[];
+  missingEvidence: string[];
+}
+
 export interface IEvaluation {
   // New dynamic format
   dimensions?: IEvaluationDimension[];
-  
+
   // Old fixed format (for backward compatibility)
   technicalScore?: number;
   communicationScore?: number;
   leadershipScore?: number;
   problemSolvingScore?: number;
   confidenceScore?: number;
-  
+
   overallScore: number;
   strengths: string[];
   weaknesses: string[];
   suggestions: string[];
   missingPoints?: string[];
   pointComparison?: IPointComparison[];
-  
+
   // STAR Framework Analysis (for behavioral interviews)
   starAnalysis?: ISTARAnalysis;
+
+  // Employer hiring-assessment evaluation (21D) — absent on every practice
+  // evaluation. `hiringRubricScore` duplicates the same value into
+  // `overallScore` above (compatible range, no info loss) so nothing that
+  // reads `overallScore` breaks, but this field is the unambiguous,
+  // explicitly-labeled 1-5 rubric score. `strengths`/`weaknesses` above are
+  // reused directly for hiring strengths/concerns — never duplicated.
+  hiringRubricScore?: number; // 1-5
+  hiringCompetencyScores?: IHiringCompetencyScore[];
+  hiringEvidenceSummary?: string;
 }
 
 export interface IQuestion {
@@ -159,6 +177,10 @@ export interface IInterview extends Document {
   // above (which stays CREATED throughout — a hiring session is never
   // marked "started" by materializing its questions).
   questionMaterializationStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  // Employer hiring-assessment answer-evaluation claim state (21D) — same
+  // pattern/purpose as `questionMaterializationStatus` above, independent
+  // of it. No schema default; absent for every non-hiring interview.
+  hiringEvaluationStatus?: 'pending' | 'processing' | 'completed' | 'failed';
   topic: string;
   difficulty: 'beginner' | 'intermediate' | 'advanced' | 'expert';
   experienceYears: number;
@@ -271,6 +293,16 @@ const evaluationDimensionSchema = new Schema<IEvaluationDimension>(
   { _id: false }
 );
 
+const hiringCompetencyScoreSchema = new Schema<IHiringCompetencyScore>(
+  {
+    competencyName: { type: String, required: true },
+    score: { type: Number, required: true, min: 1, max: 5 },
+    evidence: { type: [String], default: [] },
+    missingEvidence: { type: [String], default: [] },
+  },
+  { _id: false }
+);
+
 const evaluationSchema = new Schema<IEvaluation>(
   {
     // New dynamic format
@@ -339,6 +371,11 @@ const evaluationSchema = new Schema<IEvaluation>(
         message: 'Cannot have more than 10 suggestions',
       },
     },
+    // Employer hiring-assessment evaluation (21D) — no `default`, so these
+    // stay genuinely absent on every practice evaluation.
+    hiringRubricScore: { type: Number, min: 1, max: 5 },
+    hiringCompetencyScores: { type: [hiringCompetencyScoreSchema], default: undefined },
+    hiringEvidenceSummary: { type: String, trim: true, maxlength: [1000, 'hiringEvidenceSummary cannot exceed 1000 characters'] },
   },
   { _id: false }
 );
@@ -590,6 +627,11 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
     employerJobId: { type: Schema.Types.ObjectId, ref: 'EmployerJob' },
     // No `default` — stays absent for every non-hiring interview.
     questionMaterializationStatus: {
+      type: String,
+      enum: ['pending', 'processing', 'completed', 'failed'],
+    },
+    // No `default` — stays absent for every non-hiring interview.
+    hiringEvaluationStatus: {
       type: String,
       enum: ['pending', 'processing', 'completed', 'failed'],
     },

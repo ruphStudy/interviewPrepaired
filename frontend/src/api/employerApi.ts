@@ -1373,8 +1373,24 @@ export type GetEmployerInterviewSessionQuestionsResponse = ApiEnvelope<{ session
 
 // ============================================================================
 // Employer Interview Session Answers — authenticated recruiter READ only
-// (Sprint 21B). No evaluation field exists yet.
+// (Sprint 21B, evaluation extended in 21D). Employer-only; never exposed to
+// the candidate.
 // ============================================================================
+
+export interface EmployerInterviewCompetencyScore {
+  competencyName: string;
+  score: number;
+  evidence: string[];
+  missingEvidence: string[];
+}
+
+export interface EmployerInterviewQuestionEvaluation {
+  overallScore?: number;
+  competencyScores: EmployerInterviewCompetencyScore[];
+  strengths: string[];
+  concerns: string[];
+  evidenceSummary?: string;
+}
 
 export interface EmployerInterviewAnswerDetail {
   id: string;
@@ -1385,17 +1401,22 @@ export interface EmployerInterviewAnswerDetail {
   answerText?: string;
   answeredAt?: string;
   duration?: number;
+  evaluation?: EmployerInterviewQuestionEvaluation;
 }
+
+export type EmployerInterviewEvaluationStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 export interface EmployerInterviewSessionAnswers {
   sessionId: string;
   status: string;
+  hiringEvaluationStatus: EmployerInterviewEvaluationStatus;
   totalQuestions: number;
   answeredQuestions: number;
   questions: EmployerInterviewAnswerDetail[];
 }
 
 export type GetEmployerInterviewSessionAnswersResponse = ApiEnvelope<{ session: EmployerInterviewSessionAnswers | null }>;
+export type EvaluateEmployerInterviewSessionResponse = ApiEnvelope<{ session: EmployerInterviewSessionAnswers }>;
 
 class EmployerApiService {
   private api: AxiosInstance;
@@ -2368,6 +2389,21 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load interview answers');
+    }
+  }
+
+  /** Triggers question-level evaluation (21D) — idempotent if already evaluated. */
+  async evaluateEmployerInterviewSession(
+    organizationId: string,
+    applicationId: string
+  ): Promise<EvaluateEmployerInterviewSessionResponse> {
+    try {
+      const response = await this.api.post<EvaluateEmployerInterviewSessionResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/evaluate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to evaluate interview');
     }
   }
 }

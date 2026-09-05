@@ -3,6 +3,7 @@ import EmployerJobApplication from '../models/EmployerJobApplication.model';
 import EmployerInterviewInvitation from '../models/EmployerInterviewInvitation.model';
 import { employerInterviewInvitationService } from './EmployerInterviewInvitationService';
 import Interview, { IInterview } from '../models/interview.model';
+import { hiringAnswerEvaluationService } from './HiringAnswerEvaluationService';
 import { OrganizationType } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
@@ -132,6 +133,41 @@ export class EmployerInterviewSessionService {
     return this.toAnswersDetail(interview);
   }
 
+  /**
+   * POST .../interview-session/evaluate (21D) — triggers question-level
+   * evaluation via `HiringAnswerEvaluationService`. INTERVIEWS_MANAGE
+   * (a mutation), unlike every other read-only method in this class.
+   */
+  async evaluateCurrentSession(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    applicationId: string
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsCompany(organization);
+
+    const application = await EmployerJobApplication.findOne({ _id: applicationId, organizationId: organization._id }).select('_id');
+    if (!application) {
+      throw new ApiError(404, 'Application not found');
+    }
+
+    const invitationDetail = await employerInterviewInvitationService.getCurrentInvitation(organizationId, actingRole, applicationId);
+    if (!invitationDetail) {
+      throw new ApiError(404, 'Interview session not found');
+    }
+
+    const invitation = await EmployerInterviewInvitation.findOne({ _id: invitationDetail.id, organizationId: organization._id }).select(
+      'interviewId'
+    );
+    if (!invitation?.interviewId) {
+      throw new ApiError(404, 'Interview session not found');
+    }
+
+    const interview = await hiringAnswerEvaluationService.evaluate(organizationId, invitation.interviewId.toString());
+    return this.toAnswersDetail(interview);
+  }
+
   private async getOrganizationById(organizationId: string): Promise<IOrganization> {
     const organization = await Organization.findById(organizationId);
     if (!organization) {
@@ -190,13 +226,20 @@ export class EmployerInterviewSessionService {
     };
   }
 
-  /** Recruiter-facing answer detail (21B) — no evaluation field exists yet, since none has been generated. */
+  /**
+   * Recruiter-facing answer detail (21B, extended 21D) — includes the
+   * hiring evaluation (rubric score, competency scores, strengths,
+   * concerns, evidence summary) once `HiringAnswerEvaluationService` has
+   * run. Never exposed to the candidate; that isolation lives entirely in
+   * the public service, which never calls this method.
+   */
   private toAnswersDetail(interview: IInterview): Record<string, unknown> {
     const totalQuestions = interview.questions.length;
     const answeredQuestions = interview.questions.filter((q) => q.answerText && q.answerText.trim().length > 0).length;
     return {
       sessionId: interview._id.toString(),
       status: interview.status,
+      hiringEvaluationStatus: interview.hiringEvaluationStatus ?? (interview.status === 'evaluated' ? 'completed' : 'pending'),
       totalQuestions,
       answeredQuestions,
       questions: interview.questions.map((q, index) => ({
@@ -208,6 +251,15 @@ export class EmployerInterviewSessionService {
         answerText: q.answerText,
         answeredAt: q.answeredAt,
         duration: q.duration,
+        evaluation: q.evaluation
+          ? {
+              overallScore: q.evaluation.hiringRubricScore,
+              competencyScores: q.evaluation.hiringCompetencyScores ?? [],
+              strengths: q.evaluation.strengths ?? [],
+              concerns: q.evaluation.weaknesses ?? [],
+              evidenceSummary: q.evaluation.hiringEvidenceSummary,
+            }
+          : undefined,
       })),
     };
   }
