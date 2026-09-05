@@ -38,6 +38,7 @@ import EmployerJobFormPage from './pages/employer/EmployerJobFormPage';
 import EmployerJobDetailPage from './pages/employer/EmployerJobDetailPage';
 import EmployerJobDescriptionPage from './pages/employer/EmployerJobDescriptionPage';
 import EmployerCandidatesPage from './pages/employer/EmployerCandidatesPage';
+import EmployerMentionsPage from './pages/employer/EmployerMentionsPage';
 import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
 import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
 import EmployerApplicationDetailPage from './pages/employer/EmployerApplicationDetailPage';
@@ -328,6 +329,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerCandidatesPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Employer Mentions (Sprint 24B) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/mentions"
+            element={
+              <ProtectedRoute>
+                <EmployerMentionsPage />
               </ProtectedRoute>
             }
           />

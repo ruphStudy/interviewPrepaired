@@ -37,6 +37,10 @@ import employerApi, {
   EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
   EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES,
   EmployerJobApplicationNoteRecord,
+  EmployerJobApplicationCollaborator,
+  EmployerAvailableCollaborationMember,
+  EmployerJobApplicationCollaborationRole,
+  EMPLOYER_JOB_APPLICATION_COLLABORATION_ROLES,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -52,6 +56,8 @@ import {
   Send,
   MonitorPlay,
   History,
+  X,
+  UserPlus,
 } from 'lucide-react';
 
 const INVITATION_STATUS_LABELS: Record<string, string> = {
@@ -824,8 +830,19 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [notesLoading, setNotesLoading] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [newNoteBody, setNewNoteBody] = useState('');
+  const [newNoteMentionIds, setNewNoteMentionIds] = useState<string[]>([]);
   const [savingNote, setSavingNote] = useState(false);
   const [saveNoteError, setSaveNoteError] = useState<string | null>(null);
+
+  const [collaborators, setCollaborators] = useState<EmployerJobApplicationCollaborator[]>([]);
+  const [availableMembers, setAvailableMembers] = useState<EmployerAvailableCollaborationMember[]>([]);
+  const [collaboratorsLoading, setCollaboratorsLoading] = useState(true);
+  const [collaboratorsError, setCollaboratorsError] = useState<string | null>(null);
+  const [newCollaboratorMembershipId, setNewCollaboratorMembershipId] = useState('');
+  const [newCollaboratorRole, setNewCollaboratorRole] = useState<EmployerJobApplicationCollaborationRole>('interviewer');
+  const [savingCollaborator, setSavingCollaborator] = useState(false);
+  const [saveCollaboratorError, setSaveCollaboratorError] = useState<string | null>(null);
+  const [removingCollaboratorId, setRemovingCollaboratorId] = useState<string | null>(null);
 
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
@@ -1506,13 +1523,85 @@ const EmployerApplicationDetailPage: React.FC = () => {
     setSavingNote(true);
     setSaveNoteError(null);
     try {
-      await employerApi.createEmployerJobApplicationNote(organizationId, applicationId, newNoteBody.trim());
+      await employerApi.createEmployerJobApplicationNote(
+        organizationId,
+        applicationId,
+        newNoteBody.trim(),
+        newNoteMentionIds.length > 0 ? newNoteMentionIds : undefined
+      );
       setNewNoteBody('');
+      setNewNoteMentionIds([]);
       await Promise.all([fetchNotes(), fetchTimeline()]);
     } catch (err: any) {
       setSaveNoteError(err.message || 'Failed to add note');
     } finally {
       setSavingNote(false);
+    }
+  };
+
+  const toggleNoteMention = (membershipId: string) => {
+    setNewNoteMentionIds((prev) =>
+      prev.includes(membershipId)
+        ? prev.filter((id) => id !== membershipId)
+        : prev.length < 10
+        ? [...prev, membershipId]
+        : prev
+    );
+  };
+
+  const fetchCollaborators = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setCollaboratorsLoading(true);
+    setCollaboratorsError(null);
+    try {
+      const response = await employerApi.getEmployerJobApplicationCollaborators(organizationId, applicationId);
+      setCollaborators(response.data.collaborators);
+      setAvailableMembers(response.data.availableMembers);
+    } catch (err: any) {
+      setCollaboratorsError(err.message || 'Failed to load collaborators');
+    } finally {
+      setCollaboratorsLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchCollaborators();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchCollaborators]);
+
+  const handleAssignCollaborator = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !applicationId || !newCollaboratorMembershipId) return;
+    setSavingCollaborator(true);
+    setSaveCollaboratorError(null);
+    try {
+      await employerApi.assignEmployerJobApplicationCollaborator(
+        organizationId,
+        applicationId,
+        newCollaboratorMembershipId,
+        newCollaboratorRole
+      );
+      setNewCollaboratorMembershipId('');
+      await fetchCollaborators();
+    } catch (err: any) {
+      setSaveCollaboratorError(err.message || 'Failed to assign collaborator');
+    } finally {
+      setSavingCollaborator(false);
+    }
+  };
+
+  const handleRemoveCollaborator = async (membershipId: string) => {
+    if (!organizationId || !applicationId) return;
+    setRemovingCollaboratorId(membershipId);
+    setSaveCollaboratorError(null);
+    try {
+      await employerApi.removeEmployerJobApplicationCollaborator(organizationId, applicationId, membershipId);
+      await fetchCollaborators();
+    } catch (err: any) {
+      setSaveCollaboratorError(err.message || 'Failed to remove collaborator');
+    } finally {
+      setRemovingCollaboratorId(null);
     }
   };
 
@@ -3139,6 +3228,43 @@ const EmployerApplicationDetailPage: React.FC = () => {
                     className="input w-full"
                     placeholder="Add an internal note..."
                   />
+                  {availableMembers.length > 0 && (
+                    <div>
+                      <label className="label mb-1 block">Mention teammates (max 10)</label>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) toggleNoteMention(e.target.value);
+                          e.target.value = '';
+                        }}
+                        className="input w-full"
+                      >
+                        <option value="">Select a teammate to mention...</option>
+                        {availableMembers
+                          .filter((m) => !newNoteMentionIds.includes(m.membershipId))
+                          .map((m) => (
+                            <option key={m.membershipId} value={m.membershipId}>
+                              {m.displayName || 'Member'}
+                            </option>
+                          ))}
+                      </select>
+                      {newNoteMentionIds.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {newNoteMentionIds.map((id) => {
+                            const member = availableMembers.find((m) => m.membershipId === id);
+                            return (
+                              <span key={id} className="badge badge-info flex items-center gap-1">
+                                @{member?.displayName || 'Member'}
+                                <button type="button" onClick={() => toggleNoteMention(id)} aria-label="Remove mention">
+                                  <X size={12} />
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {saveNoteError && <p className="text-sm text-mentor-error">{saveNoteError}</p>}
                   <button type="submit" disabled={savingNote || !newNoteBody.trim()} className="btn btn-primary">
                     {savingNote ? 'Saving...' : 'Add Note'}
@@ -3168,6 +3294,94 @@ const EmployerApplicationDetailPage: React.FC = () => {
                         {n.author.displayName || 'Member'} &middot; {formatDateTime(n.createdAt)}
                       </p>
                       <p className="text-sm text-mentor-text whitespace-pre-wrap">{n.body}</p>
+                      {n.mentions.length > 0 && (
+                        <p className="text-xs text-mentor-text-muted mt-1">
+                          Mentioned: {n.mentions.map((m) => `@${m.displayName || 'Member'}`).join(', ')}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <UserPlus size={18} className="text-mentor-text-muted" />
+                Collaboration Team
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">Internal collaboration metadata — not visible to candidate.</p>
+
+              {canManage && (
+                <form onSubmit={handleAssignCollaborator} className="flex flex-wrap items-end gap-3 mb-4">
+                  <div>
+                    <label className="label mb-1 block">Teammate</label>
+                    <select
+                      value={newCollaboratorMembershipId}
+                      onChange={(e) => setNewCollaboratorMembershipId(e.target.value)}
+                      className="input"
+                    >
+                      <option value="">Select member...</option>
+                      {availableMembers.map((m) => (
+                        <option key={m.membershipId} value={m.membershipId}>
+                          {m.displayName || 'Member'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label mb-1 block">Role</label>
+                    <select
+                      value={newCollaboratorRole}
+                      onChange={(e) => setNewCollaboratorRole(e.target.value as EmployerJobApplicationCollaborationRole)}
+                      className="input"
+                    >
+                      {EMPLOYER_JOB_APPLICATION_COLLABORATION_ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {capitalizeStatus(r)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="submit" disabled={savingCollaborator || !newCollaboratorMembershipId} className="btn btn-primary">
+                    {savingCollaborator ? 'Saving...' : 'Add Collaborator'}
+                  </button>
+                </form>
+              )}
+
+              {saveCollaboratorError && <p className="text-sm text-mentor-error mb-3">{saveCollaboratorError}</p>}
+
+              {collaboratorsLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : collaboratorsError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{collaboratorsError}</p>
+                  <button onClick={fetchCollaborators} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : collaborators.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No collaborators assigned yet.</p>
+              ) : (
+                <ul className="divide-y divide-mentor-border">
+                  {collaborators.map((c) => (
+                    <li key={c.membershipId} className="flex items-center justify-between gap-3 py-2.5">
+                      <div>
+                        <p className="text-sm font-medium text-mentor-text">{c.displayName || 'Member'}</p>
+                        <p className="text-xs text-mentor-text-muted capitalize">{c.collaborationRole}</p>
+                      </div>
+                      {canManage && (
+                        <button
+                          onClick={() => handleRemoveCollaborator(c.membershipId)}
+                          disabled={removingCollaboratorId === c.membershipId}
+                          className="btn btn-secondary px-3 py-1.5 text-xs"
+                        >
+                          {removingCollaboratorId === c.membershipId ? 'Removing...' : 'Remove'}
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>

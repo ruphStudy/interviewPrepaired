@@ -2023,15 +2023,78 @@ export interface EmployerJobApplicationNoteAuthor {
   displayName?: string;
 }
 
+export interface EmployerJobApplicationNoteMention {
+  membershipId: string;
+  displayName?: string;
+}
+
 export interface EmployerJobApplicationNoteRecord {
   id: string;
   body: string;
   createdAt: string;
   author: EmployerJobApplicationNoteAuthor;
+  mentions: EmployerJobApplicationNoteMention[];
 }
 
 export type GetEmployerJobApplicationNotesResponse = ApiEnvelope<{ notes: EmployerJobApplicationNoteRecord[] }>;
 export type CreateEmployerJobApplicationNoteResponse = ApiEnvelope<{ note: EmployerJobApplicationNoteRecord }>;
+
+// ============================================================================
+// Application Collaboration Team + Mentions (Sprint 24B) — collaboration
+// metadata only. `collaborationRole` is never an RBAC permission and never
+// grants organization access. No email/SMS/push delivery — in-app
+// discoverability only.
+// ============================================================================
+
+export type EmployerJobApplicationCollaborationRole = 'owner' | 'interviewer' | 'reviewer' | 'observer';
+
+export const EMPLOYER_JOB_APPLICATION_COLLABORATION_ROLES: EmployerJobApplicationCollaborationRole[] = [
+  'owner',
+  'interviewer',
+  'reviewer',
+  'observer',
+];
+
+export interface EmployerJobApplicationCollaborator {
+  membershipId: string;
+  collaborationRole: EmployerJobApplicationCollaborationRole;
+  displayName?: string;
+  assignedByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployerAvailableCollaborationMember {
+  membershipId: string;
+  displayName?: string;
+  role: string;
+}
+
+export interface EmployerJobApplicationCollaboratorsResponseData {
+  collaborators: EmployerJobApplicationCollaborator[];
+  availableMembers: EmployerAvailableCollaborationMember[];
+}
+
+export type GetEmployerJobApplicationCollaboratorsResponse = ApiEnvelope<EmployerJobApplicationCollaboratorsResponseData>;
+export type AssignEmployerJobApplicationCollaboratorResponse = ApiEnvelope<{ collaborator: EmployerJobApplicationCollaborator }>;
+
+export interface EmployerCollaborationMentionItem {
+  noteId: string;
+  body: string;
+  applicationId: string;
+  jobId: string;
+  jobTitle?: string;
+  candidate?: { firstName: string; lastName: string };
+  author: { membershipId: string; displayName?: string };
+  createdAt: string;
+}
+
+export interface EmployerCollaborationMentionsResponseData {
+  mentions: EmployerCollaborationMentionItem[];
+  pagination: { page: number; limit: number; total: number; pages: number };
+}
+
+export type GetEmployerCollaborationMentionsResponse = ApiEnvelope<EmployerCollaborationMentionsResponseData>;
 
 class EmployerApiService {
   private api: AxiosInstance;
@@ -3332,20 +3395,77 @@ class EmployerApiService {
     }
   }
 
-  /** Immutable after creation — no edit/delete in 24A. */
+  /** Immutable after creation — no edit/delete in 24A. `mentionMembershipIds` are explicit, UI-selected teammates only (max 10). */
   async createEmployerJobApplicationNote(
     organizationId: string,
     applicationId: string,
-    body: string
+    body: string,
+    mentionMembershipIds?: string[]
   ): Promise<CreateEmployerJobApplicationNoteResponse> {
     try {
       const response = await this.api.post<CreateEmployerJobApplicationNoteResponse>(
         `/organizations/${organizationId}/applications/${applicationId}/notes`,
-        { body }
+        { body, mentionMembershipIds }
       );
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to add note');
+    }
+  }
+
+  async getEmployerJobApplicationCollaborators(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerJobApplicationCollaboratorsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerJobApplicationCollaboratorsResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/collaborators`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load collaborators');
+    }
+  }
+
+  /** Upserts one collaborator assignment — collaboration metadata only, never an RBAC permission. */
+  async assignEmployerJobApplicationCollaborator(
+    organizationId: string,
+    applicationId: string,
+    membershipId: string,
+    collaborationRole: EmployerJobApplicationCollaborationRole
+  ): Promise<AssignEmployerJobApplicationCollaboratorResponse> {
+    try {
+      const response = await this.api.post<AssignEmployerJobApplicationCollaboratorResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/collaborators`,
+        { membershipId, collaborationRole }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to assign collaborator');
+    }
+  }
+
+  async removeEmployerJobApplicationCollaborator(organizationId: string, applicationId: string, membershipId: string): Promise<void> {
+    try {
+      await this.api.delete(`/organizations/${organizationId}/applications/${applicationId}/collaborators/${membershipId}`);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to remove collaborator');
+    }
+  }
+
+  async getEmployerCollaborationMentions(
+    organizationId: string,
+    page = 1,
+    limit = 20
+  ): Promise<GetEmployerCollaborationMentionsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCollaborationMentionsResponse>(
+        `/organizations/${organizationId}/collaboration/mentions`,
+        { params: { page, limit } }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load mentions');
     }
   }
 }

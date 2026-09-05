@@ -13,6 +13,11 @@ export interface IEmployerJobApplicationNote extends Document {
   jobId: Types.ObjectId;
   candidateId: Types.ObjectId;
   body: string;
+  // Explicit, UI-selected teammate mentions (24B) — never derived from
+  // free-form @text parsing. Each id is a validated ACTIVE OrganizationMember
+  // in this SAME organization at write time; in-app discoverability only —
+  // no email/SMS/push notification is ever sent from this field.
+  mentionMembershipIds: Types.ObjectId[];
   createdByMembershipId: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -25,6 +30,7 @@ const employerJobApplicationNoteSchema = new Schema<IEmployerJobApplicationNote>
     jobId: { type: Schema.Types.ObjectId, ref: 'EmployerJob', required: true },
     candidateId: { type: Schema.Types.ObjectId, ref: 'EmployerCandidate', required: true },
     body: { type: String, required: true, trim: true, maxlength: [3000, 'body cannot exceed 3000 characters'] },
+    mentionMembershipIds: { type: [Schema.Types.ObjectId], ref: 'OrganizationMember', default: [] },
     createdByMembershipId: { type: Schema.Types.ObjectId, ref: 'OrganizationMember', required: true },
   },
   {
@@ -35,5 +41,7 @@ const employerJobApplicationNoteSchema = new Schema<IEmployerJobApplicationNote>
 
 employerJobApplicationNoteSchema.index({ organizationId: 1, applicationId: 1, createdAt: -1 });
 employerJobApplicationNoteSchema.index({ organizationId: 1, jobId: 1, createdAt: -1 });
+// Mention inbox lookup (24B) — "notes where this membership is mentioned".
+employerJobApplicationNoteSchema.index({ organizationId: 1, mentionMembershipIds: 1, createdAt: -1 });
 
 export default mongoose.model<IEmployerJobApplicationNote>('EmployerJobApplicationNote', employerJobApplicationNoteSchema);

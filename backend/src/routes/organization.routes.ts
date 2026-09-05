@@ -44,6 +44,9 @@ import employerJobApplicationTimelineController from '../controllers/EmployerJob
 import employerHiringPipelineAnalyticsController from '../controllers/EmployerHiringPipelineAnalyticsController';
 import employerJobApplicationDecisionController from '../controllers/EmployerJobApplicationDecisionController';
 import employerJobApplicationNoteController from '../controllers/EmployerJobApplicationNoteController';
+import employerJobApplicationCollaborationController from '../controllers/EmployerJobApplicationCollaborationController';
+import employerCollaborationMentionsController from '../controllers/EmployerCollaborationMentionsController';
+import { EmployerJobApplicationCollaborationRole } from '../constants/employerJobApplicationCollaboration';
 import {
   EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
   EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES,
@@ -2350,6 +2353,8 @@ router.get(
 // never affects scores, recommendations, or pipeline status.
 const createNoteValidation = [
   body('body').isString().trim().isLength({ min: 1, max: 3000 }).withMessage('body is required (max 3000 characters)'),
+  body('mentionMembershipIds').optional().isArray({ max: 10 }).withMessage('mentionMembershipIds must be an array of at most 10 ids'),
+  body('mentionMembershipIds.*').optional().isMongoId().withMessage('Invalid mentionMembershipIds entry'),
 ];
 
 router.post(
@@ -2371,6 +2376,69 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobApplicationNoteController.getNotes
+);
+
+// GET/POST/PUT/DELETE .../applications/:applicationId/collaborators (24B) —
+// application-local collaboration metadata ONLY. `collaborationRole` is
+// never an RBAC permission; organization RBAC remains authoritative.
+const assignCollaboratorValidation = [
+  body('membershipId').isMongoId().withMessage('Invalid membershipId'),
+  body('collaborationRole').isIn(Object.values(EmployerJobApplicationCollaborationRole)).withMessage('Invalid collaborationRole'),
+];
+const membershipIdParamValidation = [param('membershipId').isMongoId().withMessage('Invalid membershipId')];
+
+router.get(
+  '/:organizationId/applications/:applicationId/collaborators',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobApplicationCollaborationController.getCollaborators
+);
+
+router.post(
+  '/:organizationId/applications/:applicationId/collaborators',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...assignCollaboratorValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationCollaborationController.assignCollaborator
+);
+
+router.put(
+  '/:organizationId/applications/:applicationId/collaborators',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...assignCollaboratorValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationCollaborationController.assignCollaborator
+);
+
+router.delete(
+  '/:organizationId/applications/:applicationId/collaborators/:membershipId',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...membershipIdParamValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationCollaborationController.removeCollaborator
+);
+
+// GET .../collaboration/mentions (24B) — notes mentioning the ACTING
+// membership, newest-first. In-app discoverability only, no delivery.
+router.get(
+  '/:organizationId/collaboration/mentions',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCollaborationMentionsController.getMentions
 );
 
 // ============================================================================

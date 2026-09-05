@@ -15,14 +15,15 @@ export class EmployerJobApplicationNoteController {
     }
 
     const { applicationId } = req.params;
-    const { body } = req.body;
+    const { body, mentionMembershipIds } = req.body;
 
     const note = await employerJobApplicationNoteService.createNote(
       context.organizationId,
       context.role,
       context.member._id.toString(),
       applicationId,
-      body
+      body,
+      mentionMembershipIds
     );
 
     res.status(201).json(successResponse('Note added successfully', { note }));
