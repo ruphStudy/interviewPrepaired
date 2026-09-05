@@ -21,6 +21,7 @@ import OrganizationMembersPage from './pages/OrganizationMembersPage';
 import OrganizationDashboardPage from './pages/OrganizationDashboardPage';
 import OrganizationSettingsPage from './pages/OrganizationSettingsPage';
 import AcceptInvitationPage from './pages/AcceptInvitationPage';
+import EmployerInterviewInvitePage from './pages/EmployerInterviewInvitePage';
 import InstituteProfilePage from './pages/institute/InstituteProfilePage';
 import InstituteBranchesPage from './pages/institute/InstituteBranchesPage';
 import InstituteCoursesPage from './pages/institute/InstituteCoursesPage';
@@ -66,6 +67,8 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           {/* Public — mirrors the backend's own public invitation-preview endpoint. Accepting still requires auth (handled inside the page). */}
           <Route path="/accept-invite/:token" element={<AcceptInvitationPage />} />
+          {/* Fully public (20D) — no auth at all, unlike /accept-invite above. Candidate interview invitation access + explicit acceptance only; no interview session is created here. */}
+          <Route path="/candidate/interview-invite/:token" element={<EmployerInterviewInvitePage />} />
 
           {/* Protected Routes */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
