@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import AuthenticatedLayout from '../../components/AuthenticatedLayout';
 import { useOrganization } from '../../contexts/OrganizationContext';
@@ -7,9 +7,25 @@ import employerApi, {
   EmployerCandidateStatus,
   EMPLOYER_CANDIDATE_SOURCES,
   EMPLOYER_CANDIDATE_STATUS_TRANSITIONS,
+  CandidateResume,
+  CANDIDATE_RESUME_ALLOWED_EXTENSIONS,
+  CANDIDATE_RESUME_MAX_FILE_SIZE_BYTES,
 } from '../../api/employerApi';
 import { EMPTY_CANDIDATE_FORM, CandidateFormState, candidateFormToPayload, candidateToFormState } from './candidateFormUtils';
-import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2, FileText, Download } from 'lucide-react';
+
+const RESUME_FILE_TYPE_LABELS: Record<string, string> = {
+  '.pdf': 'PDF',
+  '.docx': 'Word (DOCX)',
+  '.doc': 'Word (DOC)',
+  '.txt': 'Text',
+};
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const STATUS_LABELS: Record<EmployerCandidateStatus, string> = {
   active: 'Active',
@@ -73,6 +89,20 @@ const EmployerCandidateDetailPage: React.FC = () => {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusSuccess, setStatusSuccess] = useState<string | null>(null);
 
+  const [resumeCurrent, setResumeCurrent] = useState<CandidateResume | null>(null);
+  const [resumeHistory, setResumeHistory] = useState<CandidateResume[]>([]);
+  const [resumeLoading, setResumeLoading] = useState(true);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -104,6 +134,91 @@ const EmployerCandidateDetailPage: React.FC = () => {
       fetchCandidate();
     }
   }, [isSyncing, activeOrganization, canView, fetchCandidate]);
+
+  const fetchResumes = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setResumeLoading(true);
+    setResumeError(null);
+    try {
+      const response = await employerApi.getCandidateResumes(organizationId, candidateId);
+      setResumeCurrent(response.data.current);
+      setResumeHistory(response.data.history);
+    } catch (err: any) {
+      setResumeError(err.message || 'Failed to load resumes');
+    } finally {
+      setResumeLoading(false);
+    }
+  }, [organizationId, candidateId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchResumes();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchResumes]);
+
+  const handleResumeFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null);
+    setUploadSuccess(null);
+    const file = e.target.files?.[0] || null;
+    if (!file) {
+      setUploadFile(null);
+      return;
+    }
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    if (!CANDIDATE_RESUME_ALLOWED_EXTENSIONS.includes(ext)) {
+      setUploadError(`Unsupported file type. Supported formats: ${CANDIDATE_RESUME_ALLOWED_EXTENSIONS.join(', ')}`);
+      setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    if (file.size > CANDIDATE_RESUME_MAX_FILE_SIZE_BYTES) {
+      setUploadError(`File exceeds the maximum size of ${Math.floor(CANDIDATE_RESUME_MAX_FILE_SIZE_BYTES / (1024 * 1024))}MB`);
+      setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    setUploadFile(file);
+  };
+
+  const handleUploadResume = async () => {
+    if (!organizationId || !candidateId || !uploadFile) return;
+    setUploading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
+    try {
+      await employerApi.uploadCandidateResume(organizationId, candidateId, uploadFile);
+      setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setUploadSuccess('Resume uploaded successfully.');
+      setTimeout(() => setUploadSuccess(null), 3000);
+      await fetchResumes();
+    } catch (err: any) {
+      setUploadError(err.message || 'Failed to upload resume');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownloadResume = async (resume: CandidateResume) => {
+    if (!organizationId || !candidateId) return;
+    setDownloadError(null);
+    setDownloadingId(resume.id);
+    try {
+      const blob = await employerApi.getCandidateResumeFile(organizationId, candidateId, resume.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = resume.originalFileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setDownloadError(err.message || 'Failed to download resume');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const field = <K extends keyof CandidateFormState>(key: K, value: CandidateFormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -635,6 +750,134 @@ const EmployerCandidateDetailPage: React.FC = () => {
                     <dd className="text-sm text-mentor-text">{formatDate(candidate.updatedAt)}</dd>
                   </div>
                 </dl>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <FileText size={18} className="text-mentor-text-muted" />
+                Resume
+              </h2>
+
+              {resumeLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : resumeError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{resumeError}</p>
+                  <button onClick={fetchResumes} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {!resumeCurrent ? (
+                    <p className="text-sm text-mentor-text-secondary py-2 mb-4">No resume uploaded yet.</p>
+                  ) : (
+                    <div className="surface-muted p-4 mb-5 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="badge badge-success">Current</span>
+                          <span className="badge badge-info">v{resumeCurrent.version}</span>
+                          <span className="text-sm font-medium text-mentor-text truncate">{resumeCurrent.originalFileName}</span>
+                        </div>
+                        <p className="text-xs text-mentor-text-muted">
+                          {RESUME_FILE_TYPE_LABELS[resumeCurrent.fileExtension] || resumeCurrent.fileExtension} &middot;{' '}
+                          {formatFileSize(resumeCurrent.fileSize)} &middot; Uploaded {formatDate(resumeCurrent.createdAt)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDownloadResume(resumeCurrent)}
+                        disabled={downloadingId === resumeCurrent.id}
+                        className="btn btn-secondary shrink-0"
+                      >
+                        <Download size={16} />
+                        {downloadingId === resumeCurrent.id ? 'Downloading...' : 'View / Download'}
+                      </button>
+                    </div>
+                  )}
+
+                  {downloadError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{downloadError}</p>
+                    </div>
+                  )}
+
+                  {canManage && candidate.status !== 'archived' && (
+                    <div className="surface-muted p-4 mb-5">
+                      {uploadError && (
+                        <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-3">
+                          <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                          <p className="text-sm text-mentor-error">{uploadError}</p>
+                        </div>
+                      )}
+                      {uploadSuccess && (
+                        <div className="flex items-start gap-2 bg-mentor-mint dark:bg-future-success/10 border border-emerald-200 dark:border-future-success/20 rounded-lg p-3 mb-3">
+                          <CheckCircle2 size={16} className="text-mentor-success mt-0.5 shrink-0" />
+                          <p className="text-sm text-mentor-success">{uploadSuccess}</p>
+                        </div>
+                      )}
+                      <label className="label">{resumeCurrent ? 'Upload New Version' : 'Upload Resume'}</label>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={CANDIDATE_RESUME_ALLOWED_EXTENSIONS.join(',')}
+                        onChange={handleResumeFileChange}
+                        className="input"
+                      />
+                      <p className="text-xs text-mentor-text-muted mt-1.5">
+                        Supported formats: PDF, DOCX, DOC, TXT &middot; Max size:{' '}
+                        {Math.floor(CANDIDATE_RESUME_MAX_FILE_SIZE_BYTES / (1024 * 1024))}MB
+                      </p>
+                      <div className="flex items-center gap-3 mt-3">
+                        <button onClick={handleUploadResume} disabled={!uploadFile || uploading} className="btn btn-primary">
+                          {uploading ? 'Uploading...' : resumeCurrent ? 'Upload New Version' : 'Upload Resume'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeOrganization.status === 'archived' && (
+                    <p className="text-xs text-mentor-text-muted mb-4">This organization is archived — resume upload is disabled.</p>
+                  )}
+                  {activeOrganization.status !== 'archived' && candidate.status === 'archived' && (
+                    <p className="text-xs text-mentor-text-muted mb-4">This candidate is archived — resume upload is disabled.</p>
+                  )}
+
+                  {resumeHistory.length > 0 && (
+                    <div>
+                      <p className="label mb-2">Version History</p>
+                      <div className="divide-y divide-mentor-border">
+                        {resumeHistory.map((resume) => (
+                          <div key={resume.id} className="flex flex-col sm:flex-row sm:items-center gap-2 py-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {resume.isCurrent && <span className="badge badge-success">Current</span>}
+                                <span className="badge badge-neutral">v{resume.version}</span>
+                                <span className="text-sm text-mentor-text truncate">{resume.originalFileName}</span>
+                              </div>
+                              <p className="text-xs text-mentor-text-muted mt-0.5">
+                                {RESUME_FILE_TYPE_LABELS[resume.fileExtension] || resume.fileExtension} &middot;{' '}
+                                {formatFileSize(resume.fileSize)} &middot; {formatDate(resume.createdAt)}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleDownloadResume(resume)}
+                              disabled={downloadingId === resume.id}
+                              className="btn btn-secondary px-3 py-1.5 text-xs shrink-0"
+                            >
+                              <Download size={14} />
+                              {downloadingId === resume.id ? 'Downloading...' : 'Download'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </>

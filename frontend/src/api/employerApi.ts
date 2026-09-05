@@ -571,6 +571,36 @@ export type CreateCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate
 export type UpdateCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
 export type UpdateCandidateStatusResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
 
+// ============================================================================
+// Employer Candidate Resumes (Sprint 18B) — resume FILE storage and
+// versioning only. No AI parsing/text extraction (18C), no application/job
+// linkage, no screening/ranking.
+// ============================================================================
+
+export type EmployerCandidateResumeSourceType = 'upload';
+
+/** UX-only convenience — the backend remains the sole authority on what it actually accepts. */
+export const CANDIDATE_RESUME_ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.doc', '.txt'];
+export const CANDIDATE_RESUME_MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+
+export interface CandidateResume {
+  id: string;
+  candidateId: string;
+  version: number;
+  isCurrent: boolean;
+  originalFileName: string;
+  mimeType: string;
+  fileSize: number;
+  fileExtension: string;
+  sourceType: EmployerCandidateResumeSourceType;
+  uploadedByMembershipId: string;
+  createdAt: string;
+}
+
+export type GetCandidateResumesResponse = ApiEnvelope<{ current: CandidateResume | null; history: CandidateResume[] }>;
+export type GetCandidateResumeResponse = ApiEnvelope<{ resume: CandidateResume }>;
+export type UploadCandidateResumeResponse = ApiEnvelope<{ resume: CandidateResume }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1061,6 +1091,57 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to update candidate status');
+    }
+  }
+
+  // ---- Employer Candidate Resumes (Sprint 18B) ----
+
+  async getCandidateResumes(organizationId: string, candidateId: string): Promise<GetCandidateResumesResponse> {
+    try {
+      const response = await this.api.get<GetCandidateResumesResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/resumes`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load resumes');
+    }
+  }
+
+  async getCandidateResume(organizationId: string, candidateId: string, resumeSourceId: string): Promise<GetCandidateResumeResponse> {
+    try {
+      const response = await this.api.get<GetCandidateResumeResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/resumes/${resumeSourceId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load resume');
+    }
+  }
+
+  /** Creates the NEXT resume version. `file` goes in as FormData under field name "resume" — never set Content-Type/boundary manually, axios/the browser handles it for FormData bodies. */
+  async uploadCandidateResume(organizationId: string, candidateId: string, file: File): Promise<UploadCandidateResumeResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('resume', file);
+      const response = await this.api.post<UploadCandidateResumeResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/resumes`,
+        formData
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to upload resume');
+    }
+  }
+
+  /** Auth is bearer-token based (not cookies), so the file can't be fetched via a plain <a href>/window.open — this returns the raw Blob for the caller to turn into an object URL. */
+  async getCandidateResumeFile(organizationId: string, candidateId: string, resumeSourceId: string): Promise<Blob> {
+    try {
+      const response = await this.api.get(`/organizations/${organizationId}/candidates/${candidateId}/resumes/${resumeSourceId}/file`, {
+        responseType: 'blob',
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to download resume');
     }
   }
 }

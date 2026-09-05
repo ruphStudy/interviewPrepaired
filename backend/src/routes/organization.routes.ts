@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { body, param, query } from 'express-validator';
 import organizationController from '../controllers/OrganizationController';
 import organizationMemberController from '../controllers/OrganizationMemberController';
@@ -29,6 +30,7 @@ import employerJobDescriptionSkillsController from '../controllers/EmployerJobDe
 import employerJobDescriptionCompetencyController from '../controllers/EmployerJobDescriptionCompetencyController';
 import employerJobIntelligenceSnapshotController from '../controllers/EmployerJobIntelligenceSnapshotController';
 import employerCandidateController from '../controllers/EmployerCandidateController';
+import employerCandidateResumeController from '../controllers/EmployerCandidateResumeController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -51,6 +53,7 @@ import { EmployerJobStatus, EmployerJobWorkplaceType, EmployerJobEmploymentType 
 import { EmployerJobHiringTeamRole } from '../constants/employerJobHiringTeam';
 import { EmployerJobDescriptionSourceType, JD_RAW_TEXT_MIN_LENGTH, JD_RAW_TEXT_MAX_LENGTH } from '../constants/employerJobDescription';
 import { EmployerCandidateSource, EmployerCandidateStatus } from '../constants/employerCandidate';
+import { ALLOWED_RESUME_EXTENSIONS, MAX_RESUME_FILE_SIZE_BYTES, isAllowedResumeFile } from '../constants/employerCandidateResume';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
@@ -1930,6 +1933,78 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerCandidateController.updateCandidateStatus
+);
+
+// ============================================================================
+// Employer Candidate Resumes (18B) — company-only, candidate-scoped resume
+// FILE storage and versioning. NO AI parsing/text extraction (18C), no
+// application/job linkage (18D), no screening/ranking. Reads use
+// ORGANIZATION_VIEW (readable even on an archived organization/candidate);
+// the upload mutation uses INTERVIEWS_MANAGE and is blocked on an archived
+// organization or candidate. Every resume version is immutable and never
+// deleted; uploads only ever add a new version.
+// ============================================================================
+
+const candidateResumeIdValidation = [param('resumeSourceId').isMongoId().withMessage('Invalid resume ID')];
+
+// Memory storage only — the buffer is handed to EmployerCandidateResumeService,
+// which writes it to the local resume storage directory itself (see
+// candidateResumeStorage.ts) under a server-generated filename. Mirrors the
+// size limit already used for question-file uploads (interview.routes.ts).
+const candidateResumeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_RESUME_FILE_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const check = isAllowedResumeFile(file.originalname, file.mimetype);
+    if (!check.allowed) {
+      cb(new Error(`Unsupported file type. Supported types: ${ALLOWED_RESUME_EXTENSIONS.join(', ')}`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+router.get(
+  '/:organizationId/candidates/:candidateId/resumes',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateResumeController.getResumes
+);
+
+router.post(
+  '/:organizationId/candidates/:candidateId/resumes',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  candidateResumeUpload.single('resume'),
+  employerCandidateResumeController.uploadResume
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId/resumes/:resumeSourceId',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  ...candidateResumeIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateResumeController.getResume
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId/resumes/:resumeSourceId/file',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  ...candidateResumeIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateResumeController.getResumeFile
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
