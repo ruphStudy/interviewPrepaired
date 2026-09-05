@@ -19,6 +19,7 @@ import employerApi, {
   ApplicationInterviewRubric,
   InterviewCompetencyRubric,
   RubricScoringAnchors,
+  ApplicationInterviewInvitation,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -31,7 +32,24 @@ import {
   Star,
   ClipboardList,
   ListChecks,
+  Send,
 } from 'lucide-react';
+
+const INVITATION_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  active: 'Active',
+  accepted: 'Accepted',
+  expired: 'Expired',
+  revoked: 'Revoked',
+};
+
+const INVITATION_STATUS_BADGE: Record<string, string> = {
+  draft: 'badge-neutral',
+  active: 'badge-success',
+  accepted: 'badge-info',
+  expired: 'badge-neutral',
+  revoked: 'badge-neutral',
+};
 
 const RUBRIC_IMPORTANCE_BADGE: Record<string, string> = {
   critical: 'badge-warning',
@@ -691,6 +709,26 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [generatingRubric, setGeneratingRubric] = useState(false);
   const [generateRubricError, setGenerateRubricError] = useState<string | null>(null);
 
+  const [invitation, setInvitation] = useState<ApplicationInterviewInvitation | null>(null);
+  const [invitationLoading, setInvitationLoading] = useState(true);
+  const [invitationError, setInvitationError] = useState<string | null>(null);
+
+  const [expiresInDaysInput, setExpiresInDaysInput] = useState('7');
+  const [invitationMessageInput, setInvitationMessageInput] = useState('');
+  const [creatingInvitation, setCreatingInvitation] = useState(false);
+  const [createInvitationError, setCreateInvitationError] = useState<string | null>(null);
+
+  const [regeneratingInvitation, setRegeneratingInvitation] = useState(false);
+  const [regenerateInvitationError, setRegenerateInvitationError] = useState<string | null>(null);
+
+  const [revokingInvitation, setRevokingInvitation] = useState(false);
+  const [revokeInvitationError, setRevokeInvitationError] = useState<string | null>(null);
+
+  // Shown only once, right after create/regenerate in THIS session — the
+  // raw token is never persisted server-side and never returned by GET.
+  const [rawInvitationToken, setRawInvitationToken] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -956,6 +994,92 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setGenerateRubricError(err.message || 'Failed to generate interview evaluation rubric');
     } finally {
       setGeneratingRubric(false);
+    }
+  };
+
+  const fetchInvitation = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setInvitationLoading(true);
+    setInvitationError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewInvitation(organizationId, applicationId);
+      setInvitation(response.data.invitation);
+    } catch (err: any) {
+      setInvitationError(err.message || 'Failed to load interview invitation');
+    } finally {
+      setInvitationLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchInvitation();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchInvitation]);
+
+  const handleCreateInvitation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !applicationId) return;
+    setCreatingInvitation(true);
+    setCreateInvitationError(null);
+    try {
+      const days = expiresInDaysInput ? Number(expiresInDaysInput) : undefined;
+      const response = await employerApi.createEmployerInterviewInvitation(organizationId, applicationId, {
+        expiresInDays: days,
+        message: invitationMessageInput.trim() || undefined,
+      });
+      setInvitation(response.data.invitation);
+      setRawInvitationToken(response.data.token);
+      setLinkCopied(false);
+    } catch (err: any) {
+      setCreateInvitationError(err.message || 'Failed to create interview invitation');
+    } finally {
+      setCreatingInvitation(false);
+    }
+  };
+
+  const handleRegenerateInvitation = async () => {
+    if (!organizationId || !applicationId) return;
+    if (!window.confirm('Regenerate the interview invitation? The previous link will no longer work.')) return;
+    setRegeneratingInvitation(true);
+    setRegenerateInvitationError(null);
+    try {
+      const response = await employerApi.regenerateEmployerInterviewInvitation(organizationId, applicationId);
+      setInvitation(response.data.invitation);
+      setRawInvitationToken(response.data.token);
+      setLinkCopied(false);
+    } catch (err: any) {
+      setRegenerateInvitationError(err.message || 'Failed to regenerate interview invitation');
+    } finally {
+      setRegeneratingInvitation(false);
+    }
+  };
+
+  const handleRevokeInvitation = async () => {
+    if (!organizationId || !applicationId) return;
+    if (!window.confirm('Revoke this interview invitation? The candidate will no longer be able to use it.')) return;
+    setRevokingInvitation(true);
+    setRevokeInvitationError(null);
+    try {
+      const response = await employerApi.revokeEmployerInterviewInvitation(organizationId, applicationId);
+      setInvitation(response.data.invitation);
+      setRawInvitationToken(null);
+    } catch (err: any) {
+      setRevokeInvitationError(err.message || 'Failed to revoke interview invitation');
+    } finally {
+      setRevokingInvitation(false);
+    }
+  };
+
+  const handleCopyInvitationLink = async () => {
+    if (!rawInvitationToken) return;
+    const link = `${window.location.origin}/candidate/interview-invite/${rawInvitationToken}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable — the token remains visible in the input for manual copy.
     }
   };
 
@@ -1576,6 +1700,156 @@ const EmployerApplicationDetailPage: React.FC = () => {
                     </div>
                   ) : (
                     <RubricView rubric={rubric.rubric} />
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <Send size={18} className="text-mentor-text-muted" />
+                Interview Invitation
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Creates a secure interview link for the candidate. No email is sent yet — share the link manually.
+              </p>
+
+              {application.status !== 'shortlisted' ? (
+                <p className="text-sm text-mentor-text-secondary py-2">Shortlist candidate first.</p>
+              ) : !blueprint || blueprint.status !== 'completed' ? (
+                <p className="text-sm text-mentor-text-secondary py-2">Generate Interview Blueprint first.</p>
+              ) : !rubric ? (
+                <p className="text-sm text-mentor-text-secondary py-2">Generate Evaluation Rubric first.</p>
+              ) : invitationLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : invitationError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{invitationError}</p>
+                  <button onClick={fetchInvitation} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {rawInvitationToken && (
+                    <div className="surface-muted p-4 mb-4">
+                      <p className="label mb-2">Invitation Link — copy now, shown only once</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          readOnly
+                          value={`${window.location.origin}/candidate/interview-invite/${rawInvitationToken}`}
+                          onFocus={(e) => e.target.select()}
+                          className="input flex-1 text-xs"
+                        />
+                        <button onClick={handleCopyInvitationLink} className="btn btn-secondary shrink-0">
+                          {linkCopied ? 'Copied!' : 'Copy Link'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!invitation ? (
+                    <form onSubmit={handleCreateInvitation} className="space-y-3">
+                      {createInvitationError && (
+                        <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3">
+                          <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                          <p className="text-sm text-mentor-error">{createInvitationError}</p>
+                        </div>
+                      )}
+                      <div className="sm:w-1/3">
+                        <label className="label">Expiry (days)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={30}
+                          value={expiresInDaysInput}
+                          onChange={(e) => setExpiresInDaysInput(e.target.value)}
+                          className="input"
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Message (optional)</label>
+                        <textarea
+                          value={invitationMessageInput}
+                          onChange={(e) => setInvitationMessageInput(e.target.value)}
+                          className="input"
+                          rows={2}
+                          maxLength={1000}
+                        />
+                      </div>
+                      {canEdit && (
+                        <button type="submit" disabled={creatingInvitation} className="btn btn-primary">
+                          <Send size={16} />
+                          {creatingInvitation ? 'Creating...' : 'Create Invitation'}
+                        </button>
+                      )}
+                    </form>
+                  ) : (
+                    <div className="space-y-4">
+                      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+                        <div>
+                          <dt className="text-xs font-medium text-mentor-text-muted mb-1">Status</dt>
+                          <dd>
+                            <span className={`badge ${INVITATION_STATUS_BADGE[invitation.status]}`}>
+                              {INVITATION_STATUS_LABELS[invitation.status]}
+                            </span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs font-medium text-mentor-text-muted mb-1">Candidate Email</dt>
+                          <dd className="text-sm text-mentor-text">{invitation.invitedEmail}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs font-medium text-mentor-text-muted mb-1">Expires</dt>
+                          <dd className="text-sm text-mentor-text">{formatDateTime(invitation.expiresAt)}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs font-medium text-mentor-text-muted mb-1">Created</dt>
+                          <dd className="text-sm text-mentor-text">{formatDateTime(invitation.createdAt)}</dd>
+                        </div>
+                      </dl>
+
+                      {revokeInvitationError && (
+                        <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3">
+                          <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                          <p className="text-sm text-mentor-error">{revokeInvitationError}</p>
+                        </div>
+                      )}
+                      {regenerateInvitationError && (
+                        <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3">
+                          <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                          <p className="text-sm text-mentor-error">{regenerateInvitationError}</p>
+                        </div>
+                      )}
+
+                      {invitation.status === 'active' && (
+                        <div>
+                          {!rawInvitationToken && (
+                            <p className="text-xs text-mentor-text-muted mb-2">
+                              The invitation link was only shown at creation time and cannot be re-displayed for security reasons.
+                              Regenerate to issue a new link (this invalidates the current one).
+                            </p>
+                          )}
+                          {canEdit && (
+                            <button onClick={handleRevokeInvitation} disabled={revokingInvitation} className="btn btn-secondary">
+                              {revokingInvitation ? 'Revoking...' : 'Revoke'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {(invitation.status === 'expired' || invitation.status === 'revoked') && canEdit && (
+                        <button onClick={handleRegenerateInvitation} disabled={regeneratingInvitation} className="btn btn-primary">
+                          {regeneratingInvitation ? 'Regenerating...' : 'Regenerate Invitation'}
+                        </button>
+                      )}
+                      {invitation.status === 'accepted' && (
+                        <p className="text-xs text-mentor-text-muted">This invitation has been accepted and is now read-only.</p>
+                      )}
+                    </div>
                   )}
                 </>
               )}

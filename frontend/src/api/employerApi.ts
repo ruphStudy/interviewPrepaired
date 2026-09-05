@@ -1279,6 +1279,47 @@ export interface ApplicationInterviewRubric {
 export type GenerateEmployerInterviewRubricResponse = ApiEnvelope<{ rubric: ApplicationInterviewRubric }>;
 export type GetEmployerInterviewRubricResponse = ApiEnvelope<{ rubric: ApplicationInterviewRubric | null }>;
 
+// ============================================================================
+// Employer Interview Invitation (Sprint 20C) — a secure, hashed-token
+// invitation for a shortlisted application with a completed 20A blueprint
+// + 20B rubric. No email is sent, no candidate-facing consumption page
+// yet (20D). The raw token is returned ONLY from create/regenerate — it
+// is never persisted server-side and never returned again afterward.
+// ============================================================================
+
+export type EmployerInterviewInvitationStatus = 'draft' | 'active' | 'accepted' | 'expired' | 'revoked';
+
+export interface ApplicationInterviewInvitation {
+  id: string;
+  applicationId: string;
+  jobId: string;
+  candidateId: string;
+  blueprintId: string;
+  rubricId: string;
+  status: EmployerInterviewInvitationStatus;
+  invitedEmail: string;
+  invitedName?: string;
+  message?: string;
+  expiresAt: string;
+  sentAt?: string;
+  acceptedAt?: string;
+  revokedAt?: string;
+  createdByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Never includes invitedEmail/invitedName/candidateId/jobId/blueprintId/rubricId/status/tokenHash/expiresAt — those are all derived/rejected server-side. */
+export interface CreateEmployerInterviewInvitationPayload {
+  expiresInDays?: number;
+  message?: string;
+}
+
+export type CreateEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation; token: string }>;
+export type GetEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation | null }>;
+export type RegenerateEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation; token: string }>;
+export type RevokeEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2152,6 +2193,63 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load interview evaluation rubric');
+    }
+  }
+
+  // ---- Employer Interview Invitation (Sprint 20C) ----
+
+  /** Returns `{ invitation, token }` — the raw token is shown ONLY here, never again afterward. */
+  async createEmployerInterviewInvitation(
+    organizationId: string,
+    applicationId: string,
+    payload: CreateEmployerInterviewInvitationPayload = {}
+  ): Promise<CreateEmployerInterviewInvitationResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerInterviewInvitationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-invitation`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create interview invitation');
+    }
+  }
+
+  async getEmployerInterviewInvitation(organizationId: string, applicationId: string): Promise<GetEmployerInterviewInvitationResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewInvitationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-invitation`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview invitation');
+    }
+  }
+
+  /** Only when the existing invitation is expired or revoked. Returns a brand-new raw token, shown ONLY here. */
+  async regenerateEmployerInterviewInvitation(
+    organizationId: string,
+    applicationId: string
+  ): Promise<RegenerateEmployerInterviewInvitationResponse> {
+    try {
+      const response = await this.api.post<RegenerateEmployerInterviewInvitationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-invitation/regenerate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to regenerate interview invitation');
+    }
+  }
+
+  /** Only when the existing invitation is active. No hard delete. */
+  async revokeEmployerInterviewInvitation(organizationId: string, applicationId: string): Promise<RevokeEmployerInterviewInvitationResponse> {
+    try {
+      const response = await this.api.post<RevokeEmployerInterviewInvitationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-invitation/revoke`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to revoke interview invitation');
     }
   }
 }

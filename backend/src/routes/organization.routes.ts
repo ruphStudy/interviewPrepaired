@@ -41,6 +41,7 @@ import employerCandidateRankingController from '../controllers/EmployerCandidate
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
+import employerInterviewInvitationController from '../controllers/EmployerInterviewInvitationController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2553,6 +2554,77 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerInterviewCompetencyRubricController.getRubricForBlueprint
+);
+
+// ============================================================================
+// Employer Interview Invitation (20C) — a secure, hashed-token invitation
+// for a shortlisted application with a completed 20A blueprint + 20B
+// rubric. No email is sent, no public token-consumption endpoint yet
+// (20D), no interview session/answer capture. Reads use ORGANIZATION_VIEW
+// (readable even on an archived organization/application); mutations use
+// INTERVIEWS_MANAGE and are blocked on an archived organization, job, or
+// candidate. `invitedEmail`/`invitedName`/candidate/job/blueprint/rubric
+// ids are NEVER accepted from the client — always derived server-side.
+// ============================================================================
+
+const createInterviewInvitationValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('applicationId').not().exists().withMessage('applicationId cannot be set'),
+  body('jobId').not().exists().withMessage('jobId cannot be set'),
+  body('candidateId').not().exists().withMessage('candidateId cannot be set'),
+  body('blueprintId').not().exists().withMessage('blueprintId cannot be set'),
+  body('rubricId').not().exists().withMessage('rubricId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be set'),
+  body('tokenHash').not().exists().withMessage('tokenHash cannot be set'),
+  body('invitedEmail').not().exists().withMessage('invitedEmail cannot be set — it is derived from the candidate record'),
+  body('invitedName').not().exists().withMessage('invitedName cannot be set — it is derived from the candidate record'),
+  body('expiresAt').not().exists().withMessage('expiresAt cannot be set directly — use expiresInDays'),
+  body('createdByMembershipId').not().exists().withMessage('createdByMembershipId cannot be set'),
+  body('createdAt').not().exists().withMessage('createdAt cannot be set'),
+  body('updatedAt').not().exists().withMessage('updatedAt cannot be set'),
+  body('expiresInDays').optional().isInt({ min: 1, max: 30 }).withMessage('expiresInDays must be between 1 and 30'),
+  body('message').optional().isString().trim().isLength({ max: 1000 }).withMessage('message must be at most 1000 characters'),
+];
+
+router.post(
+  '/:organizationId/applications/:applicationId/interview-invitation',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...createInterviewInvitationValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewInvitationController.createInvitation
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-invitation',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewInvitationController.getCurrentInvitation
+);
+
+router.post(
+  '/:organizationId/applications/:applicationId/interview-invitation/regenerate',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewInvitationController.regenerateInvitation
+);
+
+router.post(
+  '/:organizationId/applications/:applicationId/interview-invitation/revoke',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewInvitationController.revokeInvitation
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
