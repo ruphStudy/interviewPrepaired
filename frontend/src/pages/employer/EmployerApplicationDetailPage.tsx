@@ -7,8 +7,152 @@ import employerApi, {
   EmployerJobApplicationStatus,
   EMPLOYER_JOB_APPLICATION_SOURCES,
   EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS,
+  ApplicationScreening,
+  ScreeningResult,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target } from 'lucide-react';
+
+const RECOMMENDATION_LABELS: Record<string, string> = {
+  strong_match: 'Strong Match',
+  match: 'Match',
+  borderline: 'Borderline',
+  weak_match: 'Weak Match',
+};
+
+const RECOMMENDATION_BADGE: Record<string, string> = {
+  strong_match: 'badge-success',
+  match: 'badge-info',
+  borderline: 'badge-warning',
+  weak_match: 'badge-neutral',
+};
+
+function formatCost(usd: number): string {
+  return usd > 0 && usd < 0.01 ? '<$0.01' : `$${usd.toFixed(2)}`;
+}
+
+/** Read-only rendering of a completed screening result. */
+const ScreeningResultView: React.FC<{ result: ScreeningResult }> = ({ result }) => (
+  <div className="space-y-5">
+    <div className="flex items-center gap-3 flex-wrap">
+      <div>
+        <p className="text-xs text-mentor-text-muted mb-0.5">Overall Score</p>
+        <p className="text-2xl font-semibold text-mentor-text">{result.overallScore}</p>
+      </div>
+      <span className={`badge ${RECOMMENDATION_BADGE[result.recommendation]}`}>{RECOMMENDATION_LABELS[result.recommendation]}</span>
+      <span className="text-xs text-mentor-text-muted ml-auto">Confidence: {Math.round(result.confidence * 100)}%</span>
+    </div>
+
+    <div>
+      <p className="label mb-2">
+        Skill Match &middot; <span className="text-mentor-text-secondary font-normal">{result.skillMatch.score}/100</span>
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <p className="text-xs text-mentor-text-muted mb-1">Matched</p>
+          <div className="flex flex-wrap gap-1.5">
+            {result.skillMatch.matchedSkills.length > 0 ? (
+              result.skillMatch.matchedSkills.map((s) => (
+                <span key={s} className="badge badge-success">
+                  {s}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-mentor-text-muted">—</span>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs text-mentor-text-muted mb-1">Partial</p>
+          <div className="flex flex-wrap gap-1.5">
+            {result.skillMatch.partialSkills.length > 0 ? (
+              result.skillMatch.partialSkills.map((s) => (
+                <span key={s} className="badge badge-warning">
+                  {s}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-mentor-text-muted">—</span>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs text-mentor-text-muted mb-1">Missing</p>
+          <div className="flex flex-wrap gap-1.5">
+            {result.skillMatch.missingSkills.length > 0 ? (
+              result.skillMatch.missingSkills.map((s) => (
+                <span key={s} className="badge badge-neutral">
+                  {s}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-mentor-text-muted">—</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {result.competencyMatch.length > 0 && (
+      <div>
+        <p className="label mb-2">Competency Match</p>
+        <div className="space-y-2">
+          {result.competencyMatch.map((c) => (
+            <div key={c.competencyName} className="surface-muted p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-mentor-text">{c.competencyName}</p>
+                <span className="text-sm text-mentor-text-secondary shrink-0">{c.score}/100</span>
+              </div>
+              {c.evidence.length > 0 && (
+                <ul className="list-disc list-inside text-xs text-mentor-text-secondary mt-1.5 space-y-0.5">
+                  {c.evidence.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <p className="label mb-1">
+          Experience Match &middot; <span className="text-mentor-text-secondary font-normal">{result.experienceMatch.score}/100</span>
+        </p>
+        {result.experienceMatch.summary && <p className="text-sm text-mentor-text-secondary">{result.experienceMatch.summary}</p>}
+      </div>
+      <div>
+        <p className="label mb-1">
+          Education Match &middot; <span className="text-mentor-text-secondary font-normal">{result.educationMatch.score}/100</span>
+        </p>
+        {result.educationMatch.summary && <p className="text-sm text-mentor-text-secondary">{result.educationMatch.summary}</p>}
+      </div>
+    </div>
+
+    {result.strengths.length > 0 && (
+      <div>
+        <p className="label mb-2">Strengths</p>
+        <ul className="list-disc list-inside text-sm text-mentor-text-secondary space-y-0.5">
+          {result.strengths.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ul>
+      </div>
+    )}
+
+    {result.concerns.length > 0 && (
+      <div>
+        <p className="label mb-2">Concerns</p>
+        <ul className="list-disc list-inside text-sm text-mentor-text-secondary space-y-0.5">
+          {result.concerns.map((c, i) => (
+            <li key={i}>{c}</li>
+          ))}
+        </ul>
+      </div>
+    )}
+  </div>
+);
 
 const STATUS_LABELS: Record<EmployerJobApplicationStatus, string> = {
   applied: 'Applied',
@@ -100,6 +244,18 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusSuccess, setStatusSuccess] = useState<string | null>(null);
 
+  const [screening, setScreening] = useState<ApplicationScreening | null>(null);
+  const [screeningLoading, setScreeningLoading] = useState(true);
+  const [screeningError, setScreeningError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+
+  // Best-effort prerequisite hints only — the backend's own 409 messages on
+  // "Run Screening" remain the actual authority if these can't be determined.
+  const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
+  const [resumeAnalyzed, setResumeAnalyzed] = useState<boolean | null>(null);
+  const [prereqLoading, setPrereqLoading] = useState(true);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -136,6 +292,73 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchApplication();
     }
   }, [isSyncing, activeOrganization, canView, fetchApplication]);
+
+  const fetchScreening = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setScreeningLoading(true);
+    setScreeningError(null);
+    try {
+      const response = await employerApi.getApplicationScreening(organizationId, applicationId);
+      setScreening(response.data.screening);
+    } catch (err: any) {
+      setScreeningError(err.message || 'Failed to load screening');
+    } finally {
+      setScreeningLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchScreening();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchScreening]);
+
+  const jobId = application?.jobId;
+  const candidateId = application?.candidateId;
+
+  useEffect(() => {
+    if (isSyncing || activeOrganization?.type !== 'company' || !canView || !organizationId || !jobId || !candidateId) return;
+    let cancelled = false;
+    (async () => {
+      setPrereqLoading(true);
+      try {
+        const [jdResponse, analysisResponse] = await Promise.all([
+          employerApi.getCurrentJobIntelligence(organizationId, jobId),
+          employerApi.getCurrentCandidateResumeAnalysis(organizationId, candidateId),
+        ]);
+        if (cancelled) return;
+        setJdFinalized(jdResponse.data.readiness.finalized);
+        setResumeAnalyzed(analysisResponse.data.analysis?.status === 'completed');
+      } catch {
+        // Non-fatal — "Run Screening" itself will surface the real prerequisite error from the backend.
+        if (!cancelled) {
+          setJdFinalized(null);
+          setResumeAnalyzed(null);
+        }
+      } finally {
+        if (!cancelled) setPrereqLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSyncing, activeOrganization, canView, organizationId, jobId, candidateId]);
+
+  const handleRunScreening = async () => {
+    if (!organizationId || !applicationId) return;
+    setRunning(true);
+    setRunError(null);
+    try {
+      const response = await employerApi.screenApplication(organizationId, applicationId);
+      setScreening(response.data.screening);
+    } catch (err: any) {
+      setRunError(err.message || 'Failed to screen application');
+      // The backend may have already persisted a FAILED row — pick it up.
+      await fetchScreening();
+    } finally {
+      setRunning(false);
+    }
+  };
 
   const handleSaveDetails = async () => {
     if (!organizationId || !applicationId) return;
@@ -418,6 +641,88 @@ const EmployerApplicationDetailPage: React.FC = () => {
                     <dd className="text-sm text-mentor-text whitespace-pre-wrap">{application.notes || '—'}</dd>
                   </div>
                 </dl>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <Target size={18} className="text-mentor-text-muted" />
+                Screening
+              </h2>
+
+              {screeningLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : screeningError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{screeningError}</p>
+                  <button onClick={fetchScreening} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {runError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{runError}</p>
+                    </div>
+                  )}
+
+                  {!screening ? (
+                    <div className="py-2">
+                      {!prereqLoading && jdFinalized === false ? (
+                        <p className="text-sm text-mentor-text-secondary mb-3">
+                          Finalize this job's JD Intelligence before screening candidates.
+                        </p>
+                      ) : !prereqLoading && resumeAnalyzed === false ? (
+                        <p className="text-sm text-mentor-text-secondary mb-3">Analyze the candidate's resume before screening.</p>
+                      ) : (
+                        <p className="text-sm text-mentor-text-secondary mb-3">Ready to screen this application.</p>
+                      )}
+                      {canEdit && (
+                        <button onClick={handleRunScreening} disabled={running} className="btn btn-primary">
+                          <Target size={16} />
+                          {running ? 'Screening...' : 'Run Screening'}
+                        </button>
+                      )}
+                    </div>
+                  ) : screening.status === 'processing' ? (
+                    <div className="py-2">
+                      <p className="text-sm text-mentor-text-secondary mb-3">
+                        <span className="badge badge-warning mr-2">Processing</span>
+                        Screening is in progress...
+                      </p>
+                      <button onClick={fetchScreening} className="btn btn-secondary">
+                        Check Status
+                      </button>
+                    </div>
+                  ) : screening.status === 'failed' ? (
+                    <div className="py-2">
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-3">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{screening.errorMessage || 'Screening failed.'}</p>
+                      </div>
+                      {canEdit && (
+                        <button onClick={handleRunScreening} disabled={running} className="btn btn-primary">
+                          {running ? 'Retrying...' : 'Retry'}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      {screening.result && <ScreeningResultView result={screening.result} />}
+                      {screening.aiUsage && (
+                        <p className="text-xs text-mentor-text-muted mt-4">
+                          {screening.aiUsage.model} &middot; {screening.aiUsage.totalTokens.toLocaleString()} tokens
+                          {screening.aiUsage.pricingStatus === 'calculated' ? ` · est. ${formatCost(screening.aiUsage.totalCostUsd)}` : ''}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </>

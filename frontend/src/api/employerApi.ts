@@ -856,6 +856,70 @@ export type ListCandidateSourceAttributionsResponse = ApiEnvelope<{ attributions
 export type GetCandidateSourceAttributionResponse = ApiEnvelope<{ attribution: CandidateSourceAttribution }>;
 export type CreateCandidateSourceAttributionResponse = ApiEnvelope<{ attribution: CandidateSourceAttribution }>;
 
+// ============================================================================
+// Employer Candidate Screening (Sprint 19A) — compares one job
+// application's candidate resume analysis against the job's FINALIZED JD
+// Intelligence Snapshot (17E). No ranking across candidates (19D), no
+// shortlist automation (19E), no interview generation.
+// ============================================================================
+
+export type EmployerCandidateScreeningStatus = 'processing' | 'completed' | 'failed';
+export type EmployerCandidateScreeningRecommendation = 'strong_match' | 'match' | 'borderline' | 'weak_match';
+
+export interface ScreeningSkillMatch {
+  score: number;
+  matchedSkills: string[];
+  missingSkills: string[];
+  partialSkills: string[];
+}
+
+export interface ScreeningCompetencyMatch {
+  competencyName: string;
+  score: number;
+  evidence: string[];
+}
+
+export interface ScreeningExperienceMatch {
+  score: number;
+  summary?: string;
+}
+
+export interface ScreeningEducationMatch {
+  score: number;
+  summary?: string;
+}
+
+export interface ScreeningResult {
+  overallScore: number;
+  recommendation: EmployerCandidateScreeningRecommendation;
+  skillMatch: ScreeningSkillMatch;
+  competencyMatch: ScreeningCompetencyMatch[];
+  experienceMatch: ScreeningExperienceMatch;
+  educationMatch: ScreeningEducationMatch;
+  strengths: string[];
+  concerns: string[];
+  confidence: number;
+}
+
+export interface ApplicationScreening {
+  id: string;
+  applicationId: string;
+  jobId: string;
+  candidateId: string;
+  jdSnapshotId: string;
+  resumeAnalysisId: string;
+  status: EmployerCandidateScreeningStatus;
+  result: ScreeningResult | null;
+  /** Same shape as a resume analysis's aiUsage — reused rather than redefined. */
+  aiUsage: CandidateResumeAiUsage | null;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ScreenApplicationResponse = ApiEnvelope<{ screening: ApplicationScreening }>;
+export type GetApplicationScreeningResponse = ApiEnvelope<{ screening: ApplicationScreening | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1558,6 +1622,29 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to record source attribution');
+    }
+  }
+
+  // ---- Employer Candidate Screening (Sprint 19A) ----
+
+  /** Screens against the CURRENT finalized JD snapshot and resolved resume analysis only. If already completed for that exact combination, the backend returns it without a new AI call. */
+  async screenApplication(organizationId: string, applicationId: string): Promise<ScreenApplicationResponse> {
+    try {
+      const response = await this.api.post<ScreenApplicationResponse>(`/organizations/${organizationId}/applications/${applicationId}/screening`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to screen application');
+    }
+  }
+
+  async getApplicationScreening(organizationId: string, applicationId: string): Promise<GetApplicationScreeningResponse> {
+    try {
+      const response = await this.api.get<GetApplicationScreeningResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/screening`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load screening');
     }
   }
 }

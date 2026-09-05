@@ -34,6 +34,7 @@ import employerCandidateSourceAttributionController from '../controllers/Employe
 import employerCandidateResumeController from '../controllers/EmployerCandidateResumeController';
 import employerCandidateResumeAnalysisController from '../controllers/EmployerCandidateResumeAnalysisController';
 import employerJobApplicationController from '../controllers/EmployerJobApplicationController';
+import employerCandidateScreeningController from '../controllers/EmployerCandidateScreeningController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2259,6 +2260,47 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerJobApplicationController.updateApplicationStatus
+);
+
+// ============================================================================
+// Employer Candidate Screening (19A) — compares one application's candidate
+// resume analysis against the job's FINALIZED JD Intelligence Snapshot
+// (17E) using the existing AI Gateway. No ranking across candidates (19D),
+// no shortlist automation (19E), no interview generation. Reads use
+// ORGANIZATION_VIEW (readable even on an archived organization/
+// application); the screen mutation uses INTERVIEWS_MANAGE and is blocked
+// on an archived organization or archived application. Never modifies the
+// application, candidate, job, JD snapshot, or resume analysis.
+// ============================================================================
+
+router.post(
+  '/:organizationId/applications/:applicationId/screening',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateScreeningController.screenApplication
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/screening',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateScreeningController.getCurrentScreening
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/screenings',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateScreeningController.getScreeningHistory
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
