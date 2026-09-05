@@ -39,6 +39,7 @@ import employerCandidateScreeningScoreController from '../controllers/EmployerCa
 import employerCandidateScreeningGapController from '../controllers/EmployerCandidateScreeningGapController';
 import employerCandidateRankingController from '../controllers/EmployerCandidateRankingController';
 import employerHiringCandidateComparisonController from '../controllers/EmployerHiringCandidateComparisonController';
+import employerHiringPipelineController from '../controllers/EmployerHiringPipelineController';
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
@@ -2277,6 +2278,21 @@ router.post(
   employerJobApplicationController.updateApplicationStatus
 );
 
+// PATCH .../applications/:applicationId/pipeline-stage (23B) — same
+// lifecycle authority as POST .../status above (pure pass-through to
+// EmployerJobApplicationService.updateApplicationStatus); a distinct route
+// for the Hiring Pipeline board's "move stage" action only.
+router.patch(
+  '/:organizationId/applications/:applicationId/pipeline-stage',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...updateApplicationStatusValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringPipelineController.moveApplicationStage
+);
+
 // ============================================================================
 // Employer Candidate Screening (19A) — compares one application's candidate
 // resume analysis against the job's FINALIZED JD Intelligence Snapshot
@@ -2461,6 +2477,23 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringCandidateComparisonController.getComparison
+);
+
+// ============================================================================
+// Hiring Pipeline Board (23B) — a live, deterministic read grouping the
+// EXISTING EmployerJobApplication.status values into columns; no new status
+// model, finalized 22E assessment metadata shown for context only. Never
+// auto-advances a stage based on score/finalization/comparison position.
+// ============================================================================
+
+router.get(
+  '/:organizationId/jobs/:jobId/pipeline',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringPipelineController.getJobPipeline
 );
 
 // ============================================================================

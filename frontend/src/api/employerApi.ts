@@ -1184,6 +1184,56 @@ export interface JobCandidateComparisonFilters {
 export type GetJobCandidateComparisonResponse = ApiEnvelope<JobCandidateComparison>;
 
 // ============================================================================
+// Hiring Pipeline Board (Sprint 23B) — a live, deterministic read grouping
+// the EXISTING EmployerJobApplication.status values into columns. No new
+// status model; finalized 22E assessment metadata shown for context only.
+// Distinct from 19D screening ranking and 23A assessment comparison above.
+// ============================================================================
+
+export interface PipelineCandidateRef {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+export interface PipelineAssessmentSummary {
+  finalized: boolean;
+  overallScore?: number;
+  competencyCoveragePercent?: number;
+  criticalFollowUpCount?: number;
+  finalizedAt?: string;
+}
+
+export interface PipelineApplicationRow {
+  applicationId: string;
+  candidate: PipelineCandidateRef;
+  status: EmployerJobApplicationStatus;
+  appliedAt: string;
+  assessment: PipelineAssessmentSummary;
+}
+
+export interface PipelineColumn {
+  status: EmployerJobApplicationStatus;
+  count: number;
+  applications: PipelineApplicationRow[];
+}
+
+export interface JobHiringPipeline {
+  job: { id: string; title: string; jobCode?: string; status: EmployerJobStatus };
+  columns: PipelineColumn[];
+  summary: {
+    totalActiveApplications: number;
+    finalizedAssessmentCount: number;
+    offerCount: number;
+    hiredCount: number;
+    rejectedCount: number;
+  };
+}
+
+export type GetJobHiringPipelineResponse = ApiEnvelope<JobHiringPipeline>;
+export type MoveApplicationPipelineStageResponse = ApiEnvelope<{ application: Record<string, unknown> }>;
+
+// ============================================================================
 // Employer Shortlist Workflow (Sprint 19E) — an explicit recruiter action
 // only, never automatic. Reuses the existing 18D application status
 // transition (screening -> shortlisted) under the hood; this is purely an
@@ -2589,6 +2639,34 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load candidate comparison');
+    }
+  }
+
+  // ---- Hiring Pipeline Board (Sprint 23B) ----
+
+  async getEmployerJobHiringPipeline(organizationId: string, jobId: string): Promise<GetJobHiringPipelineResponse> {
+    try {
+      const response = await this.api.get<GetJobHiringPipelineResponse>(`/organizations/${organizationId}/jobs/${jobId}/pipeline`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load hiring pipeline');
+    }
+  }
+
+  /** Pure pass-through to the existing application status transition map — never a new lifecycle. */
+  async moveApplicationPipelineStage(
+    organizationId: string,
+    applicationId: string,
+    status: EmployerJobApplicationStatus
+  ): Promise<MoveApplicationPipelineStageResponse> {
+    try {
+      const response = await this.api.patch<MoveApplicationPipelineStageResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/pipeline-stage`,
+        { status }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update pipeline stage');
     }
   }
 

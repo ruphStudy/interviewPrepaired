@@ -19,10 +19,12 @@ import employerApi, {
   JobRankingFilters,
   JobCandidateComparison,
   JobCandidateComparisonFilters,
+  JobHiringPipeline,
   JobShortlistRow,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
+  EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS,
   EMPLOYER_JOB_HIRING_TEAM_ROLES,
 } from '../../api/employerApi';
 import { EMPTY_JOB_FORM, JobFormState, jobFormToPayload, jobToFormState } from './jobFormUtils';
@@ -46,6 +48,7 @@ import {
   Scale,
   ChevronDown,
   ChevronUp,
+  LayoutGrid,
 } from 'lucide-react';
 
 const APPLICATIONS_PAGE_LIMIT = 20;
@@ -261,6 +264,14 @@ const EmployerJobDetailPage: React.FC = () => {
   const [comparisonSearchInput, setComparisonSearchInput] = useState('');
   const [appliedComparisonFilters, setAppliedComparisonFilters] = useState<JobCandidateComparisonFilters>({});
   const [expandedComparisonRow, setExpandedComparisonRow] = useState<string | null>(null);
+
+  const [pipeline, setPipeline] = useState<JobHiringPipeline | null>(null);
+  const [pipelineLoading, setPipelineLoading] = useState(true);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const [pipelineSearchInput, setPipelineSearchInput] = useState('');
+  const [pipelineFinalizedOnly, setPipelineFinalizedOnly] = useState(false);
+  const [movingApplicationId, setMovingApplicationId] = useState<string | null>(null);
+  const [moveStageError, setMoveStageError] = useState<string | null>(null);
 
   const [shortlistingApplicationId, setShortlistingApplicationId] = useState<string | null>(null);
   const [shortlistActionError, setShortlistActionError] = useState<string | null>(null);
@@ -481,6 +492,58 @@ const EmployerJobDetailPage: React.FC = () => {
     setComparisonMinScoreInput('');
     setComparisonSearchInput('');
     setAppliedComparisonFilters({});
+  };
+
+  const fetchPipeline = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setPipelineLoading(true);
+    setPipelineError(null);
+    try {
+      const response = await employerApi.getEmployerJobHiringPipeline(organizationId, jobId);
+      setPipeline(response.data);
+    } catch (err: any) {
+      setPipelineError(err.message || 'Failed to load hiring pipeline');
+    } finally {
+      setPipelineLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchPipeline();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchPipeline]);
+
+  const HIGH_IMPACT_STAGE_STATUSES = new Set<EmployerJobApplicationStatus>(['hired', 'rejected', 'withdrawn'] as EmployerJobApplicationStatus[]);
+
+  const handleMoveStage = async (applicationId: string, candidateName: string, targetStatus: EmployerJobApplicationStatus) => {
+    if (!organizationId) return;
+    if (
+      HIGH_IMPACT_STAGE_STATUSES.has(targetStatus) &&
+      !window.confirm(`Move ${candidateName} to "${APPLICATION_STATUS_LABELS[targetStatus]}"? This may be a terminal stage.`)
+    ) {
+      return;
+    }
+    setMovingApplicationId(applicationId);
+    setMoveStageError(null);
+    try {
+      await employerApi.moveApplicationPipelineStage(organizationId, applicationId, targetStatus);
+      await fetchPipeline();
+    } catch (err: any) {
+      setMoveStageError(err.message || 'Failed to update pipeline stage');
+    } finally {
+      setMovingApplicationId(null);
+    }
+  };
+
+  const pipelineMatchesFilters = (row: { candidate: { firstName: string; lastName: string }; assessment: { finalized: boolean } }) => {
+    if (pipelineFinalizedOnly && !row.assessment.finalized) return false;
+    if (pipelineSearchInput.trim()) {
+      const needle = pipelineSearchInput.trim().toLowerCase();
+      const name = `${row.candidate.firstName} ${row.candidate.lastName}`.toLowerCase();
+      if (!name.includes(needle)) return false;
+    }
+    return true;
   };
 
   const fetchJobShortlist = useCallback(async () => {
@@ -1925,6 +1988,192 @@ const EmployerJobDetailPage: React.FC = () => {
                       </div>
                     </div>
                   )}
+                </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <LayoutGrid size={18} className="text-mentor-text-muted" />
+                Hiring Pipeline
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Existing application stages — moving a card here changes the application's real status. Distinct from Screening Ranking
+                and Assessment Comparison above.
+              </p>
+
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div className="flex-1 min-w-[180px]">
+                  <label className="label mb-1 block">Search Candidate</label>
+                  <input
+                    type="text"
+                    value={pipelineSearchInput}
+                    onChange={(e) => setPipelineSearchInput(e.target.value)}
+                    placeholder="Name..."
+                    className="input w-full"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-sm text-mentor-text-secondary pb-2">
+                  <input
+                    type="checkbox"
+                    checked={pipelineFinalizedOnly}
+                    onChange={(e) => setPipelineFinalizedOnly(e.target.checked)}
+                  />
+                  Finalized assessment only
+                </label>
+              </div>
+
+              {pipelineLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : pipelineError ? (
+                <div className="p-8 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{pipelineError}</p>
+                  <button onClick={fetchPipeline} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !pipeline || pipeline.summary.totalActiveApplications === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No applications yet.</p>
+              ) : (
+                <>
+                  <p className="text-xs text-mentor-text-muted mb-3">
+                    {pipeline.summary.totalActiveApplications} active &middot; {pipeline.summary.finalizedAssessmentCount} finalized
+                    assessments &middot; {pipeline.summary.offerCount} offer &middot; {pipeline.summary.hiredCount} hired &middot;{' '}
+                    {pipeline.summary.rejectedCount} rejected
+                  </p>
+
+                  {moveStageError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-3">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{moveStageError}</p>
+                    </div>
+                  )}
+
+                  {/* Desktop: Kanban-style row of columns */}
+                  <div className="hidden md:flex gap-4 overflow-x-auto pb-2">
+                    {pipeline.columns.map((column) => {
+                      const visibleApps = column.applications.filter(pipelineMatchesFilters);
+                      return (
+                        <div key={column.status} className="w-64 shrink-0 surface-muted p-3">
+                          <p className="text-sm font-medium text-mentor-text mb-2">
+                            {APPLICATION_STATUS_LABELS[column.status]} <span className="text-mentor-text-muted">({column.count})</span>
+                          </p>
+                          <div className="space-y-2">
+                            {visibleApps.length === 0 ? (
+                              <p className="text-xs text-mentor-text-muted">No candidates.</p>
+                            ) : (
+                              visibleApps.map((app) => (
+                                <div key={app.applicationId} className="card p-2.5">
+                                  <Link
+                                    to={`/organizations/${organizationId}/employer/applications/${app.applicationId}`}
+                                    className="text-sm font-medium text-mentor-text hover:underline"
+                                  >
+                                    {app.candidate.firstName} {app.candidate.lastName}
+                                  </Link>
+                                  <p className="text-xs text-mentor-text-muted">Applied {formatDate(app.appliedAt)}</p>
+                                  {app.assessment.finalized ? (
+                                    <div className="mt-1 space-y-0.5">
+                                      <span className="badge badge-success">Finalized</span>
+                                      <p className="text-xs text-mentor-text-secondary">
+                                        {app.assessment.overallScore}/100 &middot; {app.assessment.competencyCoveragePercent}% coverage
+                                        {app.assessment.criticalFollowUpCount !== undefined &&
+                                        app.assessment.criticalFollowUpCount > 0
+                                          ? ` · ${app.assessment.criticalFollowUpCount} critical follow-up`
+                                          : ''}
+                                      </p>
+                                    </div>
+                                  ) : (
+                                    <span className="badge badge-neutral mt-1">Not finalized</span>
+                                  )}
+                                  {canManage && EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS[app.status]?.length > 0 && (
+                                    <select
+                                      value=""
+                                      disabled={movingApplicationId === app.applicationId}
+                                      onChange={(e) => {
+                                        const target = e.target.value as EmployerJobApplicationStatus;
+                                        e.target.value = '';
+                                        if (target) {
+                                          handleMoveStage(app.applicationId, `${app.candidate.firstName} ${app.candidate.lastName}`, target);
+                                        }
+                                      }}
+                                      className="input w-full mt-2 text-xs"
+                                    >
+                                      <option value="">Move to...</option>
+                                      {EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS[app.status].map((nextStatus) => (
+                                        <option key={nextStatus} value={nextStatus}>
+                                          {APPLICATION_STATUS_LABELS[nextStatus]}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Mobile: stacked stage sections */}
+                  <div className="md:hidden space-y-4">
+                    {pipeline.columns.map((column) => {
+                      const visibleApps = column.applications.filter(pipelineMatchesFilters);
+                      if (visibleApps.length === 0) return null;
+                      return (
+                        <div key={column.status}>
+                          <p className="label mb-2">
+                            {APPLICATION_STATUS_LABELS[column.status]} ({column.count})
+                          </p>
+                          <div className="space-y-2">
+                            {visibleApps.map((app) => (
+                              <div key={app.applicationId} className="surface-muted p-3">
+                                <Link
+                                  to={`/organizations/${organizationId}/employer/applications/${app.applicationId}`}
+                                  className="text-sm font-medium text-mentor-text hover:underline"
+                                >
+                                  {app.candidate.firstName} {app.candidate.lastName}
+                                </Link>
+                                <p className="text-xs text-mentor-text-muted">Applied {formatDate(app.appliedAt)}</p>
+                                {app.assessment.finalized ? (
+                                  <p className="text-xs text-mentor-text-secondary mt-1">
+                                    <span className="badge badge-success">Finalized</span> {app.assessment.overallScore}/100 &middot;{' '}
+                                    {app.assessment.competencyCoveragePercent}% coverage
+                                  </p>
+                                ) : (
+                                  <span className="badge badge-neutral mt-1">Not finalized</span>
+                                )}
+                                {canManage && EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS[app.status]?.length > 0 && (
+                                  <select
+                                    value=""
+                                    disabled={movingApplicationId === app.applicationId}
+                                    onChange={(e) => {
+                                      const target = e.target.value as EmployerJobApplicationStatus;
+                                      e.target.value = '';
+                                      if (target) {
+                                        handleMoveStage(app.applicationId, `${app.candidate.firstName} ${app.candidate.lastName}`, target);
+                                      }
+                                    }}
+                                    className="input w-full mt-2 text-xs"
+                                  >
+                                    <option value="">Move to...</option>
+                                    {EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS[app.status].map((nextStatus) => (
+                                      <option key={nextStatus} value={nextStatus}>
+                                        {APPLICATION_STATUS_LABELS[nextStatus]}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </>
               )}
             </div>
