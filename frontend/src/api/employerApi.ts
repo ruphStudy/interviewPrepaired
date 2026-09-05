@@ -1234,6 +1234,61 @@ export type GetJobHiringPipelineResponse = ApiEnvelope<JobHiringPipeline>;
 export type MoveApplicationPipelineStageResponse = ApiEnvelope<{ application: Record<string, unknown> }>;
 
 // ============================================================================
+// Job Pipeline Funnel & Conversion Analytics (Sprint 23D) — deterministic,
+// live, never persisted. `currentPipeline` is authoritative current-state
+// counts; `observedFunnel`/`transitionTiming` use ONLY stored 23C activity
+// — never inferred from current status. `dataCoverage` tells the truth
+// about whether historical tracking is complete.
+// ============================================================================
+
+export interface PipelineAnalyticsCurrentStage {
+  status: EmployerJobApplicationStatus;
+  count: number;
+}
+
+export interface PipelineAnalyticsFunnelStage {
+  stage: EmployerJobApplicationStatus;
+  observedReachedCount: number;
+  conversionFromPreviousPercent: number | null;
+}
+
+export interface PipelineAnalyticsOutcomes {
+  offerCount: number;
+  hiredCount: number;
+  rejectedCount: number;
+  withdrawnCount: number;
+  openPipelineCount: number;
+}
+
+export interface PipelineAnalyticsTransitionTiming {
+  transition: string;
+  observedSampleCount: number;
+  averageHours?: number;
+  medianHours?: number;
+}
+
+export interface PipelineAnalyticsDataCoverage {
+  trackedApplications: number;
+  totalApplications: number;
+  trackingCoveragePercent: number;
+  historicalTrackingComplete: boolean;
+}
+
+export interface JobPipelineAnalytics {
+  job: { id: string; title: string; jobCode?: string; status: EmployerJobStatus };
+  currentPipeline: {
+    totalActiveApplications: number;
+    stages: PipelineAnalyticsCurrentStage[];
+  };
+  observedFunnel: PipelineAnalyticsFunnelStage[];
+  outcomes: PipelineAnalyticsOutcomes;
+  transitionTiming: PipelineAnalyticsTransitionTiming[];
+  dataCoverage: PipelineAnalyticsDataCoverage;
+}
+
+export type GetJobPipelineAnalyticsResponse = ApiEnvelope<JobPipelineAnalytics>;
+
+// ============================================================================
 // Employer Shortlist Workflow (Sprint 19E) — an explicit recruiter action
 // only, never automatic. Reuses the existing 18D application status
 // transition (screening -> shortlisted) under the hood; this is purely an
@@ -2698,6 +2753,19 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to update pipeline stage');
+    }
+  }
+
+  // ---- Job Pipeline Funnel & Conversion Analytics (Sprint 23D) ----
+
+  async getEmployerJobPipelineAnalytics(organizationId: string, jobId: string): Promise<GetJobPipelineAnalyticsResponse> {
+    try {
+      const response = await this.api.get<GetJobPipelineAnalyticsResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/pipeline-analytics`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load pipeline analytics');
     }
   }
 

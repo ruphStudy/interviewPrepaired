@@ -41,6 +41,7 @@ import employerCandidateRankingController from '../controllers/EmployerCandidate
 import employerHiringCandidateComparisonController from '../controllers/EmployerHiringCandidateComparisonController';
 import employerHiringPipelineController from '../controllers/EmployerHiringPipelineController';
 import employerJobApplicationTimelineController from '../controllers/EmployerJobApplicationTimelineController';
+import employerHiringPipelineAnalyticsController from '../controllers/EmployerHiringPipelineAnalyticsController';
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
@@ -2509,6 +2510,20 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringPipelineController.getJobPipeline
+);
+
+// GET .../jobs/:jobId/pipeline-analytics (23D) — deterministic (no AI),
+// live funnel/conversion analytics. Current-state counts are authoritative;
+// observed funnel/transition timing use ONLY stored 23C activity, never
+// current status inference. Never persisted.
+router.get(
+  '/:organizationId/jobs/:jobId/pipeline-analytics',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringPipelineAnalyticsController.getJobPipelineAnalytics
 );
 
 // ============================================================================

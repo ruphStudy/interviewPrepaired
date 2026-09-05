@@ -20,6 +20,7 @@ import employerApi, {
   JobCandidateComparison,
   JobCandidateComparisonFilters,
   JobHiringPipeline,
+  JobPipelineAnalytics,
   JobShortlistRow,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
@@ -49,6 +50,7 @@ import {
   ChevronDown,
   ChevronUp,
   LayoutGrid,
+  BarChart3,
 } from 'lucide-react';
 
 const APPLICATIONS_PAGE_LIMIT = 20;
@@ -272,6 +274,10 @@ const EmployerJobDetailPage: React.FC = () => {
   const [pipelineFinalizedOnly, setPipelineFinalizedOnly] = useState(false);
   const [movingApplicationId, setMovingApplicationId] = useState<string | null>(null);
   const [moveStageError, setMoveStageError] = useState<string | null>(null);
+
+  const [pipelineAnalytics, setPipelineAnalytics] = useState<JobPipelineAnalytics | null>(null);
+  const [pipelineAnalyticsLoading, setPipelineAnalyticsLoading] = useState(true);
+  const [pipelineAnalyticsError, setPipelineAnalyticsError] = useState<string | null>(null);
 
   const [shortlistingApplicationId, setShortlistingApplicationId] = useState<string | null>(null);
   const [shortlistActionError, setShortlistActionError] = useState<string | null>(null);
@@ -545,6 +551,26 @@ const EmployerJobDetailPage: React.FC = () => {
     }
     return true;
   };
+
+  const fetchPipelineAnalytics = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setPipelineAnalyticsLoading(true);
+    setPipelineAnalyticsError(null);
+    try {
+      const response = await employerApi.getEmployerJobPipelineAnalytics(organizationId, jobId);
+      setPipelineAnalytics(response.data);
+    } catch (err: any) {
+      setPipelineAnalyticsError(err.message || 'Failed to load pipeline analytics');
+    } finally {
+      setPipelineAnalyticsLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchPipelineAnalytics();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchPipelineAnalytics]);
 
   const fetchJobShortlist = useCallback(async () => {
     if (!organizationId || !jobId) return;
@@ -2175,6 +2201,137 @@ const EmployerJobDetailPage: React.FC = () => {
                     })}
                   </div>
                 </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <BarChart3 size={18} className="text-mentor-text-muted" />
+                Pipeline Analytics
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Deterministic funnel &amp; conversion analytics — no AI, never persisted.
+              </p>
+
+              {pipelineAnalyticsLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : pipelineAnalyticsError ? (
+                <div className="p-8 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{pipelineAnalyticsError}</p>
+                  <button onClick={fetchPipelineAnalytics} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !pipelineAnalytics || pipelineAnalytics.currentPipeline.totalActiveApplications === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No applications yet.</p>
+              ) : (
+                <div className="space-y-6">
+                  {!pipelineAnalytics.dataCoverage.historicalTrackingComplete && (
+                    <div className="flex items-start gap-2 bg-amber-50 dark:bg-future-warning/10 border border-amber-200 dark:border-future-warning/20 rounded-lg p-3">
+                      <AlertCircle size={16} className="text-mentor-warning mt-0.5 shrink-0" />
+                      <p className="text-sm text-amber-800 dark:text-future-warning">
+                        Historical funnel analytics are based only on tracked activity since pipeline history was introduced.
+                      </p>
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="label mb-2">Current Pipeline ({pipelineAnalytics.currentPipeline.totalActiveApplications} active)</p>
+                    <div className="space-y-1.5">
+                      {pipelineAnalytics.currentPipeline.stages.map((s) => {
+                        const pct =
+                          pipelineAnalytics.currentPipeline.totalActiveApplications > 0
+                            ? (s.count / pipelineAnalytics.currentPipeline.totalActiveApplications) * 100
+                            : 0;
+                        return (
+                          <div key={s.status} className="flex items-center gap-2">
+                            <span className="text-xs text-mentor-text-secondary w-24 shrink-0">{APPLICATION_STATUS_LABELS[s.status]}</span>
+                            <div className="flex-1 h-2 rounded bg-mentor-surface overflow-hidden">
+                              <div className="h-full bg-primary-500" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="text-xs text-mentor-text-muted w-8 text-right shrink-0">{s.count}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">Observed Funnel (stored activity only)</p>
+                    <div className="space-y-1.5">
+                      {pipelineAnalytics.observedFunnel.map((f) => (
+                        <div key={f.stage} className="flex items-center gap-2">
+                          <span className="text-xs text-mentor-text-secondary w-24 shrink-0">{APPLICATION_STATUS_LABELS[f.stage]}</span>
+                          <span className="text-sm font-medium text-mentor-text w-10 shrink-0">{f.observedReachedCount}</span>
+                          <span className="text-xs text-mentor-text-muted">
+                            {f.conversionFromPreviousPercent !== null ? `${f.conversionFromPreviousPercent}% conversion` : '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Open Pipeline</p>
+                      <p className="text-lg font-semibold text-mentor-text">{pipelineAnalytics.outcomes.openPipelineCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Offer</p>
+                      <p className="text-lg font-semibold text-mentor-text">{pipelineAnalytics.outcomes.offerCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Hired</p>
+                      <p className="text-lg font-semibold text-mentor-text">{pipelineAnalytics.outcomes.hiredCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Rejected</p>
+                      <p className="text-lg font-semibold text-mentor-text">{pipelineAnalytics.outcomes.rejectedCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Withdrawn</p>
+                      <p className="text-lg font-semibold text-mentor-text">{pipelineAnalytics.outcomes.withdrawnCount}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">Stage Transition Timing (observed only)</p>
+                    <div className="overflow-x-auto -mx-2">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs text-mentor-text-muted border-b border-mentor-border">
+                            <th className="px-2 py-2 font-medium">Transition</th>
+                            <th className="px-2 py-2 font-medium">Samples</th>
+                            <th className="px-2 py-2 font-medium">Avg</th>
+                            <th className="px-2 py-2 font-medium">Median</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-mentor-border">
+                          {pipelineAnalytics.transitionTiming.map((t) => (
+                            <tr key={t.transition}>
+                              <td className="px-2 py-2 text-xs text-mentor-text-secondary">{t.transition.replace('_to_', ' → ')}</td>
+                              <td className="px-2 py-2 text-xs text-mentor-text-muted">{t.observedSampleCount}</td>
+                              <td className="px-2 py-2 text-xs text-mentor-text-secondary">
+                                {t.averageHours !== undefined ? `${t.averageHours}h` : '—'}
+                              </td>
+                              <td className="px-2 py-2 text-xs text-mentor-text-secondary">
+                                {t.medianHours !== undefined ? `${t.medianHours}h` : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-mentor-text-muted">
+                    Tracking coverage: {pipelineAnalytics.dataCoverage.trackedApplications}/{pipelineAnalytics.dataCoverage.totalApplications}{' '}
+                    applications ({pipelineAnalytics.dataCoverage.trackingCoveragePercent}%)
+                  </p>
+                </div>
               )}
             </div>
 
