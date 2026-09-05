@@ -483,6 +483,94 @@ export type GetCurrentJobIntelligenceResponse = ApiEnvelope<{
 export type GetJobIntelligenceResponse = ApiEnvelope<{ snapshot: JobIntelligenceSnapshotRecord | null }>;
 export type FinalizeJobIntelligenceResponse = ApiEnvelope<{ snapshot: JobIntelligenceSnapshotRecord }>;
 
+// ============================================================================
+// Employer Candidates (Sprint 18A) — company-only, manually-entered
+// candidate metadata. No resume upload/parsing (18B/18C), no job/
+// application linkage (18D), no screening/ranking, no AI.
+// ============================================================================
+
+export type EmployerCandidateSource = 'manual' | 'referral' | 'careers' | 'agency' | 'job_portal' | 'import' | 'other';
+export type EmployerCandidateStatus = 'active' | 'inactive' | 'archived';
+
+export const EMPLOYER_CANDIDATE_SOURCES: Array<{ value: EmployerCandidateSource; label: string }> = [
+  { value: 'manual', label: 'Manual Entry' },
+  { value: 'referral', label: 'Referral' },
+  { value: 'careers', label: 'Careers Page' },
+  { value: 'agency', label: 'Agency' },
+  { value: 'job_portal', label: 'Job Portal' },
+  { value: 'import', label: 'Import' },
+  { value: 'other', label: 'Other' },
+];
+
+/**
+ * Mirrors the backend's EMPLOYER_CANDIDATE_STATUS_TRANSITIONS exactly —
+ * used only to decide which status-action buttons to render. The backend
+ * remains the sole authority and re-validates every transition
+ * independently; this is never trusted as the actual gate.
+ */
+export const EMPLOYER_CANDIDATE_STATUS_TRANSITIONS: Record<EmployerCandidateStatus, EmployerCandidateStatus[]> = {
+  active: ['inactive', 'archived'],
+  inactive: ['active', 'archived'],
+  archived: ['active'],
+};
+
+export interface EmployerCandidate {
+  id: string;
+  organizationId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  headline?: string;
+  currentCompany?: string;
+  currentTitle?: string;
+  location?: string;
+  totalExperienceYears?: number;
+  linkedinUrl?: string;
+  portfolioUrl?: string;
+  githubUrl?: string;
+  noticePeriodDays?: number;
+  currentSalary?: number;
+  expectedSalary?: number;
+  salaryCurrency?: string;
+  source: EmployerCandidateSource;
+  status: EmployerCandidateStatus;
+  notes?: string;
+  tags?: string[];
+  createdByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Create/update payload — never includes organizationId/createdByMembershipId/status/timestamps; the backend rejects those fields outright. */
+export interface EmployerCandidatePayload {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  headline?: string;
+  currentCompany?: string;
+  currentTitle?: string;
+  location?: string;
+  totalExperienceYears?: number;
+  linkedinUrl?: string;
+  portfolioUrl?: string;
+  githubUrl?: string;
+  noticePeriodDays?: number;
+  currentSalary?: number;
+  expectedSalary?: number;
+  salaryCurrency?: string;
+  source?: EmployerCandidateSource;
+  notes?: string;
+  tags?: string[];
+}
+
+export type ListCandidatesResponse = ApiEnvelope<{ candidates: EmployerCandidate[]; pagination: Pagination }>;
+export type GetCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
+export type CreateCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
+export type UpdateCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
+export type UpdateCandidateStatusResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -900,6 +988,79 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load job description intelligence');
+    }
+  }
+
+  // ---- Employer Candidates (Sprint 18A) ----
+
+  async listCandidates(
+    organizationId: string,
+    params: {
+      status?: EmployerCandidateStatus;
+      source?: EmployerCandidateSource;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {}
+  ): Promise<ListCandidatesResponse> {
+    try {
+      const response = await this.api.get<ListCandidatesResponse>(`/organizations/${organizationId}/candidates`, { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load candidates');
+    }
+  }
+
+  async getCandidate(organizationId: string, candidateId: string): Promise<GetCandidateResponse> {
+    try {
+      const response = await this.api.get<GetCandidateResponse>(`/organizations/${organizationId}/candidates/${candidateId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load candidate');
+    }
+  }
+
+  /** `status` always starts at active server-side — never accepted here. */
+  async createCandidate(organizationId: string, payload: EmployerCandidatePayload): Promise<CreateCandidateResponse> {
+    try {
+      const response = await this.api.post<CreateCandidateResponse>(`/organizations/${organizationId}/candidates`, payload);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create candidate');
+    }
+  }
+
+  /** PATCH-like merge (despite being a PUT) — omitted fields keep their current value. Never changes status. */
+  async updateCandidate(
+    organizationId: string,
+    candidateId: string,
+    payload: EmployerCandidatePayload
+  ): Promise<UpdateCandidateResponse> {
+    try {
+      const response = await this.api.put<UpdateCandidateResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update candidate');
+    }
+  }
+
+  /** The ONLY way a candidate's status changes. The backend rejects same/invalid transitions with a 409. */
+  async updateCandidateStatus(
+    organizationId: string,
+    candidateId: string,
+    status: EmployerCandidateStatus
+  ): Promise<UpdateCandidateStatusResponse> {
+    try {
+      const response = await this.api.post<UpdateCandidateStatusResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/status`,
+        { status }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update candidate status');
     }
   }
 }

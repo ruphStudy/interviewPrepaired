@@ -28,6 +28,7 @@ import employerJobDescriptionAnalysisController from '../controllers/EmployerJob
 import employerJobDescriptionSkillsController from '../controllers/EmployerJobDescriptionSkillsController';
 import employerJobDescriptionCompetencyController from '../controllers/EmployerJobDescriptionCompetencyController';
 import employerJobIntelligenceSnapshotController from '../controllers/EmployerJobIntelligenceSnapshotController';
+import employerCandidateController from '../controllers/EmployerCandidateController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -49,6 +50,7 @@ import { InstituteCourseStatus } from '../constants/instituteCourse';
 import { EmployerJobStatus, EmployerJobWorkplaceType, EmployerJobEmploymentType } from '../constants/employerJob';
 import { EmployerJobHiringTeamRole } from '../constants/employerJobHiringTeam';
 import { EmployerJobDescriptionSourceType, JD_RAW_TEXT_MIN_LENGTH, JD_RAW_TEXT_MAX_LENGTH } from '../constants/employerJobDescription';
+import { EmployerCandidateSource, EmployerCandidateStatus } from '../constants/employerCandidate';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
@@ -1746,6 +1748,188 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobIntelligenceSnapshotController.getIntelligenceForSource
+);
+
+// ============================================================================
+// Employer Candidates (18A) — company-only (400 for an institute org). No
+// resume upload/parsing (18B/18C), no job/application linkage (18D), no
+// screening/ranking, no AI — manually-entered candidate metadata only.
+// Reads use ORGANIZATION_VIEW; mutations (including the dedicated status
+// endpoint) use INTERVIEWS_MANAGE. `status`/`organizationId`/
+// `createdByMembershipId`/timestamps are rejected on create/update; status
+// only ever changes through POST .../status. Email is the primary candidate
+// identity within one organization (unique per org, never global).
+// ============================================================================
+
+const candidateIdValidation = [param('candidateId').isMongoId().withMessage('Invalid candidate ID')];
+
+const listCandidatesValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(EmployerCandidateStatus)).withMessage('Invalid status'),
+  query('source').optional().isIn(Object.values(EmployerCandidateSource)).withMessage('Invalid source'),
+  query('search').optional().isString().trim().isLength({ max: 200 }),
+];
+
+const CANDIDATE_FIELD_KEYS = [
+  'firstName',
+  'lastName',
+  'email',
+  'phone',
+  'headline',
+  'currentCompany',
+  'currentTitle',
+  'location',
+  'totalExperienceYears',
+  'linkedinUrl',
+  'portfolioUrl',
+  'githubUrl',
+  'noticePeriodDays',
+  'currentSalary',
+  'expectedSalary',
+  'salaryCurrency',
+  'source',
+  'notes',
+  'tags',
+];
+
+const rejectCandidateImmutableFieldsValidation = [
+  body('organizationId').not().exists().withMessage('organizationId cannot be set'),
+  body('createdByMembershipId').not().exists().withMessage('createdByMembershipId cannot be set'),
+  body('status').not().exists().withMessage('status cannot be changed directly — use POST .../status'),
+  body('createdAt').not().exists().withMessage('createdAt cannot be set'),
+  body('updatedAt').not().exists().withMessage('updatedAt cannot be set'),
+];
+
+const candidateOptionalFieldValidators = [
+  body('phone').optional().isString().withMessage('phone must be a string').trim().isLength({ max: 30 }).withMessage('phone must be at most 30 characters'),
+  body('headline').optional().isString().trim().isLength({ max: 200 }).withMessage('headline must be at most 200 characters'),
+  body('currentCompany').optional().isString().trim().isLength({ max: 150 }).withMessage('currentCompany must be at most 150 characters'),
+  body('currentTitle').optional().isString().trim().isLength({ max: 150 }).withMessage('currentTitle must be at most 150 characters'),
+  body('location').optional().isString().trim().isLength({ max: 200 }).withMessage('location must be at most 200 characters'),
+  body('totalExperienceYears').optional().isFloat({ min: 0 }).withMessage('totalExperienceYears must be a non-negative number'),
+  body('linkedinUrl').optional().isString().trim().isLength({ max: 300 }).withMessage('linkedinUrl must be at most 300 characters').isURL().withMessage('linkedinUrl must be a valid URL'),
+  body('portfolioUrl').optional().isString().trim().isLength({ max: 300 }).withMessage('portfolioUrl must be at most 300 characters').isURL().withMessage('portfolioUrl must be a valid URL'),
+  body('githubUrl').optional().isString().trim().isLength({ max: 300 }).withMessage('githubUrl must be at most 300 characters').isURL().withMessage('githubUrl must be a valid URL'),
+  body('noticePeriodDays').optional().isInt({ min: 0 }).withMessage('noticePeriodDays must be a non-negative integer'),
+  body('currentSalary').optional().isFloat({ min: 0 }).withMessage('currentSalary must be a non-negative number'),
+  body('expectedSalary').optional().isFloat({ min: 0 }).withMessage('expectedSalary must be a non-negative number'),
+  body('salaryCurrency').optional().isString().trim().isLength({ max: 10 }).withMessage('salaryCurrency must be at most 10 characters'),
+  body('source').optional().isIn(Object.values(EmployerCandidateSource)).withMessage('Invalid source'),
+  body('notes').optional().isString().trim().isLength({ max: 2000 }).withMessage('notes must be at most 2000 characters'),
+  body('tags').optional().isArray({ max: 20 }).withMessage('tags must be an array of at most 20 items'),
+];
+
+const createCandidateValidation = [
+  ...rejectCandidateImmutableFieldsValidation,
+  body('firstName')
+    .notEmpty()
+    .withMessage('firstName is required')
+    .isString()
+    .withMessage('firstName must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('firstName must be between 1 and 100 characters'),
+  body('lastName')
+    .notEmpty()
+    .withMessage('lastName is required')
+    .isString()
+    .withMessage('lastName must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('lastName must be between 1 and 100 characters'),
+  body('email').notEmpty().withMessage('email is required').isEmail().withMessage('A valid email is required').isLength({ max: 254 }),
+  ...candidateOptionalFieldValidators,
+];
+
+const updateCandidateValidation = [
+  ...rejectCandidateImmutableFieldsValidation,
+  body('firstName')
+    .optional()
+    .isString()
+    .withMessage('firstName must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('firstName must be between 1 and 100 characters'),
+  body('lastName')
+    .optional()
+    .isString()
+    .withMessage('lastName must be a string')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('lastName must be between 1 and 100 characters'),
+  body('email').optional().isEmail().withMessage('A valid email is required').isLength({ max: 254 }),
+  ...candidateOptionalFieldValidators,
+  body().custom((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Request body must be an object');
+    }
+    const keys = Object.keys(value);
+    const unknownKeys = keys.filter((key) => !CANDIDATE_FIELD_KEYS.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown field(s): ${unknownKeys.join(', ')}`);
+    }
+    if (keys.length === 0) {
+      throw new Error('At least one field is required');
+    }
+    return true;
+  }),
+];
+
+const updateCandidateStatusValidation = [
+  body('status').notEmpty().withMessage('status is required').isIn(Object.values(EmployerCandidateStatus)).withMessage('Invalid status'),
+];
+
+router.get(
+  '/:organizationId/candidates',
+  protect,
+  ...organizationIdValidation,
+  ...listCandidatesValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateController.getCandidates
+);
+
+router.post(
+  '/:organizationId/candidates',
+  protect,
+  ...organizationIdValidation,
+  ...createCandidateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateController.createCandidate
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateController.getCandidate
+);
+
+router.put(
+  '/:organizationId/candidates/:candidateId',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  ...updateCandidateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateController.updateCandidate
+);
+
+router.post(
+  '/:organizationId/candidates/:candidateId/status',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  ...updateCandidateStatusValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateController.updateCandidateStatus
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

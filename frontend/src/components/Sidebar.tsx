@@ -133,13 +133,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   // mirrors the backend's own identity check (not just a permission check)
   // on every trainer-* endpoint.
   // Company-only — mirrors instituteNavItems but for the employer domain.
-  // No Candidates/Hiring Team yet (16D).
   const employerNavItems =
     activeOrganization?.type === 'company'
       ? [
           { to: `/organizations/${activeOrganizationId}/employer/profile`, label: 'Employer Profile', icon: Building2 },
           ...(hasPermission('organization:view')
-            ? [{ to: `/organizations/${activeOrganizationId}/employer/jobs`, label: 'Jobs', icon: Briefcase }]
+            ? [
+                { to: `/organizations/${activeOrganizationId}/employer/jobs`, label: 'Jobs', icon: Briefcase },
+                { to: `/organizations/${activeOrganizationId}/employer/candidates`, label: 'Candidates', icon: Users },
+              ]
             : []),
         ]
       : [];

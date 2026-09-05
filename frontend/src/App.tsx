@@ -36,6 +36,9 @@ import EmployerJobsPage from './pages/employer/EmployerJobsPage';
 import EmployerJobFormPage from './pages/employer/EmployerJobFormPage';
 import EmployerJobDetailPage from './pages/employer/EmployerJobDetailPage';
 import EmployerJobDescriptionPage from './pages/employer/EmployerJobDescriptionPage';
+import EmployerCandidatesPage from './pages/employer/EmployerCandidatesPage';
+import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
+import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
 import InstituteReadinessPage from './pages/institute/InstituteReadinessPage';
 import InstituteBillingPage from './pages/institute/InstituteBillingPage';
 import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
@@ -311,6 +314,32 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerJobDescriptionPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Employer Candidates Routes (Sprint 18A) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/candidates"
+            element={
+              <ProtectedRoute>
+                <EmployerCandidatesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/employer/candidates/new"
+            element={
+              <ProtectedRoute>
+                <EmployerCandidateFormPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/employer/candidates/:candidateId"
+            element={
+              <ProtectedRoute>
+                <EmployerCandidateDetailPage />
               </ProtectedRoute>
             }
           />
