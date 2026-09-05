@@ -601,6 +601,110 @@ export type GetCandidateResumesResponse = ApiEnvelope<{ current: CandidateResume
 export type GetCandidateResumeResponse = ApiEnvelope<{ resume: CandidateResume }>;
 export type UploadCandidateResumeResponse = ApiEnvelope<{ resume: CandidateResume }>;
 
+// ============================================================================
+// Employer Candidate Resume Analysis (Sprint 18C) — AI-parsed structured
+// profile extracted from one resume version. Raw extraction only — no
+// evaluation/scoring/ranking, and this is never auto-synced into the
+// candidate's own fields.
+// ============================================================================
+
+export type EmployerCandidateResumeAnalysisStatus = 'processing' | 'completed' | 'failed';
+
+export interface CandidateProfileName {
+  fullName?: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface CandidateProfileContact {
+  email?: string;
+  phone?: string;
+  location?: string;
+  linkedinUrl?: string;
+  githubUrl?: string;
+  portfolioUrl?: string;
+}
+
+export interface CandidateProfileExperience {
+  company?: string;
+  title?: string;
+  location?: string;
+  startDate?: string;
+  endDate?: string;
+  isCurrent?: boolean;
+  durationMonths?: number;
+  responsibilities: string[];
+  achievements: string[];
+  technologies: string[];
+}
+
+export interface CandidateProfileEducation {
+  institution?: string;
+  degree?: string;
+  field?: string;
+  startYear?: number;
+  endYear?: number;
+}
+
+export interface CandidateProfileProject {
+  name?: string;
+  description?: string;
+  technologies: string[];
+}
+
+export interface CandidateProfileConfidence {
+  overall: number;
+  ambiguousSections: string[];
+}
+
+export interface CandidateResumeProfile {
+  name?: CandidateProfileName;
+  contact?: CandidateProfileContact;
+  headline?: string;
+  summary?: string;
+  totalExperienceYears?: number;
+  experience: CandidateProfileExperience[];
+  education: CandidateProfileEducation[];
+  skills: string[];
+  toolsTechnologies: string[];
+  certifications: string[];
+  projects: CandidateProfileProject[];
+  languages: string[];
+  confidence: CandidateProfileConfidence;
+}
+
+export interface CandidateResumeAiUsage {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputCostUsd: number;
+  cachedInputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+  pricingStatus: 'calculated' | 'unknown';
+}
+
+export interface CandidateResumeAnalysis {
+  id: string;
+  candidateId: string;
+  resumeSourceId: string;
+  resumeVersion: number;
+  status: EmployerCandidateResumeAnalysisStatus;
+  profile: CandidateResumeProfile | null;
+  aiUsage: CandidateResumeAiUsage | null;
+  errorMessage?: string;
+  createdByMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AnalyzeCandidateResumeResponse = ApiEnvelope<{ analysis: CandidateResumeAnalysis }>;
+export type GetCurrentCandidateResumeAnalysisResponse = ApiEnvelope<{ analysis: CandidateResumeAnalysis | null }>;
+export type GetCandidateResumeAnalysisResponse = ApiEnvelope<{ analysis: CandidateResumeAnalysis | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1142,6 +1246,47 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to download resume');
+    }
+  }
+
+  // ---- Employer Candidate Resume Analysis (Sprint 18C) ----
+
+  /** Parses the CURRENT resume only. If already completed for this exact resume version, the backend returns it without a new AI call. */
+  async analyzeCurrentCandidateResume(organizationId: string, candidateId: string): Promise<AnalyzeCandidateResumeResponse> {
+    try {
+      const response = await this.api.post<AnalyzeCandidateResumeResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/resumes/analyze`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to analyze resume');
+    }
+  }
+
+  async getCurrentCandidateResumeAnalysis(organizationId: string, candidateId: string): Promise<GetCurrentCandidateResumeAnalysisResponse> {
+    try {
+      const response = await this.api.get<GetCurrentCandidateResumeAnalysisResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/resumes/analysis`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load resume analysis');
+    }
+  }
+
+  /** Analysis for one EXACT historical resume version — read-only, never triggers a new parse. */
+  async getCandidateResumeAnalysis(
+    organizationId: string,
+    candidateId: string,
+    resumeSourceId: string
+  ): Promise<GetCandidateResumeAnalysisResponse> {
+    try {
+      const response = await this.api.get<GetCandidateResumeAnalysisResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/resumes/${resumeSourceId}/analysis`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load resume analysis');
     }
   }
 }

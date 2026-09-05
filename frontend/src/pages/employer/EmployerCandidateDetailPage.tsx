@@ -10,9 +10,11 @@ import employerApi, {
   CandidateResume,
   CANDIDATE_RESUME_ALLOWED_EXTENSIONS,
   CANDIDATE_RESUME_MAX_FILE_SIZE_BYTES,
+  CandidateResumeAnalysis,
+  CandidateResumeProfile,
 } from '../../api/employerApi';
 import { EMPTY_CANDIDATE_FORM, CandidateFormState, candidateFormToPayload, candidateToFormState } from './candidateFormUtils';
-import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2, FileText, Download } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, Pencil, CheckCircle2, FileText, Download, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 
 const RESUME_FILE_TYPE_LABELS: Record<string, string> = {
   '.pdf': 'PDF',
@@ -26,6 +28,208 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+function formatCost(usd: number): string {
+  return usd > 0 && usd < 0.01 ? '<$0.01' : `$${usd.toFixed(2)}`;
+}
+
+/** Compact usage strip shown under a completed analysis — model, total tokens, estimated cost. Only rendered when the backend actually returned aiUsage. */
+const ResumeAnalysisUsage: React.FC<{ usage: CandidateResumeAnalysis['aiUsage'] }> = ({ usage }) => {
+  if (!usage) return null;
+  return (
+    <p className="text-xs text-mentor-text-muted">
+      {usage.model} &middot; {usage.totalTokens.toLocaleString()} tokens
+      {usage.pricingStatus === 'calculated' ? ` · est. ${formatCost(usage.totalCostUsd)}` : ''}
+    </p>
+  );
+};
+
+/** Read-only rendering of a parsed resume profile — reused for both the current analysis section and a historical version's expanded view. */
+const ResumeProfileSummary: React.FC<{ profile: CandidateResumeProfile }> = ({ profile }) => {
+  const displayName = profile.name?.fullName || [profile.name?.firstName, profile.name?.lastName].filter(Boolean).join(' ');
+  const contactLine = [profile.contact?.email, profile.contact?.phone, profile.contact?.location].filter(Boolean).join(' · ');
+  const links = [
+    { label: 'LinkedIn', url: profile.contact?.linkedinUrl },
+    { label: 'GitHub', url: profile.contact?.githubUrl },
+    { label: 'Portfolio', url: profile.contact?.portfolioUrl },
+  ].filter((l) => l.url);
+
+  return (
+    <div className="space-y-5">
+      {(displayName || profile.headline || profile.summary) && (
+        <div>
+          {displayName && <p className="text-sm font-medium text-mentor-text">{displayName}</p>}
+          {profile.headline && <p className="text-sm text-mentor-text-secondary">{profile.headline}</p>}
+          {profile.summary && <p className="text-sm text-mentor-text-secondary mt-1 whitespace-pre-wrap">{profile.summary}</p>}
+          {profile.totalExperienceYears !== undefined && (
+            <p className="text-xs text-mentor-text-muted mt-1">{profile.totalExperienceYears} years total experience</p>
+          )}
+        </div>
+      )}
+
+      {(contactLine || links.length > 0) && (
+        <div>
+          <p className="label mb-1.5">Contact</p>
+          {contactLine && <p className="text-sm text-mentor-text-secondary">{contactLine}</p>}
+          {links.length > 0 && (
+            <div className="flex flex-wrap gap-3 mt-1">
+              {links.map((l) => (
+                <a key={l.label} href={l.url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary-600 hover:underline">
+                  {l.label}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {profile.experience.length > 0 && (
+        <div>
+          <p className="label mb-2">Experience</p>
+          <div className="space-y-3">
+            {profile.experience.map((exp, i) => (
+              <div key={i} className="surface-muted p-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <p className="text-sm font-medium text-mentor-text">
+                    {[exp.title, exp.company].filter(Boolean).join(' at ') || 'Untitled role'}
+                  </p>
+                  {exp.isCurrent && <span className="badge badge-success">Current</span>}
+                </div>
+                <p className="text-xs text-mentor-text-muted">
+                  {[exp.location, [exp.startDate, exp.endDate].filter(Boolean).join(' – ')].filter(Boolean).join(' · ')}
+                </p>
+                {exp.responsibilities.length > 0 && (
+                  <ul className="list-disc list-inside text-sm text-mentor-text-secondary mt-1.5 space-y-0.5">
+                    {exp.responsibilities.map((r, j) => (
+                      <li key={j}>{r}</li>
+                    ))}
+                  </ul>
+                )}
+                {exp.achievements.length > 0 && (
+                  <ul className="list-disc list-inside text-sm text-mentor-text-secondary mt-1.5 space-y-0.5">
+                    {exp.achievements.map((a, j) => (
+                      <li key={j}>{a}</li>
+                    ))}
+                  </ul>
+                )}
+                {exp.technologies.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {exp.technologies.map((t) => (
+                      <span key={t} className="badge badge-neutral">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {profile.education.length > 0 && (
+        <div>
+          <p className="label mb-2">Education</p>
+          <div className="space-y-2">
+            {profile.education.map((edu, i) => (
+              <div key={i} className="surface-muted p-3">
+                <p className="text-sm font-medium text-mentor-text">{edu.degree || 'Degree not specified'}</p>
+                <p className="text-xs text-mentor-text-muted">
+                  {[edu.field, edu.institution, [edu.startYear, edu.endYear].filter(Boolean).join(' – ')].filter(Boolean).join(' · ')}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {profile.skills.length > 0 && (
+        <div>
+          <p className="label mb-2">Skills</p>
+          <div className="flex flex-wrap gap-1.5">
+            {profile.skills.map((s) => (
+              <span key={s} className="badge badge-info">
+                {s}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {profile.toolsTechnologies.length > 0 && (
+        <div>
+          <p className="label mb-2">Tools / Technologies</p>
+          <div className="flex flex-wrap gap-1.5">
+            {profile.toolsTechnologies.map((t) => (
+              <span key={t} className="badge badge-neutral">
+                {t}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {profile.certifications.length > 0 && (
+        <div>
+          <p className="label mb-2">Certifications</p>
+          <div className="flex flex-wrap gap-1.5">
+            {profile.certifications.map((c) => (
+              <span key={c} className="badge badge-neutral">
+                {c}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {profile.projects.length > 0 && (
+        <div>
+          <p className="label mb-2">Projects</p>
+          <div className="space-y-2">
+            {profile.projects.map((proj, i) => (
+              <div key={i} className="surface-muted p-3">
+                <p className="text-sm font-medium text-mentor-text">{proj.name || 'Untitled project'}</p>
+                {proj.description && <p className="text-sm text-mentor-text-secondary mt-0.5">{proj.description}</p>}
+                {proj.technologies.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {proj.technologies.map((t) => (
+                      <span key={t} className="badge badge-neutral">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {profile.languages.length > 0 && (
+        <div>
+          <p className="label mb-2">Languages</p>
+          <div className="flex flex-wrap gap-1.5">
+            {profile.languages.map((l) => (
+              <span key={l} className="badge badge-neutral">
+                {l}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <p className="label mb-1.5">Confidence</p>
+        <p className="text-sm text-mentor-text-secondary">{Math.round(profile.confidence.overall * 100)}% overall</p>
+        {profile.confidence.ambiguousSections.length > 0 && (
+          <p className="text-xs text-mentor-text-muted mt-1">
+            Less certain about: {profile.confidence.ambiguousSections.join(', ')}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const STATUS_LABELS: Record<EmployerCandidateStatus, string> = {
   active: 'Active',
@@ -102,6 +306,17 @@ const EmployerCandidateDetailPage: React.FC = () => {
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const [resumeAnalysis, setResumeAnalysis] = useState<CandidateResumeAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(true);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeActionError, setAnalyzeActionError] = useState<string | null>(null);
+
+  const [expandedHistoryAnalysisId, setExpandedHistoryAnalysisId] = useState<string | null>(null);
+  const [historyAnalysisCache, setHistoryAnalysisCache] = useState<Record<string, CandidateResumeAnalysis | null>>({});
+  const [historyAnalysisLoadingId, setHistoryAnalysisLoadingId] = useState<string | null>(null);
+  const [historyAnalysisError, setHistoryAnalysisError] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -192,10 +407,74 @@ const EmployerCandidateDetailPage: React.FC = () => {
       setUploadSuccess('Resume uploaded successfully.');
       setTimeout(() => setUploadSuccess(null), 3000);
       await fetchResumes();
+      // The new upload is now the current resume — re-check its analysis
+      // state from the server (a brand-new version always comes back null,
+      // "Not analyzed yet." — analysis is never copied forward).
+      await fetchResumeAnalysis();
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload resume');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const fetchResumeAnalysis = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const response = await employerApi.getCurrentCandidateResumeAnalysis(organizationId, candidateId);
+      setResumeAnalysis(response.data.analysis);
+    } catch (err: any) {
+      setAnalysisError(err.message || 'Failed to load resume analysis');
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, [organizationId, candidateId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchResumeAnalysis();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchResumeAnalysis]);
+
+  const handleAnalyzeResume = async () => {
+    if (!organizationId || !candidateId) return;
+    setAnalyzing(true);
+    setAnalyzeActionError(null);
+    try {
+      const response = await employerApi.analyzeCurrentCandidateResume(organizationId, candidateId);
+      setResumeAnalysis(response.data.analysis);
+    } catch (err: any) {
+      setAnalyzeActionError(err.message || 'Failed to analyze resume');
+      // The backend already persisted a FAILED row for a genuine analysis
+      // failure — refetch so the failure/errorMessage is reflected here too.
+      await fetchResumeAnalysis();
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleToggleHistoryAnalysis = async (resume: CandidateResume) => {
+    if (expandedHistoryAnalysisId === resume.id) {
+      setExpandedHistoryAnalysisId(null);
+      return;
+    }
+    setExpandedHistoryAnalysisId(resume.id);
+    if (historyAnalysisCache[resume.id] !== undefined || !organizationId || !candidateId) return;
+    setHistoryAnalysisLoadingId(resume.id);
+    setHistoryAnalysisError((prev) => {
+      const next = { ...prev };
+      delete next[resume.id];
+      return next;
+    });
+    try {
+      const response = await employerApi.getCandidateResumeAnalysis(organizationId, candidateId, resume.id);
+      setHistoryAnalysisCache((prev) => ({ ...prev, [resume.id]: response.data.analysis }));
+    } catch (err: any) {
+      setHistoryAnalysisError((prev) => ({ ...prev, [resume.id]: err.message || 'Failed to load analysis' }));
+    } finally {
+      setHistoryAnalysisLoadingId(null);
     }
   };
 
@@ -851,29 +1130,143 @@ const EmployerCandidateDetailPage: React.FC = () => {
                     <div>
                       <p className="label mb-2">Version History</p>
                       <div className="divide-y divide-mentor-border">
-                        {resumeHistory.map((resume) => (
-                          <div key={resume.id} className="flex flex-col sm:flex-row sm:items-center gap-2 py-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {resume.isCurrent && <span className="badge badge-success">Current</span>}
-                                <span className="badge badge-neutral">v{resume.version}</span>
-                                <span className="text-sm text-mentor-text truncate">{resume.originalFileName}</span>
+                        {resumeHistory.map((resume) => {
+                          const isExpanded = expandedHistoryAnalysisId === resume.id;
+                          const cachedAnalysis = historyAnalysisCache[resume.id];
+                          const rowAnalysisError = historyAnalysisError[resume.id];
+                          return (
+                            <div key={resume.id} className="py-3">
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {resume.isCurrent && <span className="badge badge-success">Current</span>}
+                                    <span className="badge badge-neutral">v{resume.version}</span>
+                                    <span className="text-sm text-mentor-text truncate">{resume.originalFileName}</span>
+                                  </div>
+                                  <p className="text-xs text-mentor-text-muted mt-0.5">
+                                    {RESUME_FILE_TYPE_LABELS[resume.fileExtension] || resume.fileExtension} &middot;{' '}
+                                    {formatFileSize(resume.fileSize)} &middot; {formatDate(resume.createdAt)}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                    onClick={() => handleToggleHistoryAnalysis(resume)}
+                                    className="btn btn-secondary px-3 py-1.5 text-xs"
+                                  >
+                                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                    Analysis
+                                  </button>
+                                  <button
+                                    onClick={() => handleDownloadResume(resume)}
+                                    disabled={downloadingId === resume.id}
+                                    className="btn btn-secondary px-3 py-1.5 text-xs"
+                                  >
+                                    <Download size={14} />
+                                    {downloadingId === resume.id ? 'Downloading...' : 'Download'}
+                                  </button>
+                                </div>
                               </div>
-                              <p className="text-xs text-mentor-text-muted mt-0.5">
-                                {RESUME_FILE_TYPE_LABELS[resume.fileExtension] || resume.fileExtension} &middot;{' '}
-                                {formatFileSize(resume.fileSize)} &middot; {formatDate(resume.createdAt)}
-                              </p>
+
+                              {isExpanded && (
+                                <div className="surface-muted p-3 mt-2">
+                                  {historyAnalysisLoadingId === resume.id ? (
+                                    <div className="py-4 text-center">
+                                      <Loader2 className="w-5 h-5 text-primary-600 animate-spin mx-auto" />
+                                    </div>
+                                  ) : rowAnalysisError ? (
+                                    <p className="text-sm text-mentor-error">{rowAnalysisError}</p>
+                                  ) : !cachedAnalysis ? (
+                                    <p className="text-sm text-mentor-text-secondary">Not analyzed yet.</p>
+                                  ) : cachedAnalysis.status === 'processing' ? (
+                                    <p className="text-sm text-mentor-text-secondary">Analysis in progress...</p>
+                                  ) : cachedAnalysis.status === 'failed' ? (
+                                    <p className="text-sm text-mentor-error">{cachedAnalysis.errorMessage || 'Analysis failed.'}</p>
+                                  ) : cachedAnalysis.profile ? (
+                                    <ResumeProfileSummary profile={cachedAnalysis.profile} />
+                                  ) : (
+                                    <p className="text-sm text-mentor-text-secondary">Not analyzed yet.</p>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                            <button
-                              onClick={() => handleDownloadResume(resume)}
-                              disabled={downloadingId === resume.id}
-                              className="btn btn-secondary px-3 py-1.5 text-xs shrink-0"
-                            >
-                              <Download size={14} />
-                              {downloadingId === resume.id ? 'Downloading...' : 'Download'}
-                            </button>
-                          </div>
-                        ))}
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <Sparkles size={18} className="text-mentor-text-muted" />
+                Resume Analysis
+              </h2>
+
+              {!resumeCurrent ? (
+                <p className="text-sm text-mentor-text-secondary py-2">Upload a resume first.</p>
+              ) : analysisLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : analysisError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{analysisError}</p>
+                  <button onClick={fetchResumeAnalysis} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {analyzeActionError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{analyzeActionError}</p>
+                    </div>
+                  )}
+
+                  {!resumeAnalysis ? (
+                    <div className="py-2">
+                      <p className="text-sm text-mentor-text-secondary mb-3">Not analyzed yet.</p>
+                      {canManage && candidate.status !== 'archived' && (
+                        <button onClick={handleAnalyzeResume} disabled={analyzing} className="btn btn-primary">
+                          <Sparkles size={16} />
+                          {analyzing ? 'Analyzing...' : 'Analyze Resume'}
+                        </button>
+                      )}
+                    </div>
+                  ) : resumeAnalysis.status === 'processing' ? (
+                    <div className="py-2">
+                      <p className="text-sm text-mentor-text-secondary mb-3">
+                        <span className="badge badge-warning mr-2">Processing</span>
+                        Analysis is in progress...
+                      </p>
+                      <button onClick={fetchResumeAnalysis} className="btn btn-secondary">
+                        Check Status
+                      </button>
+                    </div>
+                  ) : resumeAnalysis.status === 'failed' ? (
+                    <div className="py-2">
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-3">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{resumeAnalysis.errorMessage || 'Resume analysis failed.'}</p>
+                      </div>
+                      {canManage && candidate.status !== 'archived' && (
+                        <button onClick={handleAnalyzeResume} disabled={analyzing} className="btn btn-primary">
+                          {analyzing ? 'Retrying...' : 'Retry'}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap mb-4">
+                        <span className="badge badge-success">Parsed data available</span>
+                      </div>
+                      {resumeAnalysis.profile && <ResumeProfileSummary profile={resumeAnalysis.profile} />}
+                      <div className="mt-4">
+                        <ResumeAnalysisUsage usage={resumeAnalysis.aiUsage} />
                       </div>
                     </div>
                   )}

@@ -31,6 +31,7 @@ import employerJobDescriptionCompetencyController from '../controllers/EmployerJ
 import employerJobIntelligenceSnapshotController from '../controllers/EmployerJobIntelligenceSnapshotController';
 import employerCandidateController from '../controllers/EmployerCandidateController';
 import employerCandidateResumeController from '../controllers/EmployerCandidateResumeController';
+import employerCandidateResumeAnalysisController from '../controllers/EmployerCandidateResumeAnalysisController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -1985,6 +1986,39 @@ router.post(
   employerCandidateResumeController.uploadResume
 );
 
+// ============================================================================
+// Employer Candidate Resume Analysis (18C) — AI-parsed structured profile
+// extracted from the CURRENT resume version only. NO evaluation/scoring/
+// ranking, no application/job linkage, no automatic EmployerCandidate
+// writes. Reads use ORGANIZATION_VIEW (readable even on an archived
+// organization/candidate); the analyze mutation uses INTERVIEWS_MANAGE and
+// is blocked on an archived organization or candidate.
+//
+// NOTE: `GET .../resumes/analysis` is registered BEFORE
+// `GET .../resumes/:resumeSourceId` (below) so the literal "analysis"
+// segment is matched first — otherwise the wildcard route would swallow it.
+// ============================================================================
+
+router.post(
+  '/:organizationId/candidates/:candidateId/resumes/analyze',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateResumeAnalysisController.analyzeCurrentResume
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId/resumes/analysis',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateResumeAnalysisController.getCurrentAnalysis
+);
+
 router.get(
   '/:organizationId/candidates/:candidateId/resumes/:resumeSourceId',
   protect,
@@ -2005,6 +2039,17 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateResumeController.getResumeFile
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId/resumes/:resumeSourceId/analysis',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  ...candidateResumeIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateResumeAnalysisController.getAnalysisForSource
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
