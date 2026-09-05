@@ -98,6 +98,49 @@ export interface PublicInterviewQuestionsSession {
 export type CreatePublicInterviewQuestionsResponse = ApiEnvelope<{ session: PublicInterviewQuestionsSession }>;
 export type GetPublicInterviewQuestionsResponse = ApiEnvelope<{ session: PublicInterviewQuestionsSession | null }>;
 
+// ============================================================================
+// Answer capture (Sprint 21B). No evaluation, no AI, no report. `answerText`
+// is present per-question only for questions the candidate already saved.
+// ============================================================================
+
+export interface PublicAssessmentQuestion {
+  index: number;
+  id: string;
+  question: string;
+  category?: string;
+  difficulty?: string;
+  answerText?: string;
+}
+
+export interface PublicAssessmentCurrentQuestion {
+  index: number;
+  id: string;
+  question: string;
+  category?: string;
+  difficulty?: string;
+  answerText?: string;
+}
+
+export interface PublicAssessmentDetail {
+  sessionId: string;
+  status: PublicInterviewSessionStatus;
+  currentQuestion: number;
+  totalQuestions: number;
+  answeredQuestions: number;
+  completed: boolean;
+  question?: PublicAssessmentCurrentQuestion;
+  questions: PublicAssessmentQuestion[];
+}
+
+export interface SubmitPublicAnswerPayload {
+  questionIndex: number;
+  answerText: string;
+  duration?: number;
+}
+
+export type GetPublicAssessmentResponse = ApiEnvelope<{ session: PublicAssessmentDetail | null }>;
+export type SubmitPublicAnswerResponse = ApiEnvelope<{ session: PublicAssessmentDetail }>;
+
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
 
@@ -189,6 +232,30 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load interview questions');
+    }
+  }
+
+  async getPublicAssessment(token: string): Promise<GetPublicAssessmentResponse> {
+    try {
+      const response = await this.api.get<GetPublicAssessmentResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/assessment`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load assessment');
+    }
+  }
+
+  /** Saves exactly one answer — re-submitting an already-answered question is rejected server-side. */
+  async submitPublicAnswer(token: string, payload: SubmitPublicAnswerPayload): Promise<SubmitPublicAnswerResponse> {
+    try {
+      const response = await this.api.post<SubmitPublicAnswerResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/answers`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save answer');
     }
   }
 }

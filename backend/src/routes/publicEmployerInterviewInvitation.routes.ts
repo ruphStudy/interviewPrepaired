@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { param } from 'express-validator';
+import { param, body } from 'express-validator';
 import publicEmployerInterviewInvitationController from '../controllers/PublicEmployerInterviewInvitationController';
 import { validate } from '../middleware/validation';
 
@@ -15,6 +15,14 @@ const tokenValidation = [
     .isLength({ min: 32, max: 128 })
     .matches(/^[A-Za-z0-9_-]+$/)
     .withMessage('Invalid invitation token'),
+];
+
+// (21B) Never trusts interviewId/questionId from the body — questionIndex is
+// resolved against THIS session's own questions array server-side.
+const submitAnswerValidation = [
+  body('questionIndex').isInt({ min: 0 }).withMessage('questionIndex must be a non-negative integer'),
+  body('answerText').isString().trim().isLength({ min: 1, max: 5000 }).withMessage('answerText is required (max 5000 characters)'),
+  body('duration').optional().isFloat({ min: 0, max: 3600 }).withMessage('duration must be between 0 and 3600 seconds'),
 ];
 
 // GET /api/v1/public/employer-interview-invitations/:token — fully public,
@@ -51,6 +59,25 @@ router.get(
   ...tokenValidation,
   validate,
   publicEmployerInterviewInvitationController.getSessionQuestions
+);
+
+// GET /api/v1/public/employer-interview-invitations/:token/session/assessment
+// (21B) — candidate-safe progress + question list (own saved answers only).
+router.get(
+  '/:token/session/assessment',
+  ...tokenValidation,
+  validate,
+  publicEmployerInterviewInvitationController.getAssessment
+);
+
+// POST /api/v1/public/employer-interview-invitations/:token/session/answers
+// (21B) — saves exactly one answer. Fully public, no auth, no org RBAC.
+router.post(
+  '/:token/session/answers',
+  ...tokenValidation,
+  ...submitAnswerValidation,
+  validate,
+  publicEmployerInterviewInvitationController.submitAnswer
 );
 
 export default router;

@@ -11,10 +11,14 @@ import EmployerInterviewCompetencyRubric from '../models/EmployerInterviewCompet
 import EmployerInterviewInvitation from '../models/EmployerInterviewInvitation.model';
 import { EmployerInterviewInvitationStatus } from '../constants/employerInterviewInvitation';
 import Interview, { IInterview } from '../models/interview.model';
+import { InterviewPurpose, InterviewStatus } from '../constants/interview';
 import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { OrganizationStatus } from '../constants/organization';
 import { ApiError } from '../utils/ApiError';
+
+const MAX_ANSWER_LENGTH = 5000; // matches the schema's own answerText cap
+const MAX_ANSWER_DURATION_SECONDS = 3600; // matches the schema's own duration cap
 
 interface ResolvedChain {
   organization: IOrganization;
@@ -252,6 +256,106 @@ export class PublicEmployerInterviewInvitationService {
   }
 
   /**
+   * GET /public/employer-interview-invitations/:token/session/assessment
+   * (21B) — candidate-safe progress + question list, with `answerText`
+   * populated only for questions the candidate has already saved. Returns
+   * null (never throws) when the invitation isn't accepted yet or no
+   * materialized session exists — mirrors the existing getSession/
+   * getSessionQuestions "not ready" convention.
+   */
+  async getAssessment(rawToken: string): Promise<Record<string, unknown> | null> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+
+    await this.resolveChain(invitation);
+
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACCEPTED || !invitation.interviewId) {
+      return null;
+    }
+
+    const interview = await Interview.findById(invitation.interviewId);
+    if (!interview || interview.purpose !== InterviewPurpose.HIRING_ASSESSMENT) {
+      return null;
+    }
+
+    return this.toAssessmentDetail(interview);
+  }
+
+  /**
+   * POST /public/employer-interview-invitations/:token/session/answers
+   * (21B) — saves exactly one answer via the existing
+   * `Interview.submitAnswer` instance method (index bounds + answer
+   * persistence, no evaluation/AI side effects). `questionIndex` is only
+   * ever resolved against THIS session's own `interview.questions` — no
+   * id/metadata is ever trusted from the request body beyond the index,
+   * text, and duration. Re-answering an already-answered question is
+   * rejected with 409, matching the existing practice-interview behavior
+   * of never silently overwriting a saved answer.
+   */
+  async submitAnswer(rawToken: string, questionIndex: number, answerText: string, duration?: number): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+
+    await this.resolveChain(invitation);
+
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACCEPTED) {
+      throw new ApiError(409, 'Accept the invitation first.');
+    }
+    if (!invitation.interviewId) {
+      throw new ApiError(409, 'Prepare the interview session first.');
+    }
+
+    const interview = await Interview.findById(invitation.interviewId);
+    if (!interview || interview.purpose !== InterviewPurpose.HIRING_ASSESSMENT) {
+      throw new ApiError(404, 'Interview session not found');
+    }
+    if (interview.questionMaterializationStatus !== 'completed' || interview.questions.length === 0) {
+      throw new ApiError(409, 'Interview questions are not ready yet.');
+    }
+    if (interview.status === InterviewStatus.COMPLETED || interview.status === InterviewStatus.EVALUATED) {
+      throw new ApiError(409, 'This interview has already been completed.');
+    }
+    if (!Number.isInteger(questionIndex) || questionIndex < 0 || questionIndex >= interview.questions.length) {
+      throw new ApiError(400, 'Invalid question index');
+    }
+
+    const trimmedAnswer = typeof answerText === 'string' ? answerText.trim() : '';
+    if (!trimmedAnswer) {
+      throw new ApiError(400, 'answerText is required');
+    }
+    if (trimmedAnswer.length > MAX_ANSWER_LENGTH) {
+      throw new ApiError(400, `answerText cannot exceed ${MAX_ANSWER_LENGTH} characters`);
+    }
+
+    let safeDuration: number | undefined;
+    if (duration !== undefined) {
+      if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0 || duration > MAX_ANSWER_DURATION_SECONDS) {
+        throw new ApiError(400, `duration must be a number between 0 and ${MAX_ANSWER_DURATION_SECONDS}`);
+      }
+      safeDuration = duration;
+    }
+
+    const existing = interview.questions[questionIndex];
+    if (existing.answerText && existing.answerText.trim().length > 0) {
+      throw new ApiError(409, 'This question has already been answered.');
+    }
+
+    await interview.submitAnswer(questionIndex, trimmedAnswer, safeDuration);
+
+    return this.toAssessmentDetail(interview);
+  }
+
+  /**
    * Validates the invitation's full reference chain and lazily expires it
    * first (never trusts the caller's clock). Throws a generic 404 for any
    * broken/archived reference, and a 410 specifically for an expired
@@ -397,6 +501,48 @@ export class PublicEmployerInterviewInvitationService {
         question: q.questionText,
         category: q.questionType,
         difficulty: q.difficulty,
+      })),
+    };
+  }
+
+  /**
+   * Candidate-safe progress + assessment detail (21B) — same exclusions as
+   * `toQuestionsDetail`, plus: `answerText` is included per-question ONLY
+   * when that question already has a saved answer (so a reloading
+   * candidate sees their own prior answers, never anyone else's, and
+   * never any evaluation/score).
+   */
+  private toAssessmentDetail(interview: IInterview): Record<string, unknown> {
+    const totalQuestions = interview.questions.length;
+    const answeredQuestions = interview.questions.filter((q) => q.answerText && q.answerText.trim().length > 0).length;
+    const firstUnansweredIndex = interview.questions.findIndex((q) => !q.answerText || q.answerText.trim().length === 0);
+    const currentIndex = firstUnansweredIndex === -1 ? Math.max(0, totalQuestions - 1) : firstUnansweredIndex;
+    const currentQ = interview.questions[currentIndex];
+
+    return {
+      sessionId: interview._id.toString(),
+      status: interview.status,
+      currentQuestion: currentIndex,
+      totalQuestions,
+      answeredQuestions,
+      completed: answeredQuestions === totalQuestions && totalQuestions > 0,
+      question: currentQ
+        ? {
+            index: currentIndex,
+            id: String(currentIndex),
+            question: currentQ.questionText,
+            category: currentQ.questionType,
+            difficulty: currentQ.difficulty,
+            answerText: currentQ.answerText || undefined,
+          }
+        : undefined,
+      questions: interview.questions.map((q, index) => ({
+        index,
+        id: String(index),
+        question: q.questionText,
+        category: q.questionType,
+        difficulty: q.difficulty,
+        answerText: q.answerText && q.answerText.trim().length > 0 ? q.answerText : undefined,
       })),
     };
   }

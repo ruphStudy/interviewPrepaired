@@ -1371,6 +1371,32 @@ export interface EmployerInterviewSessionQuestions {
 
 export type GetEmployerInterviewSessionQuestionsResponse = ApiEnvelope<{ session: EmployerInterviewSessionQuestions | null }>;
 
+// ============================================================================
+// Employer Interview Session Answers — authenticated recruiter READ only
+// (Sprint 21B). No evaluation field exists yet.
+// ============================================================================
+
+export interface EmployerInterviewAnswerDetail {
+  id: string;
+  question: string;
+  category?: string;
+  difficulty?: string;
+  blueprintSectionId?: string;
+  answerText?: string;
+  answeredAt?: string;
+  duration?: number;
+}
+
+export interface EmployerInterviewSessionAnswers {
+  sessionId: string;
+  status: string;
+  totalQuestions: number;
+  answeredQuestions: number;
+  questions: EmployerInterviewAnswerDetail[];
+}
+
+export type GetEmployerInterviewSessionAnswersResponse = ApiEnvelope<{ session: EmployerInterviewSessionAnswers | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2328,6 +2354,20 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load interview questions');
+    }
+  }
+
+  async getEmployerInterviewSessionAnswers(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerInterviewSessionAnswersResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewSessionAnswersResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/answers`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview answers');
     }
   }
 }

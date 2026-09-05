@@ -4,6 +4,7 @@ import publicEmployerInterviewInvitationApi, {
   PublicEmployerInterviewInvitation,
   PublicInterviewSession,
   PublicInterviewQuestionsSession,
+  PublicAssessmentDetail,
 } from '../api/publicEmployerInterviewInvitationApi';
 import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-react';
 
@@ -40,6 +41,14 @@ const EmployerInterviewInvitePage: React.FC = () => {
   const [questionsError, setQuestionsError] = useState<string | null>(null);
   const [preparingQuestions, setPreparingQuestions] = useState(false);
   const [prepareQuestionsError, setPrepareQuestionsError] = useState<string | null>(null);
+
+  const [assessment, setAssessment] = useState<PublicAssessmentDetail | null>(null);
+  const [assessmentLoading, setAssessmentLoading] = useState(false);
+  const [assessmentError, setAssessmentError] = useState<string | null>(null);
+  const [viewIndex, setViewIndex] = useState(0);
+  const [answerDraft, setAnswerDraft] = useState('');
+  const [savingAnswer, setSavingAnswer] = useState(false);
+  const [saveAnswerError, setSaveAnswerError] = useState<string | null>(null);
 
   const fetchInvitation = useCallback(async () => {
     if (!token) return;
@@ -102,6 +111,31 @@ const EmployerInterviewInvitePage: React.FC = () => {
     }
   }, [session?.sessionId, fetchQuestions]);
 
+  const fetchAssessment = useCallback(async () => {
+    if (!token) return;
+    setAssessmentLoading(true);
+    setAssessmentError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.getPublicAssessment(token);
+      const data = response.data.session;
+      setAssessment(data);
+      if (data) {
+        setViewIndex(data.currentQuestion);
+        setAnswerDraft(data.questions[data.currentQuestion]?.answerText || '');
+      }
+    } catch (err: any) {
+      setAssessmentError(err.message || 'Failed to load assessment');
+    } finally {
+      setAssessmentLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (questionsSession && questionsSession.totalQuestions > 0) {
+      fetchAssessment();
+    }
+  }, [questionsSession?.totalQuestions, fetchAssessment]);
+
   const handleAccept = async () => {
     if (!token) return;
     setAccepting(true);
@@ -127,6 +161,37 @@ const EmployerInterviewInvitePage: React.FC = () => {
       setPrepareError(err.message || 'Failed to prepare interview session');
     } finally {
       setPreparing(false);
+    }
+  };
+
+  const goToQuestion = (index: number) => {
+    if (!assessment) return;
+    const clamped = Math.max(0, Math.min(index, assessment.totalQuestions - 1));
+    setViewIndex(clamped);
+    setAnswerDraft(assessment.questions[clamped]?.answerText || '');
+    setSaveAnswerError(null);
+  };
+
+  const handleSaveAndNext = async () => {
+    if (!token || !assessment) return;
+    const trimmed = answerDraft.trim();
+    if (!trimmed) return;
+    setSavingAnswer(true);
+    setSaveAnswerError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.submitPublicAnswer(token, {
+        questionIndex: viewIndex,
+        answerText: trimmed,
+      });
+      const data = response.data.session;
+      setAssessment(data);
+      const nextIndex = Math.min(data.currentQuestion, data.totalQuestions - 1);
+      setViewIndex(nextIndex);
+      setAnswerDraft(data.questions[nextIndex]?.answerText || '');
+    } catch (err: any) {
+      setSaveAnswerError(err.message || 'Failed to save answer');
+    } finally {
+      setSavingAnswer(false);
     }
   };
 
@@ -191,10 +256,63 @@ const EmployerInterviewInvitePage: React.FC = () => {
                   ) : questionsError ? (
                     <p className="text-sm text-mentor-error">{questionsError}</p>
                   ) : questionsSession && questionsSession.totalQuestions > 0 ? (
-                    <div className="surface-muted p-4 text-left space-y-1.5">
-                      <p className="text-sm font-medium text-mentor-text">Assessment questions are ready.</p>
-                      <p className="text-xs text-mentor-text-muted">{questionsSession.totalQuestions} questions prepared</p>
-                    </div>
+                    <>
+                      {assessmentLoading ? (
+                        <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                      ) : assessmentError ? (
+                        <p className="text-sm text-mentor-error">{assessmentError}</p>
+                      ) : assessment ? (
+                        <div className="text-left space-y-3">
+                          <p className="text-xs text-mentor-text-muted">
+                            Question {viewIndex + 1} / {assessment.totalQuestions} &middot; {assessment.answeredQuestions} answered
+                          </p>
+                          <div className="surface-muted p-4">
+                            <p className="text-sm text-mentor-text">{assessment.questions[viewIndex]?.question}</p>
+                          </div>
+
+                          {assessment.questions[viewIndex]?.answerText ? (
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted mb-1">Your answer</p>
+                              <p className="text-sm text-mentor-text whitespace-pre-wrap">{assessment.questions[viewIndex]?.answerText}</p>
+                            </div>
+                          ) : (
+                            <>
+                              <textarea
+                                value={answerDraft}
+                                onChange={(e) => setAnswerDraft(e.target.value)}
+                                rows={5}
+                                maxLength={5000}
+                                placeholder="Type your answer..."
+                                className="input w-full"
+                              />
+                              {saveAnswerError && <p className="text-sm text-mentor-error">{saveAnswerError}</p>}
+                              <button
+                                onClick={handleSaveAndNext}
+                                disabled={savingAnswer || !answerDraft.trim()}
+                                className="btn btn-primary w-full justify-center"
+                              >
+                                {savingAnswer ? 'Saving...' : 'Save & Next'}
+                              </button>
+                            </>
+                          )}
+
+                          <div className="flex justify-between pt-1">
+                            <button onClick={() => goToQuestion(viewIndex - 1)} disabled={viewIndex === 0} className="btn btn-secondary">
+                              Previous
+                            </button>
+                            <button
+                              onClick={() => goToQuestion(viewIndex + 1)}
+                              disabled={viewIndex >= assessment.totalQuestions - 1}
+                              className="btn btn-secondary"
+                            >
+                              Next
+                            </button>
+                          </div>
+
+                          {assessment.completed && <p className="text-sm text-mentor-success text-center pt-1">All answers saved.</p>}
+                        </div>
+                      ) : null}
+                    </>
                   ) : (
                     <>
                       {prepareQuestionsError && (

@@ -32,6 +32,19 @@ export class EmployerInterviewSessionController {
 
     res.status(200).json(successResponse('Interview questions retrieved successfully', { session }));
   });
+
+  /** GET /api/v1/organizations/:organizationId/applications/:applicationId/interview-session/answers — requires ORGANIZATION_VIEW. */
+  public getCurrentSessionAnswers = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { applicationId } = req.params;
+    const session = await employerInterviewSessionService.getCurrentSessionAnswers(context.organizationId, context.role, applicationId);
+
+    res.status(200).json(successResponse('Interview answers retrieved successfully', { session }));
+  });
 }
 
 export default new EmployerInterviewSessionController();

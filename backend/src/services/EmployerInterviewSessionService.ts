@@ -93,6 +93,45 @@ export class EmployerInterviewSessionService {
     return this.toQuestionsDetail(interview);
   }
 
+  /**
+   * GET .../interview-session/answers (21B) — recruiter-facing, read-only.
+   * No evaluation exists yet, so only the raw saved answer + timing is
+   * returned alongside the question/section/category/difficulty context.
+   */
+  async getCurrentSessionAnswers(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    applicationId: string
+  ): Promise<Record<string, unknown> | null> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_VIEW);
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsCompany(organization);
+
+    const application = await EmployerJobApplication.findOne({ _id: applicationId, organizationId: organization._id }).select('_id');
+    if (!application) {
+      throw new ApiError(404, 'Application not found');
+    }
+
+    const invitationDetail = await employerInterviewInvitationService.getCurrentInvitation(organizationId, actingRole, applicationId);
+    if (!invitationDetail) {
+      return null;
+    }
+
+    const invitation = await EmployerInterviewInvitation.findOne({ _id: invitationDetail.id, organizationId: organization._id }).select(
+      'interviewId'
+    );
+    if (!invitation?.interviewId) {
+      return null;
+    }
+
+    const interview = await Interview.findOne({ _id: invitation.interviewId, organizationId: organization._id });
+    if (!interview) {
+      return null;
+    }
+
+    return this.toAnswersDetail(interview);
+  }
+
   private async getOrganizationById(organizationId: string): Promise<IOrganization> {
     const organization = await Organization.findById(organizationId);
     if (!organization) {
@@ -147,6 +186,28 @@ export class EmployerInterviewSessionService {
         evaluationIntent: q.evaluationIntent,
         evidenceExpected: q.evidenceExpected ?? [],
         followUpFocus: q.followUpFocus ?? [],
+      })),
+    };
+  }
+
+  /** Recruiter-facing answer detail (21B) — no evaluation field exists yet, since none has been generated. */
+  private toAnswersDetail(interview: IInterview): Record<string, unknown> {
+    const totalQuestions = interview.questions.length;
+    const answeredQuestions = interview.questions.filter((q) => q.answerText && q.answerText.trim().length > 0).length;
+    return {
+      sessionId: interview._id.toString(),
+      status: interview.status,
+      totalQuestions,
+      answeredQuestions,
+      questions: interview.questions.map((q, index) => ({
+        id: String(index),
+        question: q.questionText,
+        category: q.questionType,
+        difficulty: q.difficulty,
+        blueprintSectionId: q.blueprintSectionId,
+        answerText: q.answerText,
+        answeredAt: q.answeredAt,
+        duration: q.duration,
       })),
     };
   }

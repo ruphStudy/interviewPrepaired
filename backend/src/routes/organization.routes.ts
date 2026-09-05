@@ -2659,6 +2659,18 @@ router.get(
   employerInterviewSessionController.getCurrentSessionQuestions
 );
 
+// GET .../interview-session/answers (21B) — recruiter-facing read of saved
+// candidate answers. No evaluation field exists yet.
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/answers',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewSessionController.getCurrentSessionAnswers
+);
+
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
 
 router.get(
