@@ -13,7 +13,10 @@ import employerApi, {
   JobIntelligenceSnapshotRecord,
   JobIntelligenceReadiness,
   EmployerJobApplication,
+  EmployerJobApplicationStatus,
   EmployerCandidate,
+  JobRanking,
+  JobRankingFilters,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
@@ -35,6 +38,7 @@ import {
   ShieldCheck,
   Briefcase,
   X,
+  ListOrdered,
 } from 'lucide-react';
 
 const APPLICATIONS_PAGE_LIMIT = 20;
@@ -64,6 +68,37 @@ const APPLICATION_STATUS_BADGE: Record<string, string> = {
 };
 
 const HISTORY_PAGE_LIMIT = 20;
+
+const RECOMMENDATION_LABELS: Record<string, string> = {
+  strong_match: 'Strong Match',
+  match: 'Match',
+  borderline: 'Borderline',
+  weak_match: 'Weak Match',
+};
+
+const RECOMMENDATION_BADGE: Record<string, string> = {
+  strong_match: 'badge-success',
+  match: 'badge-info',
+  borderline: 'badge-warning',
+  weak_match: 'badge-neutral',
+};
+
+const UNRANKED_REASON_LABELS: Record<string, string> = {
+  screening_required: 'Run screening',
+  explainable_score_required: 'Calculate explainable score',
+};
+
+const APPLICATION_STATUS_OPTIONS: EmployerJobApplicationStatus[] = [
+  'applied',
+  'screening',
+  'shortlisted',
+  'interview',
+  'offer',
+  'hired',
+  'rejected',
+  'withdrawn',
+  'archived',
+];
 
 const hiringTeamRoleLabel = (role: EmployerJobHiringTeamRole) =>
   EMPLOYER_JOB_HIRING_TEAM_ROLES.find((r) => r.value === role)?.label || role;
@@ -202,6 +237,14 @@ const EmployerJobDetailPage: React.FC = () => {
   const [applicationsTotal, setApplicationsTotal] = useState(0);
   const [applicationsLoading, setApplicationsLoading] = useState(true);
   const [applicationsError, setApplicationsError] = useState<string | null>(null);
+
+  const [ranking, setRanking] = useState<JobRanking | null>(null);
+  const [rankingLoading, setRankingLoading] = useState(true);
+  const [rankingError, setRankingError] = useState<string | null>(null);
+  const [rankingStatusInput, setRankingStatusInput] = useState<EmployerJobApplicationStatus | ''>('');
+  const [rankingMinScoreInput, setRankingMinScoreInput] = useState('');
+  const [rankingSearchInput, setRankingSearchInput] = useState('');
+  const [appliedRankingFilters, setAppliedRankingFilters] = useState<JobRankingFilters>({});
 
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState('');
@@ -344,6 +387,42 @@ const EmployerJobDetailPage: React.FC = () => {
       fetchApplications();
     }
   }, [isSyncing, activeOrganization, canView, fetchApplications]);
+
+  const fetchRanking = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setRankingLoading(true);
+    setRankingError(null);
+    try {
+      const response = await employerApi.getEmployerJobRanking(organizationId, jobId, appliedRankingFilters);
+      setRanking(response.data);
+    } catch (err: any) {
+      setRankingError(err.message || 'Failed to load candidate ranking');
+    } finally {
+      setRankingLoading(false);
+    }
+  }, [organizationId, jobId, appliedRankingFilters]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchRanking();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchRanking]);
+
+  const handleApplyRankingFilters = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAppliedRankingFilters({
+      status: rankingStatusInput || undefined,
+      minScore: rankingMinScoreInput ? Number(rankingMinScoreInput) : undefined,
+      search: rankingSearchInput || undefined,
+    });
+  };
+
+  const handleClearRankingFilters = () => {
+    setRankingStatusInput('');
+    setRankingMinScoreInput('');
+    setRankingSearchInput('');
+    setAppliedRankingFilters({});
+  };
 
   const applicationsTotalPages = Math.max(1, Math.ceil(applicationsTotal / APPLICATIONS_PAGE_LIMIT));
   const appliedCandidateIds = new Set(applications.map((a) => a.candidateId));
@@ -1351,6 +1430,175 @@ const EmployerJobDetailPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <ListOrdered size={18} className="text-mentor-text-muted" />
+                Candidate Ranking
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Ranking uses Explainable Score (19B). The AI screening score is shown for reference only.
+              </p>
+
+              <form onSubmit={handleApplyRankingFilters} className="flex flex-wrap items-end gap-3 mb-4">
+                <div>
+                  <label className="label mb-1 block">Status</label>
+                  <select
+                    value={rankingStatusInput}
+                    onChange={(e) => setRankingStatusInput(e.target.value as EmployerJobApplicationStatus | '')}
+                    className="input"
+                  >
+                    <option value="">All statuses</option>
+                    {APPLICATION_STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {APPLICATION_STATUS_LABELS[status]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label mb-1 block">Min. Score</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={rankingMinScoreInput}
+                    onChange={(e) => setRankingMinScoreInput(e.target.value)}
+                    placeholder="0"
+                    className="input w-24"
+                  />
+                </div>
+                <div className="flex-1 min-w-[180px]">
+                  <label className="label mb-1 block">Search Candidate</label>
+                  <input
+                    type="text"
+                    value={rankingSearchInput}
+                    onChange={(e) => setRankingSearchInput(e.target.value)}
+                    placeholder="Name or email..."
+                    className="input w-full"
+                  />
+                </div>
+                <button type="submit" className="btn btn-primary">
+                  Apply
+                </button>
+                <button type="button" onClick={handleClearRankingFilters} className="btn btn-secondary">
+                  Clear
+                </button>
+              </form>
+
+              {rankingLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : rankingError ? (
+                <div className="p-8 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{rankingError}</p>
+                  <button onClick={fetchRanking} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !ranking || ranking.summary.totalApplications === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No applications yet.</p>
+              ) : (
+                <>
+                  <p className="text-xs text-mentor-text-muted mb-3">
+                    {ranking.summary.rankedCount} ranked &middot; {ranking.summary.unrankedCount} not yet ranked
+                    {ranking.summary.averageScore !== undefined && (
+                      <>
+                        {' '}
+                        &middot; avg {ranking.summary.averageScore} &middot; high {ranking.summary.highestScore} &middot; low{' '}
+                        {ranking.summary.lowestScore}
+                      </>
+                    )}
+                  </p>
+
+                  {ranking.ranked.length === 0 ? (
+                    <p className="text-sm text-mentor-text-secondary py-4">
+                      {Object.keys(appliedRankingFilters).some((k) => (appliedRankingFilters as any)[k])
+                        ? 'No ranked candidates match these filters.'
+                        : 'No candidates have an explainable score yet.'}
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto -mx-2">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs text-mentor-text-muted border-b border-mentor-border">
+                            <th className="px-2 py-2 font-medium">Rank</th>
+                            <th className="px-2 py-2 font-medium">Candidate</th>
+                            <th className="px-2 py-2 font-medium">Status</th>
+                            <th className="px-2 py-2 font-medium">Explainable</th>
+                            <th className="px-2 py-2 font-medium">AI Score</th>
+                            <th className="px-2 py-2 font-medium">Recommendation</th>
+                            <th className="px-2 py-2 font-medium">Gaps</th>
+                            <th className="px-2 py-2 font-medium">Applied</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-mentor-border">
+                          {ranking.ranked.map((row) => (
+                            <tr key={row.applicationId}>
+                              <td className="px-2 py-2.5 font-semibold text-mentor-text">#{row.rank}</td>
+                              <td className="px-2 py-2.5">
+                                <Link
+                                  to={`/organizations/${organizationId}/employer/candidates/${row.candidate.id}`}
+                                  className="font-medium text-mentor-text hover:underline"
+                                >
+                                  {row.candidate.firstName} {row.candidate.lastName}
+                                </Link>
+                                <p className="text-xs text-mentor-text-muted">{row.candidate.email}</p>
+                              </td>
+                              <td className="px-2 py-2.5">
+                                <span className={`badge ${APPLICATION_STATUS_BADGE[row.applicationStatus]}`}>
+                                  {APPLICATION_STATUS_LABELS[row.applicationStatus]}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2.5 font-semibold text-mentor-text">{row.explainableScore}/100</td>
+                              <td className="px-2 py-2.5 text-mentor-text-secondary">{row.aiScreeningScore}/100</td>
+                              <td className="px-2 py-2.5">
+                                <span className={`badge ${RECOMMENDATION_BADGE[row.recommendation]}`}>
+                                  {RECOMMENDATION_LABELS[row.recommendation]}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2.5 text-xs text-mentor-text-secondary whitespace-nowrap">
+                                {row.gapSummary ? `${row.gapSummary.criticalGapCount}c / ${row.gapSummary.highGapCount}h` : '—'}
+                              </td>
+                              <td className="px-2 py-2.5 text-xs text-mentor-text-muted whitespace-nowrap">
+                                <Link to={`/organizations/${organizationId}/employer/applications/${row.applicationId}`} className="hover:underline">
+                                  {formatDate(row.scoredAt)}
+                                </Link>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {ranking.unranked.length > 0 && (
+                    <div className="mt-5 pt-4 border-t border-mentor-border">
+                      <p className="label mb-2">Not yet ranked</p>
+                      <div className="divide-y divide-mentor-border">
+                        {ranking.unranked.map((row) => (
+                          <Link
+                            key={row.applicationId}
+                            to={`/organizations/${organizationId}/employer/applications/${row.applicationId}`}
+                            className="flex items-center justify-between gap-3 py-2.5 hover:bg-mentor-surface transition-colors -mx-2 px-2 rounded"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-mentor-text truncate">
+                                {row.candidate.firstName} {row.candidate.lastName}
+                              </p>
+                              <p className="text-xs text-mentor-text-muted truncate">{row.candidate.email}</p>
+                            </div>
+                            <span className="badge badge-neutral shrink-0">{UNRANKED_REASON_LABELS[row.reason] || row.reason}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </>

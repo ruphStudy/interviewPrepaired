@@ -37,6 +37,7 @@ import employerJobApplicationController from '../controllers/EmployerJobApplicat
 import employerCandidateScreeningController from '../controllers/EmployerCandidateScreeningController';
 import employerCandidateScreeningScoreController from '../controllers/EmployerCandidateScreeningScoreController';
 import employerCandidateScreeningGapController from '../controllers/EmployerCandidateScreeningGapController';
+import employerCandidateRankingController from '../controllers/EmployerCandidateRankingController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2394,6 +2395,32 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateScreeningGapController.getGapsForScreening
+);
+
+// ============================================================================
+// Candidate Ranking (19D) — a live, deterministic, job-level read computed
+// from persisted applications + the CURRENT applicable 19B explainable
+// score. No AI call, no persisted ranking document, no mutation. Ranks
+// ONLY by the deterministic 19B score — never the 19A AI overallScore,
+// recommendation, or gap severity. Read-only, so an archived organization/
+// job remains readable.
+// ============================================================================
+
+const rankingQueryValidation = [
+  query('status').optional().isIn(Object.values(EmployerJobApplicationStatus)).withMessage('Invalid application status'),
+  query('minScore').optional().isFloat({ min: 0, max: 100 }).withMessage('minScore must be between 0 and 100'),
+  query('search').optional().isString().trim().isLength({ max: 200 }).withMessage('search must be at most 200 characters'),
+];
+
+router.get(
+  '/:organizationId/jobs/:jobId/ranking',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...rankingQueryValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateRankingController.getJobRanking
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

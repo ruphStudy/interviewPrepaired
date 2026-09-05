@@ -1046,6 +1046,62 @@ export interface ApplicationScreeningGap {
 export type GenerateApplicationScreeningGapsResponse = ApiEnvelope<{ gap: ApplicationScreeningGap }>;
 export type GetApplicationScreeningGapsResponse = ApiEnvelope<{ gap: ApplicationScreeningGap | null }>;
 
+// ============================================================================
+// Candidate Ranking (Sprint 19D) — a live, deterministic, job-level read.
+// Ranking uses ONLY the 19B explainable score — the AI screening score is
+// informational only. No persisted ranking, no manual reordering.
+// ============================================================================
+
+export type EmployerCandidateRankingUnrankedReason = 'screening_required' | 'explainable_score_required';
+
+export interface RankingCandidateRef {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+export interface RankedApplicationRow {
+  rank: number;
+  applicationId: string;
+  candidate: RankingCandidateRef;
+  applicationStatus: EmployerJobApplicationStatus;
+  explainableScore: number;
+  aiScreeningScore: number;
+  recommendation: EmployerCandidateScreeningRecommendation;
+  gapSummary?: { criticalGapCount: number; highGapCount: number };
+  scoredAt: string;
+}
+
+export interface UnrankedApplicationRow {
+  applicationId: string;
+  candidate: RankingCandidateRef;
+  applicationStatus: EmployerJobApplicationStatus;
+  reason: EmployerCandidateRankingUnrankedReason;
+}
+
+export interface JobRanking {
+  job: { id: string; title: string; jobCode?: string; status: EmployerJobStatus };
+  ranked: RankedApplicationRow[];
+  unranked: UnrankedApplicationRow[];
+  summary: {
+    totalApplications: number;
+    rankedCount: number;
+    unrankedCount: number;
+    averageScore?: number;
+    highestScore?: number;
+    lowestScore?: number;
+  };
+}
+
+export interface JobRankingFilters {
+  status?: EmployerJobApplicationStatus;
+  minScore?: number;
+  search?: string;
+}
+
+export type GetEmployerJobRankingResponse = ApiEnvelope<JobRanking>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1821,6 +1877,20 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load gap analysis');
+    }
+  }
+
+  // ---- Candidate Ranking (Sprint 19D) ----
+
+  /** Live, deterministic, server-computed ranking — never client-sorted or client-reordered. */
+  async getEmployerJobRanking(organizationId: string, jobId: string, filters: JobRankingFilters = {}): Promise<GetEmployerJobRankingResponse> {
+    try {
+      const response = await this.api.get<GetEmployerJobRankingResponse>(`/organizations/${organizationId}/jobs/${jobId}/ranking`, {
+        params: filters,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load candidate ranking');
     }
   }
 }
