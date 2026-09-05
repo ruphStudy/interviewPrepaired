@@ -4,6 +4,7 @@ import EmployerJobApplication from '../models/EmployerJobApplication.model';
 import { EmployerJobApplicationStatus } from '../constants/employerJobApplication';
 import EmployerJobApplicationActivity from '../models/EmployerJobApplicationActivity.model';
 import EmployerHiringAssessmentFinalization from '../models/EmployerHiringAssessmentFinalization.model';
+import EmployerJobApplicationDecision from '../models/EmployerJobApplicationDecision.model';
 import OrganizationMember from '../models/OrganizationMember.model';
 import { User } from '../models/user.model';
 import { OrganizationType } from '../constants/organization';
@@ -12,7 +13,7 @@ import { OrganizationPermission, hasOrganizationPermission } from '../constants/
 import { ApiError } from '../utils/ApiError';
 
 interface TimelineItemInternal {
-  type: 'application_created' | 'status_changed' | 'assessment_finalized';
+  type: 'application_created' | 'status_changed' | 'assessment_finalized' | 'employer_decision';
   occurredAt: Date;
   actorType: 'member' | 'system';
   actorMembershipId?: string;
@@ -91,6 +92,27 @@ export class EmployerJobApplicationTimelineService {
         metadata: {
           overallScore: finalization.snapshot.overallScore,
           competencyCoveragePercent: finalization.snapshot.competencyCoveragePercent,
+        },
+      });
+    }
+
+    // Decision rows (23E) remain authoritative in EmployerJobApplicationDecision
+    // — never duplicated into EmployerJobApplicationActivity storage. Derived
+    // into the timeline here purely for display.
+    const decisions = await EmployerJobApplicationDecision.find({
+      organizationId: organization._id,
+      applicationId: application._id,
+    }).lean();
+    for (const decision of decisions) {
+      items.push({
+        type: 'employer_decision',
+        occurredAt: decision.createdAt,
+        actorType: 'member',
+        actorMembershipId: decision.createdByMembershipId.toString(),
+        metadata: {
+          decisionType: decision.decisionType,
+          reasonCode: decision.reasonCode,
+          notes: decision.notes,
         },
       });
     }

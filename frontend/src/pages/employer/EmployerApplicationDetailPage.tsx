@@ -31,6 +31,11 @@ import employerApi, {
   FinalizationReadinessChecklist,
   EmployerHiringAssessmentFinalization,
   ApplicationTimeline,
+  EmployerJobApplicationDecisionRecord,
+  EmployerJobApplicationDecisionType,
+  EmployerJobApplicationDecisionReasonCode,
+  EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
+  EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -653,6 +658,8 @@ const formatDate = (value?: string) => (value ? new Date(value).toLocaleDateStri
 const formatDateTime = (value?: string) => (value ? new Date(value).toLocaleString() : '—');
 const capitalizeStatus = (value?: string) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : '—');
 
+const labelizeCode = (value?: string) => (value ? value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '—');
+
 /**
  * Application detail (18D). Readable with only ORGANIZATION_VIEW — editing
  * (notes/source) and status actions require INTERVIEWS_MANAGE on a
@@ -801,6 +808,16 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [timeline, setTimeline] = useState<ApplicationTimeline | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+
+  const [decisions, setDecisions] = useState<EmployerJobApplicationDecisionRecord[]>([]);
+  const [decisionsLoading, setDecisionsLoading] = useState(true);
+  const [decisionsError, setDecisionsError] = useState<string | null>(null);
+  const [showDecisionForm, setShowDecisionForm] = useState(false);
+  const [decisionTypeInput, setDecisionTypeInput] = useState<EmployerJobApplicationDecisionType>('continue_process');
+  const [reasonCodeInput, setReasonCodeInput] = useState<EmployerJobApplicationDecisionReasonCode>('skills_match');
+  const [decisionNotesInput, setDecisionNotesInput] = useState('');
+  const [savingDecision, setSavingDecision] = useState(false);
+  const [saveDecisionError, setSaveDecisionError] = useState<string | null>(null);
 
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
@@ -1413,6 +1430,47 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchTimeline();
     }
   }, [isSyncing, activeOrganization, canView, fetchTimeline]);
+
+  const fetchDecisions = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setDecisionsLoading(true);
+    setDecisionsError(null);
+    try {
+      const response = await employerApi.getEmployerJobApplicationDecisions(organizationId, applicationId);
+      setDecisions(response.data.decisions);
+    } catch (err: any) {
+      setDecisionsError(err.message || 'Failed to load decision log');
+    } finally {
+      setDecisionsLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchDecisions();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchDecisions]);
+
+  const handleRecordDecision = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !applicationId) return;
+    setSavingDecision(true);
+    setSaveDecisionError(null);
+    try {
+      await employerApi.createEmployerJobApplicationDecision(organizationId, applicationId, {
+        decisionType: decisionTypeInput,
+        reasonCode: reasonCodeInput,
+        notes: decisionNotesInput.trim() || undefined,
+      });
+      setDecisionNotesInput('');
+      setShowDecisionForm(false);
+      await Promise.all([fetchDecisions(), fetchTimeline()]);
+    } catch (err: any) {
+      setSaveDecisionError(err.message || 'Failed to record decision');
+    } finally {
+      setSavingDecision(false);
+    }
+  };
 
   const handleCreateInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2891,7 +2949,9 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           ? 'Application created'
                           : item.type === 'status_changed'
                           ? `Stage changed: ${capitalizeStatus(item.fromStatus)} → ${capitalizeStatus(item.toStatus)}`
-                          : 'Assessment package finalized'}
+                          : item.type === 'assessment_finalized'
+                          ? 'Assessment package finalized'
+                          : 'Employer decision recorded'}
                       </p>
                       <p className="text-xs text-mentor-text-muted mt-0.5">
                         {formatDateTime(item.occurredAt)} &middot; {item.actor.type === 'member' ? item.actor.displayName || 'Member' : 'System'}
@@ -2901,6 +2961,115 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           Overall score: {item.metadata.overallScore}/100 &middot; Coverage: {item.metadata.competencyCoveragePercent}%
                         </p>
                       )}
+                      {item.type === 'employer_decision' && item.metadata && (
+                        <p className="text-xs text-mentor-text-secondary mt-1">
+                          {labelizeCode(item.metadata.decisionType)} &middot; {labelizeCode(item.metadata.reasonCode)}
+                          {item.metadata.notes ? ` — ${item.metadata.notes}` : ''}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <ClipboardList size={18} className="text-mentor-text-muted" />
+                Decision Log
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">Employer Decision Log — internal only.</p>
+
+              {canManage && (
+                <div className="mb-4">
+                  {!showDecisionForm ? (
+                    <button onClick={() => setShowDecisionForm(true)} className="btn btn-secondary">
+                      Record Decision
+                    </button>
+                  ) : (
+                    <form onSubmit={handleRecordDecision} className="surface-muted p-3 space-y-3">
+                      <p className="text-xs text-mentor-text-secondary">
+                        This records an internal employer decision note. It does not change the candidate's pipeline stage.
+                      </p>
+                      <div>
+                        <label className="label mb-1 block">Decision</label>
+                        <select
+                          value={decisionTypeInput}
+                          onChange={(e) => setDecisionTypeInput(e.target.value as EmployerJobApplicationDecisionType)}
+                          className="input w-full"
+                        >
+                          {EMPLOYER_JOB_APPLICATION_DECISION_TYPES.map((t) => (
+                            <option key={t} value={t}>
+                              {labelizeCode(t)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="label mb-1 block">Reason</label>
+                        <select
+                          value={reasonCodeInput}
+                          onChange={(e) => setReasonCodeInput(e.target.value as EmployerJobApplicationDecisionReasonCode)}
+                          className="input w-full"
+                        >
+                          {EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES.map((r) => (
+                            <option key={r} value={r}>
+                              {labelizeCode(r)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="label mb-1 block">Internal notes</label>
+                        <textarea
+                          value={decisionNotesInput}
+                          onChange={(e) => setDecisionNotesInput(e.target.value)}
+                          rows={3}
+                          maxLength={2000}
+                          className="input w-full"
+                          placeholder="Internal notes (optional)..."
+                        />
+                      </div>
+                      {saveDecisionError && <p className="text-sm text-mentor-error">{saveDecisionError}</p>}
+                      <div className="flex gap-2">
+                        <button type="submit" disabled={savingDecision} className="btn btn-primary">
+                          {savingDecision ? 'Saving...' : 'Save Decision'}
+                        </button>
+                        <button type="button" onClick={() => setShowDecisionForm(false)} className="btn btn-secondary">
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
+
+              {decisionsLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : decisionsError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{decisionsError}</p>
+                  <button onClick={fetchDecisions} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : decisions.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No decisions recorded yet.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {decisions.map((d) => (
+                    <li key={d.id} className="surface-muted p-3">
+                      <p className="text-sm text-mentor-text">
+                        {labelizeCode(d.decisionType)} &middot; {labelizeCode(d.reasonCode)}
+                      </p>
+                      <p className="text-xs text-mentor-text-muted mt-0.5">
+                        {formatDateTime(d.createdAt)} &middot; {d.createdBy.displayName || 'Member'} &middot; Status at decision:{' '}
+                        {capitalizeStatus(d.applicationStatusAtDecision)}
+                      </p>
+                      {d.notes && <p className="text-xs text-mentor-text-secondary mt-1">{d.notes}</p>}
                     </li>
                   ))}
                 </ul>

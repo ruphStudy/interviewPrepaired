@@ -42,6 +42,11 @@ import employerHiringCandidateComparisonController from '../controllers/Employer
 import employerHiringPipelineController from '../controllers/EmployerHiringPipelineController';
 import employerJobApplicationTimelineController from '../controllers/EmployerJobApplicationTimelineController';
 import employerHiringPipelineAnalyticsController from '../controllers/EmployerHiringPipelineAnalyticsController';
+import employerJobApplicationDecisionController from '../controllers/EmployerJobApplicationDecisionController';
+import {
+  EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
+  EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES,
+} from '../models/EmployerJobApplicationDecision.model';
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
@@ -2307,6 +2312,36 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerJobApplicationTimelineController.getTimeline
+);
+
+// POST/GET .../applications/:applicationId/decisions (23E) — append-only,
+// HUMAN-entered decision/reason audit log. Audit labels only — never
+// writes application.status, never auto-created by a status move.
+const createDecisionValidation = [
+  body('decisionType').isIn(EMPLOYER_JOB_APPLICATION_DECISION_TYPES).withMessage('Invalid decisionType'),
+  body('reasonCode').isIn(EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES).withMessage('Invalid reasonCode'),
+  body('notes').optional().isString().trim().isLength({ max: 2000 }).withMessage('notes must be at most 2000 characters'),
+];
+
+router.post(
+  '/:organizationId/applications/:applicationId/decisions',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...createDecisionValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerJobApplicationDecisionController.createDecision
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/decisions',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerJobApplicationDecisionController.getDecisions
 );
 
 // ============================================================================

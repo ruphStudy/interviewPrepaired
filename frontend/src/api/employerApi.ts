@@ -1892,7 +1892,7 @@ export type CreateHiringAssessmentFinalizationResponse = ApiEnvelope<{ finalizat
 // position, never alters lifecycle. Distinct from the 23B pipeline board.
 // ============================================================================
 
-export type ApplicationActivityType = 'application_created' | 'status_changed' | 'assessment_finalized';
+export type ApplicationActivityType = 'application_created' | 'status_changed' | 'assessment_finalized' | 'employer_decision';
 
 export interface ApplicationActivityActor {
   type: 'member' | 'system';
@@ -1906,7 +1906,13 @@ export interface ApplicationActivityItem {
   actor: ApplicationActivityActor;
   fromStatus?: EmployerJobApplicationStatus;
   toStatus?: EmployerJobApplicationStatus;
-  metadata?: { overallScore?: number; competencyCoveragePercent?: number };
+  metadata?: {
+    overallScore?: number;
+    competencyCoveragePercent?: number;
+    decisionType?: EmployerJobApplicationDecisionType;
+    reasonCode?: EmployerJobApplicationDecisionReasonCode;
+    notes?: string;
+  };
 }
 
 export interface ApplicationTimeline {
@@ -1916,6 +1922,88 @@ export interface ApplicationTimeline {
 }
 
 export type GetApplicationTimelineResponse = ApiEnvelope<ApplicationTimeline>;
+
+// ============================================================================
+// Pipeline Decision Log (Sprint 23E) — append-only, HUMAN-entered audit
+// labels. Never a hiring recommendation, never writes application.status.
+// Label: "Employer Decision Log — internal only".
+// ============================================================================
+
+export type EmployerJobApplicationDecisionType =
+  | 'continue_process'
+  | 'hold'
+  | 'advance_to_offer'
+  | 'hired'
+  | 'rejected'
+  | 'withdrawn'
+  | 'other';
+
+export type EmployerJobApplicationDecisionReasonCode =
+  | 'skills_match'
+  | 'experience_match'
+  | 'assessment_evidence'
+  | 'interview_evidence'
+  | 'stronger_candidate'
+  | 'insufficient_skill_evidence'
+  | 'insufficient_experience'
+  | 'insufficient_interview_evidence'
+  | 'role_requirements_changed'
+  | 'candidate_withdrew'
+  | 'candidate_unavailable'
+  | 'compensation_alignment'
+  | 'timing'
+  | 'other';
+
+export const EMPLOYER_JOB_APPLICATION_DECISION_TYPES: EmployerJobApplicationDecisionType[] = [
+  'continue_process',
+  'hold',
+  'advance_to_offer',
+  'hired',
+  'rejected',
+  'withdrawn',
+  'other',
+];
+
+export const EMPLOYER_JOB_APPLICATION_DECISION_REASON_CODES: EmployerJobApplicationDecisionReasonCode[] = [
+  'skills_match',
+  'experience_match',
+  'assessment_evidence',
+  'interview_evidence',
+  'stronger_candidate',
+  'insufficient_skill_evidence',
+  'insufficient_experience',
+  'insufficient_interview_evidence',
+  'role_requirements_changed',
+  'candidate_withdrew',
+  'candidate_unavailable',
+  'compensation_alignment',
+  'timing',
+  'other',
+];
+
+export interface EmployerJobApplicationDecisionActor {
+  membershipId: string;
+  displayName?: string;
+}
+
+export interface EmployerJobApplicationDecisionRecord {
+  id: string;
+  decisionType: EmployerJobApplicationDecisionType;
+  reasonCode: EmployerJobApplicationDecisionReasonCode;
+  notes?: string;
+  applicationStatusAtDecision: EmployerJobApplicationStatus;
+  createdAt: string;
+  createdBy: EmployerJobApplicationDecisionActor;
+}
+
+export interface CreateEmployerJobApplicationDecisionPayload {
+  decisionType: EmployerJobApplicationDecisionType;
+  reasonCode: EmployerJobApplicationDecisionReasonCode;
+  notes?: string;
+}
+
+export type GetEmployerJobApplicationDecisionsResponse = ApiEnvelope<{ decisions: EmployerJobApplicationDecisionRecord[] }>;
+export type CreateEmployerJobApplicationDecisionResponse = ApiEnvelope<{ decision: EmployerJobApplicationDecisionRecord }>;
 
 class EmployerApiService {
   private api: AxiosInstance;
@@ -3171,6 +3259,37 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load application timeline');
+    }
+  }
+
+  async getEmployerJobApplicationDecisions(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerJobApplicationDecisionsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerJobApplicationDecisionsResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/decisions`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load decision log');
+    }
+  }
+
+  /** Records an internal audit note only — never changes the application's pipeline stage. */
+  async createEmployerJobApplicationDecision(
+    organizationId: string,
+    applicationId: string,
+    payload: CreateEmployerJobApplicationDecisionPayload
+  ): Promise<CreateEmployerJobApplicationDecisionResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerJobApplicationDecisionResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/decisions`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to record decision');
     }
   }
 }
