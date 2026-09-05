@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import publicEmployerInterviewInvitationApi, {
   PublicEmployerInterviewInvitation,
   PublicInterviewSession,
+  PublicInterviewQuestionsSession,
 } from '../api/publicEmployerInterviewInvitationApi';
 import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-react';
 
@@ -13,7 +14,8 @@ import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-re
  * written to localStorage/sessionStorage/cookies/global app state, and
  * never logged. Establishes secure candidate access, explicit acceptance,
  * and (once accepted) preparation of exactly one hiring-assessment
- * interview session — it does NOT open any interview-taking UI yet, so
+ * interview session, then (21A) materialization of its final candidate-
+ * facing questions — it does NOT open any interview-taking UI yet, so
  * there is deliberately no "Start Interview" action here.
  */
 const EmployerInterviewInvitePage: React.FC = () => {
@@ -32,6 +34,12 @@ const EmployerInterviewInvitePage: React.FC = () => {
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [prepareError, setPrepareError] = useState<string | null>(null);
+
+  const [questionsSession, setQuestionsSession] = useState<PublicInterviewQuestionsSession | null>(null);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
+  const [questionsError, setQuestionsError] = useState<string | null>(null);
+  const [preparingQuestions, setPreparingQuestions] = useState(false);
+  const [prepareQuestionsError, setPrepareQuestionsError] = useState<string | null>(null);
 
   const fetchInvitation = useCallback(async () => {
     if (!token) return;
@@ -74,6 +82,26 @@ const EmployerInterviewInvitePage: React.FC = () => {
     }
   }, [invitation?.status, fetchSession]);
 
+  const fetchQuestions = useCallback(async () => {
+    if (!token) return;
+    setQuestionsLoading(true);
+    setQuestionsError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.getPublicInterviewQuestions(token);
+      setQuestionsSession(response.data.session);
+    } catch (err: any) {
+      setQuestionsError(err.message || 'Failed to load interview questions');
+    } finally {
+      setQuestionsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (session?.sessionId) {
+      fetchQuestions();
+    }
+  }, [session?.sessionId, fetchQuestions]);
+
   const handleAccept = async () => {
     if (!token) return;
     setAccepting(true);
@@ -99,6 +127,20 @@ const EmployerInterviewInvitePage: React.FC = () => {
       setPrepareError(err.message || 'Failed to prepare interview session');
     } finally {
       setPreparing(false);
+    }
+  };
+
+  const handlePrepareQuestions = async () => {
+    if (!token) return;
+    setPreparingQuestions(true);
+    setPrepareQuestionsError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.createPublicInterviewQuestions(token);
+      setQuestionsSession(response.data.session);
+    } catch (err: any) {
+      setPrepareQuestionsError(err.message || 'Failed to prepare interview questions');
+    } finally {
+      setPreparingQuestions(false);
     }
   };
 
@@ -131,16 +173,43 @@ const EmployerInterviewInvitePage: React.FC = () => {
             ) : sessionError ? (
               <p className="text-sm text-mentor-error">{sessionError}</p>
             ) : session ? (
-              <div className="surface-muted p-4 text-left space-y-1.5">
-                <p className="text-sm font-medium text-mentor-text">Interview session prepared</p>
-                <p className="text-sm text-mentor-text-secondary">
-                  {session.jobTitle} at {session.organizationName}
-                </p>
-                <p className="text-xs text-mentor-text-muted">
-                  ~{session.estimatedDurationMinutes} min &middot; status: {session.status}
-                </p>
-                <p className="text-sm text-mentor-success pt-1">Your interview session is ready.</p>
-              </div>
+              <>
+                <div className="surface-muted p-4 text-left space-y-1.5">
+                  <p className="text-sm font-medium text-mentor-text">Interview session prepared</p>
+                  <p className="text-sm text-mentor-text-secondary">
+                    {session.jobTitle} at {session.organizationName}
+                  </p>
+                  <p className="text-xs text-mentor-text-muted">
+                    ~{session.estimatedDurationMinutes} min &middot; status: {session.status}
+                  </p>
+                  <p className="text-sm text-mentor-success pt-1">Your interview session is ready.</p>
+                </div>
+
+                <div className="mt-4">
+                  {questionsLoading ? (
+                    <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                  ) : questionsError ? (
+                    <p className="text-sm text-mentor-error">{questionsError}</p>
+                  ) : questionsSession && questionsSession.totalQuestions > 0 ? (
+                    <div className="surface-muted p-4 text-left space-y-1.5">
+                      <p className="text-sm font-medium text-mentor-text">Assessment questions are ready.</p>
+                      <p className="text-xs text-mentor-text-muted">{questionsSession.totalQuestions} questions prepared</p>
+                    </div>
+                  ) : (
+                    <>
+                      {prepareQuestionsError && (
+                        <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4 text-left">
+                          <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                          <p className="text-sm text-mentor-error">{prepareQuestionsError}</p>
+                        </div>
+                      )}
+                      <button onClick={handlePrepareQuestions} disabled={preparingQuestions} className="btn btn-primary w-full justify-center">
+                        {preparingQuestions ? 'Preparing...' : 'Prepare Assessment Questions'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
             ) : (
               <>
                 {prepareError && (

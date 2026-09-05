@@ -74,6 +74,30 @@ export interface PublicInterviewSession {
 export type CreatePublicInterviewSessionResponse = ApiEnvelope<{ session: PublicInterviewSession }>;
 export type GetPublicInterviewSessionResponse = ApiEnvelope<{ session: PublicInterviewSession | null }>;
 
+// ============================================================================
+// Final candidate-facing question materialization (Sprint 21A). Only ever
+// created for an ACCEPTED invitation with an existing session — no
+// evaluation, no reports. Never exposes competencies/skills/rubric/
+// evaluationIntent/evidenceExpected/followUpFocus/model answers.
+// ============================================================================
+
+export interface PublicInterviewQuestion {
+  id: string;
+  question: string;
+  category?: string;
+  difficulty?: string;
+}
+
+export interface PublicInterviewQuestionsSession {
+  sessionId: string;
+  status: PublicInterviewSessionStatus;
+  totalQuestions: number;
+  questions: PublicInterviewQuestion[];
+}
+
+export type CreatePublicInterviewQuestionsResponse = ApiEnvelope<{ session: PublicInterviewQuestionsSession }>;
+export type GetPublicInterviewQuestionsResponse = ApiEnvelope<{ session: PublicInterviewQuestionsSession | null }>;
+
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
 
@@ -142,6 +166,29 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load interview session');
+    }
+  }
+
+  /** Materializes the session's final questions — a duplicate call safely returns the same already-materialized list. */
+  async createPublicInterviewQuestions(token: string): Promise<CreatePublicInterviewQuestionsResponse> {
+    try {
+      const response = await this.api.post<CreatePublicInterviewQuestionsResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/questions`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to prepare interview questions');
+    }
+  }
+
+  async getPublicInterviewQuestions(token: string): Promise<GetPublicInterviewQuestionsResponse> {
+    try {
+      const response = await this.api.get<GetPublicInterviewQuestionsResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/questions`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview questions');
     }
   }
 }

@@ -34,4 +34,23 @@ router.post('/:token/session', ...tokenValidation, validate, publicEmployerInter
 // — returns the existing session summary, or null. Fully public.
 router.get('/:token/session', ...tokenValidation, validate, publicEmployerInterviewInvitationController.getSession);
 
+// POST /api/v1/public/employer-interview-invitations/:token/session/questions
+// (21A) — materializes the session's final candidate-facing questions.
+// Fully public, no auth, no organization RBAC.
+router.post(
+  '/:token/session/questions',
+  ...tokenValidation,
+  validate,
+  publicEmployerInterviewInvitationController.createSessionQuestions
+);
+
+// GET /api/v1/public/employer-interview-invitations/:token/session/questions
+// (21A) — returns the candidate-safe question list, or null. Fully public.
+router.get(
+  '/:token/session/questions',
+  ...tokenValidation,
+  validate,
+  publicEmployerInterviewInvitationController.getSessionQuestions
+);
+
 export default router;

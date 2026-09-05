@@ -2645,6 +2645,20 @@ router.get(
   employerInterviewSessionController.getCurrentSession
 );
 
+// GET .../interview-session/questions (21A) — recruiter-facing read of the
+// materialized questions, including evaluation metadata never shown to the
+// candidate. No mutation; materialization itself only happens through the
+// public candidate handoff.
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/questions',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewSessionController.getCurrentSessionQuestions
+);
+
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
 
 router.get(

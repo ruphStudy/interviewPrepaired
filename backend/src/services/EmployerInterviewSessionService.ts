@@ -52,6 +52,47 @@ export class EmployerInterviewSessionService {
     return this.toDetail(interview);
   }
 
+  /**
+   * GET .../interview-session/questions (21A) — recruiter-facing, read-only.
+   * Unlike the public candidate response, this MAY include competencies,
+   * skills, evaluation intent, and evidence-expected — this endpoint is
+   * authenticated org-context. No mutation exists here; materialization is
+   * only ever triggered through the public candidate handoff.
+   */
+  async getCurrentSessionQuestions(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    applicationId: string
+  ): Promise<Record<string, unknown> | null> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_VIEW);
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsCompany(organization);
+
+    const application = await EmployerJobApplication.findOne({ _id: applicationId, organizationId: organization._id }).select('_id');
+    if (!application) {
+      throw new ApiError(404, 'Application not found');
+    }
+
+    const invitationDetail = await employerInterviewInvitationService.getCurrentInvitation(organizationId, actingRole, applicationId);
+    if (!invitationDetail) {
+      return null;
+    }
+
+    const invitation = await EmployerInterviewInvitation.findOne({ _id: invitationDetail.id, organizationId: organization._id }).select(
+      'interviewId'
+    );
+    if (!invitation?.interviewId) {
+      return null;
+    }
+
+    const interview = await Interview.findOne({ _id: invitation.interviewId, organizationId: organization._id });
+    if (!interview) {
+      return null;
+    }
+
+    return this.toQuestionsDetail(interview);
+  }
+
   private async getOrganizationById(organizationId: string): Promise<IOrganization> {
     const organization = await Organization.findById(organizationId);
     if (!organization) {
@@ -85,6 +126,28 @@ export class EmployerInterviewSessionService {
       createdAt: interview.createdAt,
       completedAt: interview.completedAt,
       updatedAt: interview.updatedAt,
+    };
+  }
+
+  /** Recruiter-facing question detail (21A) — read-only, includes evaluation metadata never exposed to the candidate. */
+  private toQuestionsDetail(interview: IInterview): Record<string, unknown> {
+    return {
+      sessionId: interview._id.toString(),
+      status: interview.status,
+      materializationStatus: interview.questionMaterializationStatus ?? (interview.questions.length > 0 ? 'completed' : 'pending'),
+      totalQuestions: interview.questions.length,
+      questions: interview.questions.map((q, index) => ({
+        id: String(index),
+        question: q.questionText,
+        category: q.questionType,
+        difficulty: q.difficulty,
+        blueprintSectionId: q.blueprintSectionId,
+        competencyNames: q.competencyNames ?? [],
+        skillNames: q.skillNames ?? [],
+        evaluationIntent: q.evaluationIntent,
+        evidenceExpected: q.evidenceExpected ?? [],
+        followUpFocus: q.followUpFocus ?? [],
+      })),
     };
   }
 }

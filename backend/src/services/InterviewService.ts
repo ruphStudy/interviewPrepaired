@@ -713,8 +713,11 @@ export class InterviewService {
    * the B2C credit ledger, and this path has no org-credit consumption
    * either since nothing is actually being run yet. Does NOT call AI to
    * generate a question — `questions` stays empty and `status` stays
-   * CREATED ("shell persisted, no usable first question yet") until a
-   * later sprint converts the blueprint into real questions. The unique
+   * CREATED ("shell persisted, no usable first question yet") until
+   * `HiringQuestionMaterializationService` (21A) converts the blueprint
+   * into real questions — `questionMaterializationStatus` starts as
+   * 'pending' so that later step has an authoritative CAS claim to work
+   * against. The unique
    * partial index on `employerInvitationId` is the sole concurrency
    * guard: a concurrent duplicate call throws E11000, which the caller
    * (PublicEmployerInterviewInvitationService) catches and refetches the
@@ -743,6 +746,7 @@ export class InterviewService {
       employerInvitationId: new Types.ObjectId(params.invitationId),
       employerBlueprintId: new Types.ObjectId(params.blueprintId),
       employerRubricId: new Types.ObjectId(params.rubricId),
+      questionMaterializationStatus: 'pending',
       topic,
       roleName: topic,
       difficulty: 'intermediate',

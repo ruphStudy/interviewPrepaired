@@ -21,6 +21,7 @@ import employerApi, {
   RubricScoringAnchors,
   ApplicationInterviewInvitation,
   EmployerInterviewSessionSummary,
+  EmployerInterviewSessionQuestions,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -735,6 +736,10 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [interviewSessionLoading, setInterviewSessionLoading] = useState(true);
   const [interviewSessionError, setInterviewSessionError] = useState<string | null>(null);
 
+  const [sessionQuestions, setSessionQuestions] = useState<EmployerInterviewSessionQuestions | null>(null);
+  const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
+  const [sessionQuestionsError, setSessionQuestionsError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1042,6 +1047,26 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchInterviewSession();
     }
   }, [isSyncing, activeOrganization, canView, fetchInterviewSession]);
+
+  const fetchSessionQuestions = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setSessionQuestionsLoading(true);
+    setSessionQuestionsError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewSessionQuestions(organizationId, applicationId);
+      setSessionQuestions(response.data.session);
+    } catch (err: any) {
+      setSessionQuestionsError(err.message || 'Failed to load interview questions');
+    } finally {
+      setSessionQuestionsLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && interviewSession) {
+      fetchSessionQuestions();
+    }
+  }, [isSyncing, activeOrganization, canView, interviewSession, fetchSessionQuestions]);
 
   const handleCreateInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1900,26 +1925,65 @@ const EmployerApplicationDetailPage: React.FC = () => {
                   </button>
                 </div>
               ) : interviewSession ? (
-                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
-                  <div>
-                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Session ID</dt>
-                    <dd className="text-sm text-mentor-text font-mono">{interviewSession.id}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Status</dt>
-                    <dd className="text-sm text-mentor-text capitalize">{interviewSession.status}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium text-mentor-text-muted mb-1">Created</dt>
-                    <dd className="text-sm text-mentor-text">{formatDateTime(interviewSession.createdAt)}</dd>
-                  </div>
-                  {interviewSession.completedAt && (
+                <>
+                  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
                     <div>
-                      <dt className="text-xs font-medium text-mentor-text-muted mb-1">Completed</dt>
-                      <dd className="text-sm text-mentor-text">{formatDateTime(interviewSession.completedAt)}</dd>
+                      <dt className="text-xs font-medium text-mentor-text-muted mb-1">Session ID</dt>
+                      <dd className="text-sm text-mentor-text font-mono">{interviewSession.id}</dd>
                     </div>
-                  )}
-                </dl>
+                    <div>
+                      <dt className="text-xs font-medium text-mentor-text-muted mb-1">Status</dt>
+                      <dd className="text-sm text-mentor-text capitalize">{interviewSession.status}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-medium text-mentor-text-muted mb-1">Created</dt>
+                      <dd className="text-sm text-mentor-text">{formatDateTime(interviewSession.createdAt)}</dd>
+                    </div>
+                    {interviewSession.completedAt && (
+                      <div>
+                        <dt className="text-xs font-medium text-mentor-text-muted mb-1">Completed</dt>
+                        <dd className="text-sm text-mentor-text">{formatDateTime(interviewSession.completedAt)}</dd>
+                      </div>
+                    )}
+                  </dl>
+
+                  <div className="mt-5 pt-5 border-t border-mentor-border">
+                    <h3 className="text-sm font-medium text-mentor-text mb-3">Assessment Questions</h3>
+                    {sessionQuestionsLoading ? (
+                      <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                    ) : sessionQuestionsError ? (
+                      <p className="text-sm text-mentor-error">{sessionQuestionsError}</p>
+                    ) : sessionQuestions ? (
+                      <div className="space-y-3">
+                        <p className="text-sm text-mentor-text-secondary">
+                          Materialization: <span className="capitalize font-medium text-mentor-text">{sessionQuestions.materializationStatus}</span>
+                          {' · '}
+                          {sessionQuestions.totalQuestions} question{sessionQuestions.totalQuestions === 1 ? '' : 's'}
+                        </p>
+                        {sessionQuestions.questions.length > 0 && (
+                          <ul className="space-y-2">
+                            {sessionQuestions.questions.slice(0, 5).map((q) => (
+                              <li key={q.id} className="surface-muted p-3">
+                                <p className="text-sm text-mentor-text">{q.question}</p>
+                                <p className="text-xs text-mentor-text-muted mt-1 capitalize">
+                                  {q.category || 'general'} &middot; {q.difficulty || 'n/a'}
+                                  {q.competencyNames.length > 0 ? ` · ${q.competencyNames.join(', ')}` : ''}
+                                </p>
+                              </li>
+                            ))}
+                            {sessionQuestions.questions.length > 5 && (
+                              <li className="text-xs text-mentor-text-muted">
+                                +{sessionQuestions.questions.length - 5} more question{sessionQuestions.questions.length - 5 === 1 ? '' : 's'}
+                              </li>
+                            )}
+                          </ul>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-mentor-text-secondary">Not prepared yet.</p>
+                    )}
+                  </div>
+                </>
               ) : invitation?.status === 'accepted' ? (
                 <p className="text-sm text-mentor-text-secondary">Candidate has accepted; session not prepared yet.</p>
               ) : (

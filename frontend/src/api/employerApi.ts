@@ -1340,6 +1340,37 @@ export interface EmployerInterviewSessionSummary {
 
 export type GetEmployerInterviewSessionResponse = ApiEnvelope<{ session: EmployerInterviewSessionSummary | null }>;
 
+// ============================================================================
+// Employer Interview Session Questions — authenticated recruiter READ only
+// (Sprint 21A). Materialization itself only ever happens through the
+// public candidate handoff; there is no create/mutate method here.
+// ============================================================================
+
+export interface EmployerInterviewQuestionDetail {
+  id: string;
+  question: string;
+  category?: string;
+  difficulty?: string;
+  blueprintSectionId?: string;
+  competencyNames: string[];
+  skillNames: string[];
+  evaluationIntent?: string;
+  evidenceExpected: string[];
+  followUpFocus: string[];
+}
+
+export type EmployerInterviewQuestionMaterializationStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface EmployerInterviewSessionQuestions {
+  sessionId: string;
+  status: string;
+  materializationStatus: EmployerInterviewQuestionMaterializationStatus;
+  totalQuestions: number;
+  questions: EmployerInterviewQuestionDetail[];
+}
+
+export type GetEmployerInterviewSessionQuestionsResponse = ApiEnvelope<{ session: EmployerInterviewSessionQuestions | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2283,6 +2314,20 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load interview session');
+    }
+  }
+
+  async getEmployerInterviewSessionQuestions(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerInterviewSessionQuestionsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewSessionQuestionsResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/questions`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview questions');
     }
   }
 }

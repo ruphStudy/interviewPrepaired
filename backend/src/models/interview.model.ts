@@ -54,7 +54,7 @@ export interface IEvaluation {
 export interface IQuestion {
   _id?: any;
   questionText: string;
-  questionType?: string; // Type of question: fundamentals, coding, system-design, etc.
+  questionType?: string; // Type of question: fundamentals, coding, system-design, etc. Also reused as the "category" for hiring-assessment questions (21A) — never a separate/duplicate field.
   expectedPoints?: string[]; // Key points that should be covered in the answer
   modelAnswer?: string; // Complete ideal answer for reference (generated after evaluation)
   questionSource?: 'ai' | 'uploaded'; // Where the question came from
@@ -64,6 +64,17 @@ export interface IQuestion {
   answeredAt?: Date;
   duration?: number;
   evaluation?: IEvaluation;
+  // Employer hiring-assessment question metadata (21A) — absent on every
+  // non-hiring question. `blueprintSectionId` is assigned deterministically
+  // by the server (never trusted from AI output); the rest are validated/
+  // capped AI output, never exposed to the candidate-facing public API.
+  difficulty?: 'easy' | 'medium' | 'hard';
+  blueprintSectionId?: string;
+  competencyNames?: string[];
+  skillNames?: string[];
+  evaluationIntent?: string;
+  evidenceExpected?: string[];
+  followUpFocus?: string[];
 }
 
 export interface IAIUsageCall {
@@ -140,6 +151,14 @@ export interface IInterview extends Document {
   employerRubricId?: Types.ObjectId;
   employerCandidateId?: Types.ObjectId;
   employerJobId?: Types.ObjectId;
+  // Materialization claim state for the hiring-assessment question
+  // generation flow (21A) — absent for every non-hiring interview (no
+  // schema default; only ever set by `createEmployerHiringInterview`/
+  // `HiringQuestionMaterializationService`). This is the authoritative CAS
+  // guard against concurrent materialization, independent of `status`
+  // above (which stays CREATED throughout — a hiring session is never
+  // marked "started" by materializing its questions).
+  questionMaterializationStatus?: 'pending' | 'processing' | 'completed' | 'failed';
   topic: string;
   difficulty: 'beginner' | 'intermediate' | 'advanced' | 'expert';
   experienceYears: number;
@@ -380,6 +399,19 @@ const questionSchema = new Schema<IQuestion>(
     evaluation: {
       type: evaluationSchema,
     },
+    // Employer hiring-assessment metadata (21A) — no `default`, so these
+    // stay genuinely absent on every non-hiring question rather than
+    // materializing as `[]`/`undefined` on read.
+    difficulty: {
+      type: String,
+      enum: ['easy', 'medium', 'hard'],
+    },
+    blueprintSectionId: { type: String, trim: true },
+    competencyNames: { type: [String], default: undefined },
+    skillNames: { type: [String], default: undefined },
+    evaluationIntent: { type: String, trim: true, maxlength: [500, 'evaluationIntent cannot exceed 500 characters'] },
+    evidenceExpected: { type: [String], default: undefined },
+    followUpFocus: { type: [String], default: undefined },
   },
   { _id: false, timestamps: false }
 );
@@ -556,6 +588,11 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
     employerRubricId: { type: Schema.Types.ObjectId, ref: 'EmployerInterviewCompetencyRubric' },
     employerCandidateId: { type: Schema.Types.ObjectId, ref: 'EmployerCandidate' },
     employerJobId: { type: Schema.Types.ObjectId, ref: 'EmployerJob' },
+    // No `default` — stays absent for every non-hiring interview.
+    questionMaterializationStatus: {
+      type: String,
+      enum: ['pending', 'processing', 'completed', 'failed'],
+    },
     topic: {
       type: String,
       required: [true, 'Topic is required'],

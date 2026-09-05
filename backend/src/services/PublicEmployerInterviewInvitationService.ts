@@ -12,6 +12,7 @@ import EmployerInterviewInvitation from '../models/EmployerInterviewInvitation.m
 import { EmployerInterviewInvitationStatus } from '../constants/employerInterviewInvitation';
 import Interview, { IInterview } from '../models/interview.model';
 import interviewService from './InterviewService';
+import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { OrganizationStatus } from '../constants/organization';
 import { ApiError } from '../utils/ApiError';
 
@@ -195,6 +196,62 @@ export class PublicEmployerInterviewInvitationService {
   }
 
   /**
+   * POST /public/employer-interview-invitations/:token/session/questions
+   * (21A) — materializes the session's final candidate-facing questions
+   * from the exact blueprint/rubric it was created against. Requires an
+   * ACCEPTED invitation with an existing session; idempotent (an
+   * already-materialized session is returned as-is, no new AI call).
+   */
+  async createSessionQuestions(rawToken: string): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+
+    const chain = await this.resolveChain(invitation);
+
+    if (invitation.status === EmployerInterviewInvitationStatus.ACTIVE) {
+      throw new ApiError(409, 'Accept the invitation first.');
+    }
+    if (!invitation.interviewId) {
+      throw new ApiError(409, 'Prepare the interview session first.');
+    }
+
+    const interview = await hiringQuestionMaterializationService.materialize(
+      chain.organization._id.toString(),
+      invitation.interviewId.toString()
+    );
+
+    return this.toQuestionsDetail(interview);
+  }
+
+  /** GET /public/employer-interview-invitations/:token/session/questions — read-only. Returns the candidate-safe question list, or null if no session exists yet. */
+  async getSessionQuestions(rawToken: string): Promise<Record<string, unknown> | null> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+
+    await this.resolveChain(invitation);
+
+    if (!invitation.interviewId) {
+      return null;
+    }
+    const interview = await Interview.findById(invitation.interviewId);
+    if (!interview) {
+      return null;
+    }
+
+    return this.toQuestionsDetail(interview);
+  }
+
+  /**
    * Validates the invitation's full reference chain and lazily expires it
    * first (never trusts the caller's clock). Throws a generic 404 for any
    * broken/archived reference, and a 410 specifically for an expired
@@ -321,6 +378,26 @@ export class PublicEmployerInterviewInvitationService {
       blueprintTitle: blueprintContent.title,
       estimatedDurationMinutes: blueprintContent.estimatedDurationMinutes,
       createdAt: interview.createdAt,
+    };
+  }
+
+  /**
+   * Candidate-safe question list (21A) — NEVER competencies, skills,
+   * rubric content, evaluationIntent, evidenceExpected, followUpFocus,
+   * model answers, or any screening/ranking data. Only what a candidate
+   * needs to see the question itself.
+   */
+  private toQuestionsDetail(interview: IInterview): Record<string, unknown> {
+    return {
+      sessionId: interview._id.toString(),
+      status: interview.status,
+      totalQuestions: interview.questions.length,
+      questions: interview.questions.map((q, index) => ({
+        id: String(index),
+        question: q.questionText,
+        category: q.questionType,
+        difficulty: q.difficulty,
+      })),
     };
   }
 }
