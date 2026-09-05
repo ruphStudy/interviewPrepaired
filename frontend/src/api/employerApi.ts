@@ -969,6 +969,83 @@ export interface ApplicationScreeningScore {
 export type CalculateApplicationScreeningScoreResponse = ApiEnvelope<{ score: ApplicationScreeningScore }>;
 export type GetApplicationScreeningScoreResponse = ApiEnvelope<{ score: ApplicationScreeningScore | null }>;
 
+// ============================================================================
+// Candidate Skill & Requirement Gap Analysis (Sprint 19C) — a deterministic
+// breakdown derived from an already-COMPLETED screening's own result, its
+// 19B explainable score, and the exact finalized JD snapshot. Informational
+// only. No ranking (19D), no shortlist automation (19E).
+// ============================================================================
+
+export type EmployerCandidateGapSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type EmployerCandidateSkillGapStatus = 'missing' | 'partial';
+// EmployerJobSkillRequirement / EmployerJobSkillImportance are already defined above (Sprint 17C) — reused, not duplicated.
+
+export interface ScreeningSkillGap {
+  skillName: string;
+  requirement: EmployerJobSkillRequirement;
+  importance: EmployerJobSkillImportance;
+  status: EmployerCandidateSkillGapStatus;
+  severity: EmployerCandidateGapSeverity;
+}
+
+export interface ScreeningCompetencyGap {
+  competencyName: string;
+  jdWeight: number;
+  matchScore: number;
+  severity: EmployerCandidateGapSeverity;
+  evidence: string[];
+}
+
+export interface ScreeningExperienceGap {
+  required?: string;
+  candidate?: string;
+  score: number;
+  severity: EmployerCandidateGapSeverity;
+  summary?: string;
+}
+
+export interface ScreeningEducationGap {
+  score: number;
+  severity: EmployerCandidateGapSeverity;
+  summary?: string;
+}
+
+export interface ScreeningGapSummary {
+  criticalGapCount: number;
+  highGapCount: number;
+  mediumGapCount: number;
+  lowGapCount: number;
+  matchedSkillCount: number;
+  partialSkillCount: number;
+  missingSkillCount: number;
+}
+
+export interface ScreeningGap {
+  summary: ScreeningGapSummary;
+  skillGaps: ScreeningSkillGap[];
+  competencyGaps: ScreeningCompetencyGap[];
+  experienceGap?: ScreeningExperienceGap;
+  educationGap?: ScreeningEducationGap;
+  strengths: string[];
+  calculationVersion: string;
+}
+
+export interface ApplicationScreeningGap {
+  id: string;
+  screeningId: string;
+  screeningScoreId: string;
+  applicationId: string;
+  jobId: string;
+  candidateId: string;
+  jdSnapshotId: string;
+  resumeAnalysisId: string;
+  gap: ScreeningGap;
+  createdAt: string;
+}
+
+export type GenerateApplicationScreeningGapsResponse = ApiEnvelope<{ gap: ApplicationScreeningGap }>;
+export type GetApplicationScreeningGapsResponse = ApiEnvelope<{ gap: ApplicationScreeningGap | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1719,6 +1796,31 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load explainable score');
+    }
+  }
+
+  // ---- Candidate Skill & Requirement Gap Analysis (Sprint 19C) ----
+
+  /** Deterministic — if a gap analysis already exists for the current completed screening, the backend returns it without recalculating. */
+  async generateApplicationScreeningGaps(organizationId: string, applicationId: string): Promise<GenerateApplicationScreeningGapsResponse> {
+    try {
+      const response = await this.api.post<GenerateApplicationScreeningGapsResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/screening/gaps`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate gap analysis');
+    }
+  }
+
+  async getApplicationScreeningGaps(organizationId: string, applicationId: string): Promise<GetApplicationScreeningGapsResponse> {
+    try {
+      const response = await this.api.get<GetApplicationScreeningGapsResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/screening/gaps`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load gap analysis');
     }
   }
 }

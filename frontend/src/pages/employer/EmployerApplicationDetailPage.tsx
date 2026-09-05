@@ -11,8 +11,10 @@ import employerApi, {
   ScreeningResult,
   ApplicationScreeningScore,
   ScreeningScore,
+  ApplicationScreeningGap,
+  ScreeningGap,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target, Calculator } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target, Calculator, GitCompareArrows } from 'lucide-react';
 
 const RECOMMENDATION_LABELS: Record<string, string> = {
   strong_match: 'Strong Match',
@@ -229,6 +231,145 @@ const ExplainableScoreView: React.FC<{ score: ScreeningScore; aiOverallScore: nu
   </div>
 );
 
+const SEVERITY_LABELS: Record<string, string> = {
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+};
+
+const SEVERITY_BADGE_CLASS: Record<string, string> = {
+  critical: 'badge bg-red-50 text-red-700 dark:bg-future-error/10 dark:text-future-error',
+  high: 'badge badge-warning',
+  medium: 'badge badge-info',
+  low: 'badge badge-neutral',
+};
+
+const SeverityBadge: React.FC<{ severity: string }> = ({ severity }) => (
+  <span className={SEVERITY_BADGE_CLASS[severity] || 'badge badge-neutral'}>{SEVERITY_LABELS[severity] || severity}</span>
+);
+
+const capitalize = (value: string) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : value);
+
+/**
+ * Read-only rendering of a deterministic 19C gap analysis. Informational
+ * only — never implies a status change, ranking, or shortlist decision.
+ */
+const GapAnalysisView: React.FC<{ gap: ScreeningGap }> = ({ gap }) => (
+  <div className="space-y-5">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="stat-tile">
+        <p className="stat-tile-value">{gap.summary.criticalGapCount}</p>
+        <p className="text-xs text-mentor-text-muted mt-1">Critical</p>
+      </div>
+      <div className="stat-tile">
+        <p className="stat-tile-value">{gap.summary.highGapCount}</p>
+        <p className="text-xs text-mentor-text-muted mt-1">High</p>
+      </div>
+      <div className="stat-tile">
+        <p className="stat-tile-value">{gap.summary.mediumGapCount}</p>
+        <p className="text-xs text-mentor-text-muted mt-1">Medium</p>
+      </div>
+      <div className="stat-tile">
+        <p className="stat-tile-value">{gap.summary.lowGapCount}</p>
+        <p className="text-xs text-mentor-text-muted mt-1">Low</p>
+      </div>
+    </div>
+    <p className="text-xs text-mentor-text-muted">
+      {gap.summary.matchedSkillCount} matched &middot; {gap.summary.partialSkillCount} partial &middot; {gap.summary.missingSkillCount}{' '}
+      missing skills
+    </p>
+
+    {gap.skillGaps.length > 0 && (
+      <div>
+        <p className="label mb-2">Skill Gaps</p>
+        <div className="space-y-2">
+          {gap.skillGaps.map((s) => (
+            <div key={s.skillName} className="surface-muted p-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm font-medium text-mentor-text">{s.skillName}</p>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="badge badge-neutral">{capitalize(s.status)}</span>
+                  <span className="badge badge-neutral">{capitalize(s.requirement)}</span>
+                  <span className="badge badge-neutral">{capitalize(s.importance)}</span>
+                  <SeverityBadge severity={s.severity} />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {gap.competencyGaps.length > 0 && (
+      <div>
+        <p className="label mb-2">Competency Gaps</p>
+        <div className="space-y-2">
+          {gap.competencyGaps.map((c) => (
+            <div key={c.competencyName} className="surface-muted p-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm font-medium text-mentor-text">{c.competencyName}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-mentor-text-secondary">
+                    JD Weight {c.jdWeight} &middot; Match {c.matchScore}/100
+                  </span>
+                  <SeverityBadge severity={c.severity} />
+                </div>
+              </div>
+              {c.evidence.length > 0 && (
+                <ul className="list-disc list-inside text-xs text-mentor-text-secondary mt-1.5 space-y-0.5">
+                  {c.evidence.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {gap.experienceGap && (
+      <div>
+        <p className="label mb-2 flex items-center gap-2">
+          Experience Gap <SeverityBadge severity={gap.experienceGap.severity} />
+        </p>
+        <div className="surface-muted p-3 text-sm text-mentor-text-secondary space-y-1">
+          {gap.experienceGap.required && <p>Required: {gap.experienceGap.required}</p>}
+          {gap.experienceGap.candidate && <p>Candidate: {gap.experienceGap.candidate}</p>}
+          <p>Score: {gap.experienceGap.score}/100</p>
+          {gap.experienceGap.summary && <p>{gap.experienceGap.summary}</p>}
+        </div>
+      </div>
+    )}
+
+    {gap.educationGap && (
+      <div>
+        <p className="label mb-2 flex items-center gap-2">
+          Education Gap <SeverityBadge severity={gap.educationGap.severity} />
+        </p>
+        <div className="surface-muted p-3 text-sm text-mentor-text-secondary space-y-1">
+          <p>Score: {gap.educationGap.score}/100</p>
+          {gap.educationGap.summary && <p>{gap.educationGap.summary}</p>}
+        </div>
+      </div>
+    )}
+
+    {gap.strengths.length > 0 && (
+      <div>
+        <p className="label mb-2">Strengths</p>
+        <ul className="list-disc list-inside text-sm text-mentor-text-secondary space-y-0.5">
+          {gap.strengths.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ul>
+      </div>
+    )}
+
+    <p className="text-xs text-mentor-text-muted">{gap.calculationVersion}</p>
+  </div>
+);
+
 const STATUS_LABELS: Record<EmployerJobApplicationStatus, string> = {
   applied: 'Applied',
   screening: 'Screening',
@@ -330,6 +471,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [scoreError, setScoreError] = useState<string | null>(null);
   const [calculatingScore, setCalculatingScore] = useState(false);
   const [calculateScoreError, setCalculateScoreError] = useState<string | null>(null);
+
+  const [screeningGap, setScreeningGap] = useState<ApplicationScreeningGap | null>(null);
+  const [gapLoading, setGapLoading] = useState(false);
+  const [gapError, setGapError] = useState<string | null>(null);
+  const [generatingGap, setGeneratingGap] = useState(false);
+  const [generateGapError, setGenerateGapError] = useState<string | null>(null);
 
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
@@ -472,6 +619,40 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setCalculateScoreError(err.message || 'Failed to calculate explainable score');
     } finally {
       setCalculatingScore(false);
+    }
+  };
+
+  const fetchScreeningGap = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setGapLoading(true);
+    setGapError(null);
+    try {
+      const response = await employerApi.getApplicationScreeningGaps(organizationId, applicationId);
+      setScreeningGap(response.data.gap);
+    } catch (err: any) {
+      setGapError(err.message || 'Failed to load gap analysis');
+    } finally {
+      setGapLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && screeningScore) {
+      fetchScreeningGap();
+    }
+  }, [isSyncing, activeOrganization, canView, screeningScore?.id, fetchScreeningGap]);
+
+  const handleGenerateGaps = async () => {
+    if (!organizationId || !applicationId) return;
+    setGeneratingGap(true);
+    setGenerateGapError(null);
+    try {
+      const response = await employerApi.generateApplicationScreeningGaps(organizationId, applicationId);
+      setScreeningGap(response.data.gap);
+    } catch (err: any) {
+      setGenerateGapError(err.message || 'Failed to generate gap analysis');
+    } finally {
+      setGeneratingGap(false);
     }
   };
 
@@ -883,6 +1064,56 @@ const EmployerApplicationDetailPage: React.FC = () => {
                       </div>
                     ) : (
                       <ExplainableScoreView score={screeningScore.score} aiOverallScore={screening.result?.overallScore ?? 0} />
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {screening?.status === 'completed' && (
+              <div className="card mt-6">
+                <h2 className="section-title flex items-center gap-2 mb-4">
+                  <GitCompareArrows size={18} className="text-mentor-text-muted" />
+                  Gap Analysis
+                </h2>
+
+                {!screeningScore ? (
+                  <p className="text-sm text-mentor-text-secondary py-2">Calculate Explainable Score first.</p>
+                ) : gapLoading ? (
+                  <div className="p-6 text-center">
+                    <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                  </div>
+                ) : gapError ? (
+                  <div className="p-6 text-center">
+                    <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                    <p className="text-sm text-mentor-text-secondary mb-4">{gapError}</p>
+                    <button onClick={fetchScreeningGap} className="btn btn-primary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {generateGapError && (
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{generateGapError}</p>
+                      </div>
+                    )}
+
+                    {!screeningGap ? (
+                      <div className="py-2">
+                        <p className="text-sm text-mentor-text-secondary mb-3">
+                          Generate a deterministic skill and requirement gap analysis for this screening.
+                        </p>
+                        {canEdit && (
+                          <button onClick={handleGenerateGaps} disabled={generatingGap} className="btn btn-primary">
+                            <GitCompareArrows size={16} />
+                            {generatingGap ? 'Generating...' : 'Generate Gap Analysis'}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <GapAnalysisView gap={screeningGap.gap} />
                     )}
                   </>
                 )}

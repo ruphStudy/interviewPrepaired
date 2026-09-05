@@ -36,6 +36,7 @@ import employerCandidateResumeAnalysisController from '../controllers/EmployerCa
 import employerJobApplicationController from '../controllers/EmployerJobApplicationController';
 import employerCandidateScreeningController from '../controllers/EmployerCandidateScreeningController';
 import employerCandidateScreeningScoreController from '../controllers/EmployerCandidateScreeningScoreController';
+import employerCandidateScreeningGapController from '../controllers/EmployerCandidateScreeningGapController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2349,6 +2350,50 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateScreeningScoreController.getScoreForScreening
+);
+
+// ============================================================================
+// Candidate Skill & Requirement Gap Analysis (19C) — a deterministic
+// breakdown derived from an already-COMPLETED 19A screening's own
+// persisted result, its 19B explainable score (required to already exist),
+// and the exact finalized JD snapshot the screening was run against. No AI
+// call, no ranking (19D), no shortlist automation (19E), no remediation/
+// training plan generation. Reads use ORGANIZATION_VIEW and never
+// calculate; generation uses INTERVIEWS_MANAGE and is blocked on an
+// archived organization or archived application. Deterministic, so
+// generation is idempotent: an existing gap analysis for the current
+// screening is returned as-is, never recalculated.
+// ============================================================================
+
+router.post(
+  '/:organizationId/applications/:applicationId/screening/gaps',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateScreeningGapController.generateGaps
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/screening/gaps',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateScreeningGapController.getGaps
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/screenings/:screeningId/gaps',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...screeningIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateScreeningGapController.getGapsForScreening
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
