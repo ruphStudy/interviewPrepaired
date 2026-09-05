@@ -48,6 +48,7 @@ import employerHiringEvidenceMatrixController from '../controllers/EmployerHirin
 import employerHiringFollowUpPlanController from '../controllers/EmployerHiringFollowUpPlanController';
 import employerHiringAssessmentReportController from '../controllers/EmployerHiringAssessmentReportController';
 import employerHiringReportReviewController from '../controllers/EmployerHiringReportReviewController';
+import employerHiringAssessmentFinalizationController from '../controllers/EmployerHiringAssessmentFinalizationController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2812,6 +2813,29 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerHiringReportReviewController.upsertReview
+);
+
+// POST/GET .../interview-session/finalization (22E) — one immutable record
+// pinning the completed Sprint 21/22 assessment evidence package for
+// downstream Sprint 23 work. NOT a hire/reject decision.
+router.post(
+  '/:organizationId/applications/:applicationId/interview-session/finalization',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringAssessmentFinalizationController.createFinalization
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/finalization',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringAssessmentFinalizationController.getFinalization
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

@@ -1637,6 +1637,69 @@ export interface HiringReportReviewSummary {
 export type GetHiringReportReviewSummaryResponse = ApiEnvelope<{ reviewSummary: HiringReportReviewSummary | null }>;
 export type UpsertHiringReportReviewResponse = ApiEnvelope<{ reviewSummary: HiringReportReviewSummary }>;
 
+// ============================================================================
+// Employer Hiring Assessment Finalization — one immutable record pinning
+// the completed Sprint 21/22 assessment evidence package for downstream
+// Sprint 23 work (22E). Workflow readiness only — NOT a hire/reject
+// decision; never exposed to the candidate.
+// ============================================================================
+
+export interface FinalizationReadinessChecklist {
+  assessmentEvaluated: boolean;
+  assessmentResultReady: boolean;
+  evidenceReady: boolean;
+  followUpReadyOrNotRequired: boolean;
+  reportReady: boolean;
+  currentUserReviewed: boolean;
+  canFinalize: boolean;
+}
+
+export interface FinalizationEvidenceSummary {
+  strongCount: number;
+  sufficientCount: number;
+  partialCount: number;
+  insufficientCount: number;
+  followUpCompetencyCount: number;
+  criticalFollowUpCount: number;
+}
+
+export interface FinalizationReviewSummary {
+  eligibleReviewerCount: number;
+  reviewedCount: number;
+}
+
+export interface FinalizationSnapshot {
+  overallScore: number;
+  averageRubricScore: number;
+  competencyCoveragePercent: number;
+  assessedWeight: number;
+  evidenceSummary: FinalizationEvidenceSummary;
+  followUpQuestionCount: number;
+  reviewSummary: FinalizationReviewSummary;
+  calculationVersion: string;
+}
+
+export interface EmployerHiringAssessmentFinalization {
+  id: string;
+  interviewId: string;
+  blueprintId: string;
+  rubricId: string;
+  assessmentResultId: string;
+  evidenceMatrixId: string;
+  followUpPlanId?: string;
+  reportId: string;
+  finalizedByMembershipId: string;
+  finalizedAt: string;
+  snapshot: FinalizationSnapshot;
+  createdAt: string;
+}
+
+export type GetHiringAssessmentFinalizationResponse = ApiEnvelope<{
+  finalization: EmployerHiringAssessmentFinalization | null;
+  checklist: FinalizationReadinessChecklist;
+}>;
+export type CreateHiringAssessmentFinalizationResponse = ApiEnvelope<{ finalization: EmployerHiringAssessmentFinalization }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2791,6 +2854,35 @@ class EmployerApiService {
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to download hiring report');
+    }
+  }
+
+  async getHiringAssessmentFinalization(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetHiringAssessmentFinalizationResponse> {
+    try {
+      const response = await this.api.get<GetHiringAssessmentFinalizationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/finalization`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load finalization readiness');
+    }
+  }
+
+  /** Idempotent — an existing finalization is returned as-is, never recalculated. */
+  async createHiringAssessmentFinalization(
+    organizationId: string,
+    applicationId: string
+  ): Promise<CreateHiringAssessmentFinalizationResponse> {
+    try {
+      const response = await this.api.post<CreateHiringAssessmentFinalizationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/finalization`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to finalize assessment package');
     }
   }
 }

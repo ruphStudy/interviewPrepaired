@@ -28,6 +28,8 @@ import employerApi, {
   EmployerHiringFollowUpPlan,
   EmployerHiringAssessmentReportDetail,
   HiringReportReviewSummary,
+  FinalizationReadinessChecklist,
+  EmployerHiringAssessmentFinalization,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -786,6 +788,13 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [downloadReportError, setDownloadReportError] = useState<string | null>(null);
 
+  const [finalization, setFinalization] = useState<EmployerHiringAssessmentFinalization | null>(null);
+  const [finalizationChecklist, setFinalizationChecklist] = useState<FinalizationReadinessChecklist | null>(null);
+  const [finalizationLoading, setFinalizationLoading] = useState(false);
+  const [finalizationError, setFinalizationError] = useState<string | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1339,6 +1348,42 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setDownloadReportError(err.message || 'Failed to download hiring report');
     } finally {
       setDownloadingReport(false);
+    }
+  };
+
+  const fetchFinalization = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setFinalizationLoading(true);
+    setFinalizationError(null);
+    try {
+      const response = await employerApi.getHiringAssessmentFinalization(organizationId, applicationId);
+      setFinalization(response.data.finalization);
+      setFinalizationChecklist(response.data.checklist);
+    } catch (err: any) {
+      setFinalizationError(err.message || 'Failed to load finalization readiness');
+    } finally {
+      setFinalizationLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && isReportCompleted) {
+      fetchFinalization();
+    }
+  }, [isSyncing, activeOrganization, canView, isReportCompleted, fetchFinalization]);
+
+  const handleFinalize = async () => {
+    if (!organizationId || !applicationId) return;
+    if (!window.confirm('Finalization locks this assessment package for downstream comparison. It does not make a hiring decision.')) return;
+    setFinalizing(true);
+    setFinalizeError(null);
+    try {
+      const response = await employerApi.createHiringAssessmentFinalization(organizationId, applicationId);
+      setFinalization(response.data.finalization);
+    } catch (err: any) {
+      setFinalizeError(err.message || 'Failed to finalize assessment package');
+    } finally {
+      setFinalizing(false);
     }
   };
 
@@ -2713,6 +2758,70 @@ const EmployerApplicationDetailPage: React.FC = () => {
                               : reviewSummary.currentUserReview?.status === 'reviewed'
                               ? 'Update Review'
                               : 'Mark as Reviewed'}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+
+                  {isReportCompleted && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Assessment Finalization</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">Finalized Assessment Package — employer only.</p>
+
+                      {finalizationLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : finalizationError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{finalizationError}</p>
+                          <button onClick={fetchFinalization} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : finalization ? (
+                        <div className="space-y-3">
+                          <p className="text-sm text-mentor-success font-medium">Finalized {formatDateTime(finalization.finalizedAt)}</p>
+                          <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Overall Score</dt>
+                              <dd className="text-sm text-mentor-text">{finalization.snapshot.overallScore} / 100</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Competency Coverage</dt>
+                              <dd className="text-sm text-mentor-text">{finalization.snapshot.competencyCoveragePercent}%</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Follow-up Questions</dt>
+                              <dd className="text-sm text-mentor-text">{finalization.snapshot.followUpQuestionCount}</dd>
+                            </div>
+                          </dl>
+                          <p className="text-xs text-mentor-text-secondary">
+                            Evidence: {finalization.snapshot.evidenceSummary.strongCount} strong &middot;{' '}
+                            {finalization.snapshot.evidenceSummary.sufficientCount} sufficient &middot;{' '}
+                            {finalization.snapshot.evidenceSummary.partialCount} partial &middot;{' '}
+                            {finalization.snapshot.evidenceSummary.insufficientCount} insufficient
+                          </p>
+                          <p className="text-xs text-mentor-text-secondary">
+                            Reviewed: {finalization.snapshot.reviewSummary.reviewedCount} / {finalization.snapshot.reviewSummary.eligibleReviewerCount}
+                          </p>
+                        </div>
+                      ) : finalizationChecklist ? (
+                        <div className="space-y-2">
+                          <ul className="text-sm text-mentor-text-secondary space-y-1">
+                            <li>{finalizationChecklist.assessmentEvaluated ? '✓' : '○'} Assessment evaluated</li>
+                            <li>{finalizationChecklist.assessmentResultReady ? '✓' : '○'} Assessment result generated</li>
+                            <li>{finalizationChecklist.evidenceReady ? '✓' : '○'} Evidence analysis generated</li>
+                            <li>{finalizationChecklist.followUpReadyOrNotRequired ? '✓' : '○'} Follow-up plan ready / not required</li>
+                            <li>{finalizationChecklist.reportReady ? '✓' : '○'} Hiring report generated</li>
+                            <li>{finalizationChecklist.currentUserReviewed ? '✓' : '○'} Your review completed</li>
+                          </ul>
+                          {finalizeError && <p className="text-sm text-mentor-error">{finalizeError}</p>}
+                          <button
+                            onClick={handleFinalize}
+                            disabled={!finalizationChecklist.canFinalize || finalizing}
+                            className="btn btn-primary"
+                          >
+                            {finalizing ? 'Finalizing...' : 'Finalize Assessment Package'}
                           </button>
                         </div>
                       ) : null}
