@@ -45,6 +45,7 @@ import employerInterviewInvitationController from '../controllers/EmployerInterv
 import employerInterviewSessionController from '../controllers/EmployerInterviewSessionController';
 import employerHiringAssessmentResultController from '../controllers/EmployerHiringAssessmentResultController';
 import employerHiringEvidenceMatrixController from '../controllers/EmployerHiringEvidenceMatrixController';
+import employerHiringFollowUpPlanController from '../controllers/EmployerHiringFollowUpPlanController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2727,6 +2728,29 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringEvidenceMatrixController.getMatrix
+);
+
+// POST/GET .../interview-session/follow-up-plan (22B) — employer-only
+// follow-up question SUGGESTIONS for competencies the 22A evidence matrix
+// marked requiresFollowUp. Never appended to Interview.questions.
+router.post(
+  '/:organizationId/applications/:applicationId/interview-session/follow-up-plan',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringFollowUpPlanController.createPlan
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/follow-up-plan',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringFollowUpPlanController.getPlan
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

@@ -1514,6 +1514,53 @@ export interface EmployerHiringEvidenceMatrix {
 export type CreateEmployerHiringEvidenceMatrixResponse = ApiEnvelope<{ evidence: EmployerHiringEvidenceMatrix }>;
 export type GetEmployerHiringEvidenceMatrixResponse = ApiEnvelope<{ evidence: EmployerHiringEvidenceMatrix | null }>;
 
+// ============================================================================
+// Employer Hiring Follow-Up Plan — employer-only follow-up question
+// SUGGESTIONS for competencies the 22A evidence matrix marked
+// requiresFollowUp (Sprint 22B). Never appended to the candidate's
+// completed interview; never exposed to the candidate.
+// ============================================================================
+
+export type FollowUpPlanStatus = 'processing' | 'completed' | 'failed';
+
+export interface FollowUpQuestion {
+  question: string;
+  objective: string;
+  evidenceToValidate: string[];
+  difficulty: 'easy' | 'medium' | 'hard';
+}
+
+export interface FollowUpCompetency {
+  competencyName: string;
+  importance: string;
+  currentScore: number;
+  evidenceStatus: string;
+  reasons: string[];
+  questions: FollowUpQuestion[];
+}
+
+export interface FollowUpPlan {
+  competencies: FollowUpCompetency[];
+  totalQuestions: number;
+  generationVersion: string;
+}
+
+export interface EmployerHiringFollowUpPlan {
+  id: string;
+  interviewId: string;
+  blueprintId: string;
+  rubricId: string;
+  assessmentResultId: string;
+  evidenceMatrixId: string;
+  status: FollowUpPlanStatus;
+  plan?: FollowUpPlan;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateEmployerHiringFollowUpPlanResponse = ApiEnvelope<{ followUpPlan: EmployerHiringFollowUpPlan }>;
+export type GetEmployerHiringFollowUpPlanResponse = ApiEnvelope<{ followUpPlan: EmployerHiringFollowUpPlan | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2558,6 +2605,35 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load evidence analysis');
+    }
+  }
+
+  /** Idempotent — an existing COMPLETED plan is returned as-is, never recomputed. */
+  async createEmployerHiringFollowUpPlan(
+    organizationId: string,
+    applicationId: string
+  ): Promise<CreateEmployerHiringFollowUpPlanResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerHiringFollowUpPlanResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/follow-up-plan`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate follow-up plan');
+    }
+  }
+
+  async getEmployerHiringFollowUpPlan(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerHiringFollowUpPlanResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringFollowUpPlanResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/follow-up-plan`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load follow-up plan');
     }
   }
 }

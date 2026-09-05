@@ -25,6 +25,7 @@ import employerApi, {
   EmployerInterviewSessionAnswers,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
+  EmployerHiringFollowUpPlan,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -761,6 +762,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [generatingEvidence, setGeneratingEvidence] = useState(false);
   const [generateEvidenceError, setGenerateEvidenceError] = useState<string | null>(null);
 
+  const [followUpPlan, setFollowUpPlan] = useState<EmployerHiringFollowUpPlan | null>(null);
+  const [followUpPlanLoading, setFollowUpPlanLoading] = useState(false);
+  const [followUpPlanError, setFollowUpPlanError] = useState<string | null>(null);
+  const [generatingFollowUp, setGeneratingFollowUp] = useState(false);
+  const [generateFollowUpError, setGenerateFollowUpError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1192,6 +1199,42 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setGenerateEvidenceError(err.message || 'Failed to generate evidence analysis');
     } finally {
       setGeneratingEvidence(false);
+    }
+  };
+
+  const needsFollowUp = (evidenceMatrix?.matrix.summary.followUpCompetencyCount ?? 0) > 0;
+
+  const fetchFollowUpPlan = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setFollowUpPlanLoading(true);
+    setFollowUpPlanError(null);
+    try {
+      const response = await employerApi.getEmployerHiringFollowUpPlan(organizationId, applicationId);
+      setFollowUpPlan(response.data.followUpPlan);
+    } catch (err: any) {
+      setFollowUpPlanError(err.message || 'Failed to load follow-up plan');
+    } finally {
+      setFollowUpPlanLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && needsFollowUp) {
+      fetchFollowUpPlan();
+    }
+  }, [isSyncing, activeOrganization, canView, needsFollowUp, fetchFollowUpPlan]);
+
+  const handleGenerateFollowUp = async () => {
+    if (!organizationId || !applicationId) return;
+    setGeneratingFollowUp(true);
+    setGenerateFollowUpError(null);
+    try {
+      const response = await employerApi.createEmployerHiringFollowUpPlan(organizationId, applicationId);
+      setFollowUpPlan(response.data.followUpPlan);
+    } catch (err: any) {
+      setGenerateFollowUpError(err.message || 'Failed to generate follow-up plan');
+    } finally {
+      setGeneratingFollowUp(false);
     }
   };
 
@@ -2342,6 +2385,78 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           {generateEvidenceError && <p className="text-sm text-mentor-error mb-2">{generateEvidenceError}</p>}
                           <button onClick={handleGenerateEvidence} disabled={generatingEvidence} className="btn btn-primary">
                             {generatingEvidence ? 'Generating...' : 'Generate Evidence Analysis'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {evidenceMatrix && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Follow-up Questions</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">Employer Follow-up Plan — not visible to candidate.</p>
+
+                      {!needsFollowUp ? (
+                        <p className="text-sm text-mentor-text-secondary">No additional evidence follow-up is currently required.</p>
+                      ) : followUpPlanLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : followUpPlanError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{followUpPlanError}</p>
+                          <button onClick={fetchFollowUpPlan} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : followUpPlan?.status === 'processing' ? (
+                        <p className="text-sm text-mentor-text-secondary">Generating follow-up questions...</p>
+                      ) : followUpPlan?.status === 'failed' ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">Follow-up generation failed.</p>
+                          {generateFollowUpError && <p className="text-sm text-mentor-error mb-2">{generateFollowUpError}</p>}
+                          <button onClick={handleGenerateFollowUp} disabled={generatingFollowUp} className="btn btn-secondary">
+                            {generatingFollowUp ? 'Retrying...' : 'Retry'}
+                          </button>
+                        </div>
+                      ) : followUpPlan?.status === 'completed' && followUpPlan.plan ? (
+                        <div className="space-y-3">
+                          {followUpPlan.plan.competencies.length === 0 ? (
+                            <p className="text-sm text-mentor-text-secondary">No additional evidence follow-up is currently required.</p>
+                          ) : (
+                            followUpPlan.plan.competencies.map((c) => (
+                              <div key={c.competencyName} className="surface-muted p-3">
+                                <p className="text-sm text-mentor-text">
+                                  {c.competencyName} <span className="text-xs text-mentor-text-muted capitalize">({c.importance})</span>
+                                </p>
+                                <p className="text-xs text-mentor-text-secondary mt-1">
+                                  Current score: {c.currentScore}/5 &middot; {c.evidenceStatus}
+                                </p>
+                                {c.reasons.length > 0 && (
+                                  <p className="text-xs text-mentor-warning mt-1">Reasons: {c.reasons.join('; ')}</p>
+                                )}
+                                <ul className="mt-2 pt-2 border-t border-mentor-border space-y-2">
+                                  {c.questions.map((q, idx) => (
+                                    <li key={idx}>
+                                      <p className="text-sm text-mentor-text">{q.question}</p>
+                                      <p className="text-xs text-mentor-text-muted mt-0.5">
+                                        Objective: {q.objective} &middot; Difficulty: {q.difficulty}
+                                      </p>
+                                      {q.evidenceToValidate.length > 0 && (
+                                        <p className="text-xs text-mentor-text-muted mt-0.5">
+                                          Validates: {q.evidenceToValidate.join('; ')}
+                                        </p>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : (
+                        <div>
+                          {generateFollowUpError && <p className="text-sm text-mentor-error mb-2">{generateFollowUpError}</p>}
+                          <button onClick={handleGenerateFollowUp} disabled={generatingFollowUp} className="btn btn-primary">
+                            {generatingFollowUp ? 'Generating...' : 'Generate Follow-up Questions'}
                           </button>
                         </div>
                       )}
