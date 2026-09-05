@@ -26,6 +26,7 @@ import employerApi, {
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
+  EmployerHiringAssessmentReportDetail,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -768,6 +769,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [generatingFollowUp, setGeneratingFollowUp] = useState(false);
   const [generateFollowUpError, setGenerateFollowUpError] = useState<string | null>(null);
 
+  const [hiringReport, setHiringReport] = useState<EmployerHiringAssessmentReportDetail | null>(null);
+  const [hiringReportLoading, setHiringReportLoading] = useState(false);
+  const [hiringReportError, setHiringReportError] = useState<string | null>(null);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [generateReportError, setGenerateReportError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -1235,6 +1242,42 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setGenerateFollowUpError(err.message || 'Failed to generate follow-up plan');
     } finally {
       setGeneratingFollowUp(false);
+    }
+  };
+
+  const reportPrerequisitesReady = Boolean(evidenceMatrix) && (!needsFollowUp || followUpPlan?.status === 'completed');
+
+  const fetchHiringReport = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setHiringReportLoading(true);
+    setHiringReportError(null);
+    try {
+      const response = await employerApi.getEmployerHiringAssessmentReport(organizationId, applicationId);
+      setHiringReport(response.data.hiringReport);
+    } catch (err: any) {
+      setHiringReportError(err.message || 'Failed to load hiring report');
+    } finally {
+      setHiringReportLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && reportPrerequisitesReady) {
+      fetchHiringReport();
+    }
+  }, [isSyncing, activeOrganization, canView, reportPrerequisitesReady, fetchHiringReport]);
+
+  const handleGenerateReport = async () => {
+    if (!organizationId || !applicationId) return;
+    setGeneratingReport(true);
+    setGenerateReportError(null);
+    try {
+      const response = await employerApi.createEmployerHiringAssessmentReport(organizationId, applicationId);
+      setHiringReport(response.data.hiringReport);
+    } catch (err: any) {
+      setGenerateReportError(err.message || 'Failed to generate hiring report');
+    } finally {
+      setGeneratingReport(false);
     }
   };
 
@@ -2457,6 +2500,97 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           {generateFollowUpError && <p className="text-sm text-mentor-error mb-2">{generateFollowUpError}</p>}
                           <button onClick={handleGenerateFollowUp} disabled={generatingFollowUp} className="btn btn-primary">
                             {generatingFollowUp ? 'Generating...' : 'Generate Follow-up Questions'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {reportPrerequisitesReady && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Hiring Assessment Report</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">
+                        Employer Hiring Assessment Report — not visible to candidate.
+                      </p>
+
+                      {hiringReportLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : hiringReportError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{hiringReportError}</p>
+                          <button onClick={fetchHiringReport} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : hiringReport?.status === 'processing' ? (
+                        <p className="text-sm text-mentor-text-secondary">Generating hiring report...</p>
+                      ) : hiringReport?.status === 'failed' ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">Report generation failed.</p>
+                          {generateReportError && <p className="text-sm text-mentor-error mb-2">{generateReportError}</p>}
+                          <button onClick={handleGenerateReport} disabled={generatingReport} className="btn btn-secondary">
+                            {generatingReport ? 'Retrying...' : 'Retry'}
+                          </button>
+                        </div>
+                      ) : hiringReport?.status === 'completed' && hiringReport.report ? (
+                        <div className="space-y-4">
+                          <p className="text-sm text-mentor-text whitespace-pre-wrap">{hiringReport.report.executiveSummary}</p>
+
+                          <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Overall Score</dt>
+                              <dd className="text-sm text-mentor-text">{hiringReport.report.overallScore} / 100</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Avg Rubric Score</dt>
+                              <dd className="text-sm text-mentor-text">{hiringReport.report.averageRubricScore} / 5</dd>
+                            </div>
+                            <div>
+                              <dt className="text-xs font-medium text-mentor-text-muted mb-1">Competency Coverage</dt>
+                              <dd className="text-sm text-mentor-text">{hiringReport.report.competencyCoveragePercent}%</dd>
+                            </div>
+                          </dl>
+
+                          {hiringReport.report.competencySummary.length > 0 && (
+                            <ul className="space-y-2">
+                              {hiringReport.report.competencySummary.map((c) => (
+                                <li key={c.competencyName} className="surface-muted p-3">
+                                  <p className="text-sm text-mentor-text">
+                                    {c.competencyName} <span className="text-xs text-mentor-text-muted capitalize">({c.importance})</span>
+                                  </p>
+                                  <p className="text-xs text-mentor-text-secondary mt-1 capitalize">
+                                    Score: {c.score}/5 &middot; {c.evidenceStatus}
+                                  </p>
+                                  {c.summary && <p className="text-xs text-mentor-text-secondary mt-1">{c.summary}</p>}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          {hiringReport.report.demonstratedStrengths.length > 0 && (
+                            <p className="text-sm text-mentor-success">
+                              Demonstrated Strengths: {hiringReport.report.demonstratedStrengths.join('; ')}
+                            </p>
+                          )}
+                          {hiringReport.report.evidenceGaps.length > 0 && (
+                            <p className="text-sm text-mentor-warning">Evidence Gaps: {hiringReport.report.evidenceGaps.join('; ')}</p>
+                          )}
+                          {hiringReport.report.followUpPriorities.length > 0 && (
+                            <p className="text-sm text-mentor-text-secondary">
+                              Follow-up Priorities: {hiringReport.report.followUpPriorities.join('; ')}
+                            </p>
+                          )}
+                          {hiringReport.report.interviewerNotes.length > 0 && (
+                            <p className="text-sm text-mentor-text-secondary">
+                              Interviewer Notes: {hiringReport.report.interviewerNotes.join('; ')}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div>
+                          {generateReportError && <p className="text-sm text-mentor-error mb-2">{generateReportError}</p>}
+                          <button onClick={handleGenerateReport} disabled={generatingReport} className="btn btn-primary">
+                            {generatingReport ? 'Generating...' : 'Generate Hiring Report'}
                           </button>
                         </div>
                       )}

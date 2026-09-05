@@ -1561,6 +1561,52 @@ export interface EmployerHiringFollowUpPlan {
 export type CreateEmployerHiringFollowUpPlanResponse = ApiEnvelope<{ followUpPlan: EmployerHiringFollowUpPlan }>;
 export type GetEmployerHiringFollowUpPlanResponse = ApiEnvelope<{ followUpPlan: EmployerHiringFollowUpPlan | null }>;
 
+// ============================================================================
+// Employer Hiring Assessment Report — one immutable, employer-only
+// narrative report built from 21E result + 22A matrix + 22B follow-up plan
+// (Sprint 22C). No hire/reject recommendation; never candidate-facing.
+// ============================================================================
+
+export type HiringReportStatus = 'processing' | 'completed' | 'failed';
+
+export interface HiringReportCompetencySummary {
+  competencyName: string;
+  importance: string;
+  score: number;
+  evidenceStatus: string;
+  summary: string;
+}
+
+export interface HiringAssessmentReport {
+  executiveSummary: string;
+  overallScore: number;
+  averageRubricScore: number;
+  competencyCoveragePercent: number;
+  competencySummary: HiringReportCompetencySummary[];
+  demonstratedStrengths: string[];
+  evidenceGaps: string[];
+  followUpPriorities: string[];
+  interviewerNotes: string[];
+  generationVersion: string;
+}
+
+export interface EmployerHiringAssessmentReportDetail {
+  id: string;
+  interviewId: string;
+  blueprintId: string;
+  rubricId: string;
+  assessmentResultId: string;
+  evidenceMatrixId: string;
+  followUpPlanId?: string;
+  status: HiringReportStatus;
+  report?: HiringAssessmentReport;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateEmployerHiringAssessmentReportResponse = ApiEnvelope<{ hiringReport: EmployerHiringAssessmentReportDetail }>;
+export type GetEmployerHiringAssessmentReportResponse = ApiEnvelope<{ hiringReport: EmployerHiringAssessmentReportDetail | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2634,6 +2680,35 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load follow-up plan');
+    }
+  }
+
+  /** Idempotent — an existing COMPLETED report is returned as-is, never regenerated. */
+  async createEmployerHiringAssessmentReport(
+    organizationId: string,
+    applicationId: string
+  ): Promise<CreateEmployerHiringAssessmentReportResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerHiringAssessmentReportResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/report`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate hiring report');
+    }
+  }
+
+  async getEmployerHiringAssessmentReport(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerHiringAssessmentReportResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringAssessmentReportResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-session/report`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load hiring report');
     }
   }
 }

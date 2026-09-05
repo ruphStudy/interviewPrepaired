@@ -46,6 +46,7 @@ import employerInterviewSessionController from '../controllers/EmployerInterview
 import employerHiringAssessmentResultController from '../controllers/EmployerHiringAssessmentResultController';
 import employerHiringEvidenceMatrixController from '../controllers/EmployerHiringEvidenceMatrixController';
 import employerHiringFollowUpPlanController from '../controllers/EmployerHiringFollowUpPlanController';
+import employerHiringAssessmentReportController from '../controllers/EmployerHiringAssessmentReportController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2751,6 +2752,29 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringFollowUpPlanController.getPlan
+);
+
+// POST/GET .../interview-session/report (22C) — one immutable, employer-only
+// narrative report built from 21E result + 22A matrix + 22B follow-up plan.
+// No hire/reject recommendation, never candidate-facing.
+router.post(
+  '/:organizationId/applications/:applicationId/interview-session/report',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringAssessmentReportController.createReport
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-session/report',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringAssessmentReportController.getReport
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
