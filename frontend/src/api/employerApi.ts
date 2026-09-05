@@ -1102,6 +1102,48 @@ export interface JobRankingFilters {
 
 export type GetEmployerJobRankingResponse = ApiEnvelope<JobRanking>;
 
+// ============================================================================
+// Employer Shortlist Workflow (Sprint 19E) — an explicit recruiter action
+// only, never automatic. Reuses the existing 18D application status
+// transition (screening -> shortlisted) under the hood; this is purely an
+// audit trail of which screening/score supported the decision.
+// ============================================================================
+
+export type EmployerCandidateShortlistDecisionValue = 'shortlisted';
+
+export interface ApplicationShortlistDecision {
+  id: string;
+  jobId: string;
+  applicationId: string;
+  candidateId: string;
+  screeningId: string;
+  screeningScoreId: string;
+  explainableScore: number;
+  decision: EmployerCandidateShortlistDecisionValue;
+  decidedByMembershipId: string;
+  decidedAt: string;
+  createdAt: string;
+}
+
+export interface JobShortlistCandidateRef {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+export interface JobShortlistRow {
+  applicationId: string;
+  candidate: JobShortlistCandidateRef | null;
+  explainableScore: number | null;
+  shortlistedAt: string | null;
+  applicationStatus: EmployerJobApplicationStatus;
+}
+
+export type ShortlistApplicationResponse = ApiEnvelope<{ decision: ApplicationShortlistDecision }>;
+export type GetApplicationShortlistResponse = ApiEnvelope<{ decision: ApplicationShortlistDecision | null }>;
+export type GetEmployerJobShortlistResponse = ApiEnvelope<{ shortlisted: JobShortlistRow[] }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1891,6 +1933,40 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load candidate ranking');
+    }
+  }
+
+  // ---- Employer Shortlist Workflow (Sprint 19E) ----
+
+  /** An explicit recruiter action — never automatic. Transitions the application screening -> shortlisted under the hood (18D) and records which screening/score supported the decision. */
+  async shortlistApplication(organizationId: string, applicationId: string): Promise<ShortlistApplicationResponse> {
+    try {
+      const response = await this.api.post<ShortlistApplicationResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/shortlist`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to shortlist candidate');
+    }
+  }
+
+  async getApplicationShortlist(organizationId: string, applicationId: string): Promise<GetApplicationShortlistResponse> {
+    try {
+      const response = await this.api.get<GetApplicationShortlistResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/shortlist`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load shortlist decision');
+    }
+  }
+
+  async getEmployerJobShortlist(organizationId: string, jobId: string): Promise<GetEmployerJobShortlistResponse> {
+    try {
+      const response = await this.api.get<GetEmployerJobShortlistResponse>(`/organizations/${organizationId}/jobs/${jobId}/shortlist`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load job shortlist');
     }
   }
 }

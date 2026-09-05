@@ -17,6 +17,7 @@ import employerApi, {
   EmployerCandidate,
   JobRanking,
   JobRankingFilters,
+  JobShortlistRow,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
   EMPLOYER_JOB_STATUS_TRANSITIONS,
@@ -39,6 +40,7 @@ import {
   Briefcase,
   X,
   ListOrdered,
+  Star,
 } from 'lucide-react';
 
 const APPLICATIONS_PAGE_LIMIT = 20;
@@ -246,6 +248,13 @@ const EmployerJobDetailPage: React.FC = () => {
   const [rankingSearchInput, setRankingSearchInput] = useState('');
   const [appliedRankingFilters, setAppliedRankingFilters] = useState<JobRankingFilters>({});
 
+  const [shortlistingApplicationId, setShortlistingApplicationId] = useState<string | null>(null);
+  const [shortlistActionError, setShortlistActionError] = useState<string | null>(null);
+
+  const [jobShortlist, setJobShortlist] = useState<JobShortlistRow[]>([]);
+  const [jobShortlistLoading, setJobShortlistLoading] = useState(true);
+  const [jobShortlistError, setJobShortlistError] = useState<string | null>(null);
+
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState('');
   const [candidateSearchResults, setCandidateSearchResults] = useState<EmployerCandidate[]>([]);
@@ -424,11 +433,48 @@ const EmployerJobDetailPage: React.FC = () => {
     setAppliedRankingFilters({});
   };
 
+  const fetchJobShortlist = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setJobShortlistLoading(true);
+    setJobShortlistError(null);
+    try {
+      const response = await employerApi.getEmployerJobShortlist(organizationId, jobId);
+      setJobShortlist(response.data.shortlisted);
+    } catch (err: any) {
+      setJobShortlistError(err.message || 'Failed to load shortlisted candidates');
+    } finally {
+      setJobShortlistLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchJobShortlist();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchJobShortlist]);
+
+  const handleShortlist = async (applicationId: string, candidateName: string) => {
+    if (!organizationId) return;
+    if (!window.confirm(`Shortlist ${candidateName} for this job?`)) return;
+    setShortlistActionError(null);
+    setShortlistingApplicationId(applicationId);
+    try {
+      await employerApi.shortlistApplication(organizationId, applicationId);
+      // No optimistic update — refetch both the ranking table and the shortlist section from the server.
+      await Promise.all([fetchRanking(), fetchJobShortlist()]);
+    } catch (err: any) {
+      setShortlistActionError(err.message || 'Failed to shortlist candidate');
+    } finally {
+      setShortlistingApplicationId(null);
+    }
+  };
+
   const applicationsTotalPages = Math.max(1, Math.ceil(applicationsTotal / APPLICATIONS_PAGE_LIMIT));
   const appliedCandidateIds = new Set(applications.map((a) => a.candidateId));
 
   const canAddCandidate =
     canManage && !!job && job.status !== 'archived' && job.status !== 'closed';
+  const canShortlist = canManage && job?.status !== 'archived';
 
   const handleOpenAddCandidate = () => {
     setShowAddCandidate(true);
@@ -1534,6 +1580,7 @@ const EmployerJobDetailPage: React.FC = () => {
                             <th className="px-2 py-2 font-medium">Recommendation</th>
                             <th className="px-2 py-2 font-medium">Gaps</th>
                             <th className="px-2 py-2 font-medium">Applied</th>
+                            <th className="px-2 py-2 font-medium">Shortlist</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-mentor-border">
@@ -1569,10 +1616,33 @@ const EmployerJobDetailPage: React.FC = () => {
                                   {formatDate(row.scoredAt)}
                                 </Link>
                               </td>
+                              <td className="px-2 py-2.5 whitespace-nowrap">
+                                {row.applicationStatus === 'shortlisted' ? (
+                                  <span className="badge badge-success">Shortlisted</span>
+                                ) : row.applicationStatus === 'screening' && canShortlist ? (
+                                  <button
+                                    onClick={() => handleShortlist(row.applicationId, `${row.candidate.firstName} ${row.candidate.lastName}`)}
+                                    disabled={shortlistingApplicationId === row.applicationId}
+                                    className="btn btn-secondary px-3 py-1.5 text-xs"
+                                  >
+                                    <Star size={14} />
+                                    {shortlistingApplicationId === row.applicationId ? 'Shortlisting...' : 'Shortlist'}
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-mentor-text-muted">—</span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+                    </div>
+                  )}
+
+                  {shortlistActionError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mt-3">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{shortlistActionError}</p>
                     </div>
                   )}
 
@@ -1599,6 +1669,63 @@ const EmployerJobDetailPage: React.FC = () => {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <Star size={18} className="text-mentor-text-muted" />
+                Shortlisted Candidates
+              </h2>
+
+              {jobShortlistLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : jobShortlistError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{jobShortlistError}</p>
+                  <button onClick={fetchJobShortlist} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : jobShortlist.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No candidates shortlisted yet.</p>
+              ) : (
+                <div className="divide-y divide-mentor-border">
+                  {jobShortlist.map((row) => (
+                    <div key={row.applicationId} className="flex flex-col sm:flex-row sm:items-center gap-2 py-3">
+                      <div className="flex-1 min-w-0">
+                        {row.candidate ? (
+                          <Link
+                            to={`/organizations/${organizationId}/employer/candidates/${row.candidate.id}`}
+                            className="text-sm font-medium text-mentor-text hover:underline"
+                          >
+                            {row.candidate.firstName} {row.candidate.lastName}
+                          </Link>
+                        ) : (
+                          <p className="text-sm font-medium text-mentor-text">Unknown candidate</p>
+                        )}
+                        <p className="text-xs text-mentor-text-muted">{row.candidate?.email || '—'}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        {row.explainableScore !== null && (
+                          <span className="text-sm font-semibold text-mentor-text">{row.explainableScore}/100</span>
+                        )}
+                        <span className={`badge ${APPLICATION_STATUS_BADGE[row.applicationStatus]}`}>
+                          {APPLICATION_STATUS_LABELS[row.applicationStatus]}
+                        </span>
+                        <Link
+                          to={`/organizations/${organizationId}/employer/applications/${row.applicationId}`}
+                          className="text-xs text-mentor-text-muted hover:underline whitespace-nowrap"
+                        >
+                          {row.shortlistedAt ? formatDate(row.shortlistedAt) : '—'}
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </>

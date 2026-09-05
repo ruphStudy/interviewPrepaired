@@ -13,8 +13,9 @@ import employerApi, {
   ScreeningScore,
   ApplicationScreeningGap,
   ScreeningGap,
+  ApplicationShortlistDecision,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target, Calculator, GitCompareArrows } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target, Calculator, GitCompareArrows, Star } from 'lucide-react';
 
 const RECOMMENDATION_LABELS: Record<string, string> = {
   strong_match: 'Strong Match',
@@ -478,6 +479,10 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [generatingGap, setGeneratingGap] = useState(false);
   const [generateGapError, setGenerateGapError] = useState<string | null>(null);
 
+  const [shortlistDecision, setShortlistDecision] = useState<ApplicationShortlistDecision | null>(null);
+  const [shortlistDecisionLoading, setShortlistDecisionLoading] = useState(true);
+  const [shortlistDecisionError, setShortlistDecisionError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -656,6 +661,26 @@ const EmployerApplicationDetailPage: React.FC = () => {
     }
   };
 
+  const fetchShortlistDecision = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setShortlistDecisionLoading(true);
+    setShortlistDecisionError(null);
+    try {
+      const response = await employerApi.getApplicationShortlist(organizationId, applicationId);
+      setShortlistDecision(response.data.decision);
+    } catch (err: any) {
+      setShortlistDecisionError(err.message || 'Failed to load shortlist status');
+    } finally {
+      setShortlistDecisionLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchShortlistDecision();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchShortlistDecision]);
+
   const handleSaveDetails = async () => {
     if (!organizationId || !applicationId) return;
     setSaving(true);
@@ -686,9 +711,18 @@ const EmployerApplicationDetailPage: React.FC = () => {
     setStatusActionPending(targetStatus);
     try {
       // No optimistic mutation — `application` only ever updates from the server's own response.
-      const response = await employerApi.updateApplicationStatus(organizationId, applicationId, targetStatus);
-      setApplication(response.data.application);
-      setStatusSuccess(`Status updated to ${STATUS_LABELS[response.data.application.status]}.`);
+      if (targetStatus === 'shortlisted') {
+        // Shortlisting goes through the dedicated 19E workflow rather than
+        // the bare generic transition — it enforces the current screening/
+        // score eligibility and records an audit decision, then performs
+        // this exact same status transition under the hood.
+        await employerApi.shortlistApplication(organizationId, applicationId);
+        await Promise.all([fetchApplication(), fetchShortlistDecision()]);
+      } else {
+        const response = await employerApi.updateApplicationStatus(organizationId, applicationId, targetStatus);
+        setApplication(response.data.application);
+      }
+      setStatusSuccess(`Status updated to ${STATUS_LABELS[targetStatus]}.`);
       setTimeout(() => setStatusSuccess(null), 3000);
     } catch (err: any) {
       setStatusError(err.message || 'Failed to update application status');
@@ -1119,6 +1153,27 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 )}
               </div>
             )}
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-4">
+                <Star size={18} className="text-mentor-text-muted" />
+                Shortlist Status
+              </h2>
+              {shortlistDecisionLoading ? (
+                <div className="p-4 text-center">
+                  <Loader2 className="w-5 h-5 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : shortlistDecisionError ? (
+                <p className="text-sm text-mentor-error">{shortlistDecisionError}</p>
+              ) : shortlistDecision ? (
+                <p className="text-sm text-mentor-text">
+                  Shortlisted on {formatDateTime(shortlistDecision.decidedAt)} by membership {shortlistDecision.decidedByMembershipId}
+                  {' · '}score {shortlistDecision.explainableScore}/100
+                </p>
+              ) : (
+                <p className="text-sm text-mentor-text-secondary">Not shortlisted.</p>
+              )}
+            </div>
           </>
         )}
       </main>

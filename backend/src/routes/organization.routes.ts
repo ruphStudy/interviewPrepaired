@@ -38,6 +38,7 @@ import employerCandidateScreeningController from '../controllers/EmployerCandida
 import employerCandidateScreeningScoreController from '../controllers/EmployerCandidateScreeningScoreController';
 import employerCandidateScreeningGapController from '../controllers/EmployerCandidateScreeningGapController';
 import employerCandidateRankingController from '../controllers/EmployerCandidateRankingController';
+import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2421,6 +2422,47 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateRankingController.getJobRanking
+);
+
+// ============================================================================
+// Employer Shortlist Workflow (19E) — an explicit recruiter action only;
+// NEVER automatic. Reuses the EXISTING 18D application lifecycle
+// (screening -> shortlisted, via EmployerJobApplicationService itself) and
+// the EXISTING 19A/19B services to resolve the CURRENT applicable
+// screening/score — no new scoring formula. Reads use ORGANIZATION_VIEW
+// (readable even on an archived organization/application); the shortlist
+// mutation uses INTERVIEWS_MANAGE and is blocked on an archived
+// organization, job, candidate, or application.
+// ============================================================================
+
+router.post(
+  '/:organizationId/applications/:applicationId/shortlist',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateShortlistController.shortlistApplication
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/shortlist',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateShortlistController.getApplicationShortlist
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId/shortlist',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateShortlistController.getJobShortlist
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
