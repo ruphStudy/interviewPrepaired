@@ -40,6 +40,7 @@ import employerCandidateScreeningGapController from '../controllers/EmployerCand
 import employerCandidateRankingController from '../controllers/EmployerCandidateRankingController';
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
 import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
+import employerInterviewCompetencyRubricController from '../controllers/EmployerInterviewCompetencyRubricController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2508,6 +2509,50 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerInterviewBlueprintController.getBlueprintHistory
+);
+
+// ============================================================================
+// Interview Competency Coverage / Evaluation Rubric (20B) — a
+// DETERMINISTIC (no AI) transformation of a COMPLETED 20A blueprint + the
+// exact finalized JD competencies it was generated from into an immutable
+// interviewer evaluation rubric. Guides interviewer evaluation only —
+// never a candidate score, never final candidate-facing questions, no
+// interview session/invitation. Reads use ORGANIZATION_VIEW (readable
+// even on an archived organization/application); the generate mutation
+// uses INTERVIEWS_MANAGE and requires a completed current 20A blueprint.
+// ============================================================================
+
+const blueprintIdValidation = [param('blueprintId').isMongoId().withMessage('Invalid blueprint ID')];
+
+router.post(
+  '/:organizationId/applications/:applicationId/interview-blueprint/rubric',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewCompetencyRubricController.generateRubric
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-blueprint/rubric',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewCompetencyRubricController.getCurrentRubric
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-blueprints/:blueprintId/rubric',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...blueprintIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewCompetencyRubricController.getRubricForBlueprint
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

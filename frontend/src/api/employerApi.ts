@@ -1220,6 +1220,65 @@ export interface ApplicationInterviewBlueprint {
 export type GenerateEmployerInterviewBlueprintResponse = ApiEnvelope<{ blueprint: ApplicationInterviewBlueprint }>;
 export type GetEmployerInterviewBlueprintResponse = ApiEnvelope<{ blueprint: ApplicationInterviewBlueprint | null }>;
 
+// ============================================================================
+// Interview Competency Coverage / Evaluation Rubric (Sprint 20B) — a
+// DETERMINISTIC (no AI) interviewer evaluation rubric built from a
+// COMPLETED 20A blueprint + the exact finalized JD competencies. Guides
+// interviewer evaluation only — never a candidate score.
+// ============================================================================
+
+export interface RubricScoringAnchors {
+  score1: string;
+  score2: string;
+  score3: string;
+  score4: string;
+  score5: string;
+}
+
+export interface RubricCompetency {
+  competencyName: string;
+  description?: string;
+  jdWeight: number;
+  importance: EmployerJobCompetencyImportance;
+  sectionIds: string[];
+  plannedIntentCount: number;
+  evidenceSignals: string[];
+  scoringAnchors: RubricScoringAnchors;
+}
+
+export interface RubricCoverage {
+  totalCompetencies: number;
+  coveredCompetencies: number;
+  uncoveredCompetencies: string[];
+  criticalCovered: number;
+  criticalTotal: number;
+  highCovered: number;
+  highTotal: number;
+  coveragePercent: number;
+}
+
+export interface InterviewCompetencyRubric {
+  competencies: RubricCompetency[];
+  coverage: RubricCoverage;
+  calculationVersion: string;
+}
+
+export interface ApplicationInterviewRubric {
+  id: string;
+  applicationId: string;
+  jobId: string;
+  candidateId: string;
+  blueprintId: string;
+  screeningId: string;
+  jdSnapshotId: string;
+  rubric: InterviewCompetencyRubric;
+  createdByMembershipId: string;
+  createdAt: string;
+}
+
+export type GenerateEmployerInterviewRubricResponse = ApiEnvelope<{ rubric: ApplicationInterviewRubric }>;
+export type GetEmployerInterviewRubricResponse = ApiEnvelope<{ rubric: ApplicationInterviewRubric | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -2068,6 +2127,31 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load interview blueprint');
+    }
+  }
+
+  // ---- Interview Competency Coverage / Evaluation Rubric (Sprint 20B) ----
+
+  /** No AI call — a deterministic transformation of the CURRENT completed blueprint. If already generated for that exact blueprint, the backend returns it without recomputing. */
+  async generateEmployerInterviewRubric(organizationId: string, applicationId: string): Promise<GenerateEmployerInterviewRubricResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerInterviewRubricResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-blueprint/rubric`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate interview evaluation rubric');
+    }
+  }
+
+  async getEmployerInterviewRubric(organizationId: string, applicationId: string): Promise<GetEmployerInterviewRubricResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewRubricResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-blueprint/rubric`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview evaluation rubric');
     }
   }
 }

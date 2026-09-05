@@ -16,6 +16,9 @@ import employerApi, {
   ApplicationShortlistDecision,
   ApplicationInterviewBlueprint,
   InterviewBlueprint,
+  ApplicationInterviewRubric,
+  InterviewCompetencyRubric,
+  RubricScoringAnchors,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -27,7 +30,82 @@ import {
   GitCompareArrows,
   Star,
   ClipboardList,
+  ListChecks,
 } from 'lucide-react';
+
+const RUBRIC_IMPORTANCE_BADGE: Record<string, string> = {
+  critical: 'badge-warning',
+  high: 'badge-info',
+  medium: 'badge-neutral',
+  low: 'badge-neutral',
+};
+
+const RUBRIC_SCORE_KEYS = [1, 2, 3, 4, 5] as const;
+
+/** Read-only rendering of a deterministic 20B evaluation rubric — guides interviewer evaluation only, never a candidate score; the 1-5 anchors are shown as reference criteria, never as if a candidate has already been scored. */
+const RubricView: React.FC<{ rubric: InterviewCompetencyRubric }> = ({ rubric }) => (
+  <div className="space-y-5">
+    <div className="surface-muted p-4">
+      <p className="label mb-2">Coverage Summary</p>
+      <p className="text-sm text-mentor-text">
+        {rubric.coverage.coveredCompetencies}/{rubric.coverage.totalCompetencies} competencies covered ({rubric.coverage.coveragePercent}%)
+      </p>
+      <p className="text-xs text-mentor-text-muted mt-1">
+        Critical: {rubric.coverage.criticalCovered}/{rubric.coverage.criticalTotal} &middot; High: {rubric.coverage.highCovered}/
+        {rubric.coverage.highTotal}
+      </p>
+      {rubric.coverage.uncoveredCompetencies.length > 0 && (
+        <div className="mt-2">
+          <p className="text-xs text-mentor-text-muted mb-1">Uncovered:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {rubric.coverage.uncoveredCompetencies.map((name) => (
+              <span key={name} className="badge badge-neutral">
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+
+    <div className="space-y-3">
+      {rubric.competencies.map((c) => (
+        <div key={c.competencyName} className="surface-muted p-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+            <p className="text-sm font-semibold text-mentor-text">{c.competencyName}</p>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`badge ${RUBRIC_IMPORTANCE_BADGE[c.importance] || 'badge-neutral'}`}>{c.importance}</span>
+              <span className="text-xs text-mentor-text-muted">weight {c.jdWeight}</span>
+            </div>
+          </div>
+          {c.description && <p className="text-sm text-mentor-text-secondary mb-2">{c.description}</p>}
+          <p className="text-xs text-mentor-text-muted mb-2">
+            {c.sectionIds.length} section{c.sectionIds.length === 1 ? '' : 's'} &middot; {c.plannedIntentCount} planned intent
+            {c.plannedIntentCount === 1 ? '' : 's'}
+          </p>
+          {c.evidenceSignals.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {c.evidenceSignals.map((s) => (
+                <span key={s} className="badge badge-neutral">
+                  {s}
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="text-xs font-medium text-mentor-text-muted mb-1.5">Scoring Anchors (1-5)</p>
+          <div className="space-y-1.5">
+            {RUBRIC_SCORE_KEYS.map((n) => (
+              <div key={n} className="flex gap-2 text-xs">
+                <span className="font-semibold text-mentor-text-muted shrink-0 w-4">{n}</span>
+                <p className="text-mentor-text-secondary">{c.scoringAnchors[`score${n}` as keyof RubricScoringAnchors]}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 const BLUEPRINT_CATEGORY_LABELS: Record<string, string> = {
   technical: 'Technical',
@@ -607,6 +685,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [generatingBlueprint, setGeneratingBlueprint] = useState(false);
   const [generateBlueprintError, setGenerateBlueprintError] = useState<string | null>(null);
 
+  const [rubric, setRubric] = useState<ApplicationInterviewRubric | null>(null);
+  const [rubricLoading, setRubricLoading] = useState(true);
+  const [rubricError, setRubricError] = useState<string | null>(null);
+  const [generatingRubric, setGeneratingRubric] = useState(false);
+  const [generateRubricError, setGenerateRubricError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -838,6 +922,40 @@ const EmployerApplicationDetailPage: React.FC = () => {
       await fetchBlueprint();
     } finally {
       setGeneratingBlueprint(false);
+    }
+  };
+
+  const fetchRubric = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setRubricLoading(true);
+    setRubricError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewRubric(organizationId, applicationId);
+      setRubric(response.data.rubric);
+    } catch (err: any) {
+      setRubricError(err.message || 'Failed to load interview evaluation rubric');
+    } finally {
+      setRubricLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchRubric();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchRubric]);
+
+  const handleGenerateRubric = async () => {
+    if (!organizationId || !applicationId) return;
+    setGeneratingRubric(true);
+    setGenerateRubricError(null);
+    try {
+      const response = await employerApi.generateEmployerInterviewRubric(organizationId, applicationId);
+      setRubric(response.data.rubric);
+    } catch (err: any) {
+      setGenerateRubricError(err.message || 'Failed to generate interview evaluation rubric');
+    } finally {
+      setGeneratingRubric(false);
     }
   };
 
@@ -1409,6 +1527,55 @@ const EmployerApplicationDetailPage: React.FC = () => {
                         </p>
                       )}
                     </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <ListChecks size={18} className="text-mentor-text-muted" />
+                Interview Evaluation Rubric
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                This rubric guides interviewer evaluation; it is not a candidate score yet.
+              </p>
+
+              {!blueprint || blueprint.status !== 'completed' ? (
+                <p className="text-sm text-mentor-text-secondary py-2">Generate Interview Blueprint first.</p>
+              ) : rubricLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : rubricError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{rubricError}</p>
+                  <button onClick={fetchRubric} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {generateRubricError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{generateRubricError}</p>
+                    </div>
+                  )}
+
+                  {!rubric ? (
+                    <div className="py-2">
+                      <p className="text-sm text-mentor-text-secondary mb-3">No evaluation rubric generated yet.</p>
+                      {canEdit && (
+                        <button onClick={handleGenerateRubric} disabled={generatingRubric} className="btn btn-primary">
+                          <ListChecks size={16} />
+                          {generatingRubric ? 'Generating...' : 'Generate Evaluation Rubric'}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <RubricView rubric={rubric.rubric} />
                   )}
                 </>
               )}
