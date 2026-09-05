@@ -35,6 +35,7 @@ import employerCandidateResumeController from '../controllers/EmployerCandidateR
 import employerCandidateResumeAnalysisController from '../controllers/EmployerCandidateResumeAnalysisController';
 import employerJobApplicationController from '../controllers/EmployerJobApplicationController';
 import employerCandidateScreeningController from '../controllers/EmployerCandidateScreeningController';
+import employerCandidateScreeningScoreController from '../controllers/EmployerCandidateScreeningScoreController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2301,6 +2302,53 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateScreeningController.getScreeningHistory
+);
+
+// ============================================================================
+// Explainable Candidate Score (19B) — a deterministic, fixed-formula
+// breakdown of an already-COMPLETED 19A screening against the exact JD
+// snapshot it was screened against. No AI call, no recalculation of
+// skill/competency/experience/education matching, no ranking (19D), no gap
+// engine (19C), no shortlist automation (19E). This calculated score is a
+// SEPARATE, distinct number from the AI's own `screening.result
+// .overallScore` — it never overwrites it. Reads use ORGANIZATION_VIEW and
+// never calculate; generation uses INTERVIEWS_MANAGE and is blocked on an
+// archived organization or archived application. Deterministic, so
+// generation is idempotent: an existing score for the current screening is
+// returned as-is, never recalculated.
+// ============================================================================
+
+const screeningIdValidation = [param('screeningId').isMongoId().withMessage('Invalid screening ID')];
+
+router.post(
+  '/:organizationId/applications/:applicationId/screening/score',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateScreeningScoreController.generateScore
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/screening/score',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateScreeningScoreController.getScore
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/screenings/:screeningId/score',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...screeningIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateScreeningScoreController.getScoreForScreening
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

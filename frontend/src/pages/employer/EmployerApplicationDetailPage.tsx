@@ -9,8 +9,10 @@ import employerApi, {
   EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS,
   ApplicationScreening,
   ScreeningResult,
+  ApplicationScreeningScore,
+  ScreeningScore,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target } from 'lucide-react';
+import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target, Calculator } from 'lucide-react';
 
 const RECOMMENDATION_LABELS: Record<string, string> = {
   strong_match: 'Strong Match',
@@ -154,6 +156,79 @@ const ScreeningResultView: React.FC<{ result: ScreeningResult }> = ({ result }) 
   </div>
 );
 
+const SCORE_COMPONENT_LABELS = {
+  skills: 'Skills',
+  competencies: 'Competencies',
+  experience: 'Experience',
+  education: 'Education',
+} as const;
+
+/**
+ * Read-only rendering of a deterministic 19B explainable score. Deliberately
+ * shown ALONGSIDE (never instead of) the AI's own `result.overallScore` —
+ * these are two distinct numbers and this view never conflates them.
+ */
+const ExplainableScoreView: React.FC<{ score: ScreeningScore; aiOverallScore: number }> = ({ score, aiOverallScore }) => (
+  <div className="space-y-5">
+    <div className="flex items-center gap-6 flex-wrap">
+      <div>
+        <p className="text-xs text-mentor-text-muted mb-0.5">Calculated Score</p>
+        <p className="text-2xl font-semibold text-mentor-text">{score.overallScore}/100</p>
+      </div>
+      <div>
+        <p className="text-xs text-mentor-text-muted mb-0.5">AI Screening Score</p>
+        <p className="text-2xl font-semibold text-mentor-text-secondary">{aiOverallScore}/100</p>
+      </div>
+      <span className="text-xs text-mentor-text-muted ml-auto">{score.calculationVersion}</span>
+    </div>
+
+    <div>
+      <p className="label mb-2">Score Components</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {(Object.keys(SCORE_COMPONENT_LABELS) as Array<keyof typeof SCORE_COMPONENT_LABELS>).map((key) => {
+          const component = score.components[key];
+          return (
+            <div key={key} className="surface-muted p-3">
+              <p className="text-xs text-mentor-text-muted mb-1">{SCORE_COMPONENT_LABELS[key]}</p>
+              <p className="text-lg font-semibold text-mentor-text">{component.score}/100</p>
+              <p className="text-xs text-mentor-text-secondary mt-1">
+                Weight {Math.round(component.weight * 100)}% &middot; Contribution {component.contribution}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+
+    {score.competencyBreakdown.length > 0 && (
+      <div>
+        <p className="label mb-2">Competency Breakdown</p>
+        <div className="space-y-2">
+          {score.competencyBreakdown.map((c) => (
+            <div key={c.name} className="surface-muted p-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm font-medium text-mentor-text">{c.name}</p>
+                <span className="text-xs text-mentor-text-secondary shrink-0">
+                  JD Weight {c.jdWeight} &middot; Match {c.matchScore}/100 &middot; Contribution {c.weightedContribution}
+                </span>
+              </div>
+              {c.evidence.length > 0 && (
+                <ul className="list-disc list-inside text-xs text-mentor-text-secondary mt-1.5 space-y-0.5">
+                  {c.evidence.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <p className="text-xs text-mentor-text-muted">Formula: 35% Skills + 40% Competencies + 20% Experience + 5% Education</p>
+  </div>
+);
+
 const STATUS_LABELS: Record<EmployerJobApplicationStatus, string> = {
   applied: 'Applied',
   screening: 'Screening',
@@ -249,6 +324,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [screeningError, setScreeningError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+
+  const [screeningScore, setScreeningScore] = useState<ApplicationScreeningScore | null>(null);
+  const [scoreLoading, setScoreLoading] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+  const [calculatingScore, setCalculatingScore] = useState(false);
+  const [calculateScoreError, setCalculateScoreError] = useState<string | null>(null);
 
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
@@ -357,6 +438,40 @@ const EmployerApplicationDetailPage: React.FC = () => {
       await fetchScreening();
     } finally {
       setRunning(false);
+    }
+  };
+
+  const fetchScreeningScore = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setScoreLoading(true);
+    setScoreError(null);
+    try {
+      const response = await employerApi.getApplicationScreeningScore(organizationId, applicationId);
+      setScreeningScore(response.data.score);
+    } catch (err: any) {
+      setScoreError(err.message || 'Failed to load explainable score');
+    } finally {
+      setScoreLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && screening?.status === 'completed') {
+      fetchScreeningScore();
+    }
+  }, [isSyncing, activeOrganization, canView, screening?.status, fetchScreeningScore]);
+
+  const handleCalculateScore = async () => {
+    if (!organizationId || !applicationId) return;
+    setCalculatingScore(true);
+    setCalculateScoreError(null);
+    try {
+      const response = await employerApi.calculateApplicationScreeningScore(organizationId, applicationId);
+      setScreeningScore(response.data.score);
+    } catch (err: any) {
+      setCalculateScoreError(err.message || 'Failed to calculate explainable score');
+    } finally {
+      setCalculatingScore(false);
     }
   };
 
@@ -725,6 +840,54 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 </>
               )}
             </div>
+
+            {screening?.status === 'completed' && (
+              <div className="card mt-6">
+                <h2 className="section-title flex items-center gap-2 mb-4">
+                  <Calculator size={18} className="text-mentor-text-muted" />
+                  Explainable Score
+                </h2>
+
+                {scoreLoading ? (
+                  <div className="p-6 text-center">
+                    <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                  </div>
+                ) : scoreError ? (
+                  <div className="p-6 text-center">
+                    <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                    <p className="text-sm text-mentor-text-secondary mb-4">{scoreError}</p>
+                    <button onClick={fetchScreeningScore} className="btn btn-primary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {calculateScoreError && (
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{calculateScoreError}</p>
+                      </div>
+                    )}
+
+                    {!screeningScore ? (
+                      <div className="py-2">
+                        <p className="text-sm text-mentor-text-secondary mb-3">
+                          Calculate a deterministic, transparent score breakdown for this screening.
+                        </p>
+                        {canEdit && (
+                          <button onClick={handleCalculateScore} disabled={calculatingScore} className="btn btn-primary">
+                            <Calculator size={16} />
+                            {calculatingScore ? 'Calculating...' : 'Calculate Explainable Score'}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <ExplainableScoreView score={screeningScore.score} aiOverallScore={screening.result?.overallScore ?? 0} />
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
       </main>

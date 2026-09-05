@@ -920,6 +920,55 @@ export interface ApplicationScreening {
 export type ScreenApplicationResponse = ApiEnvelope<{ screening: ApplicationScreening }>;
 export type GetApplicationScreeningResponse = ApiEnvelope<{ screening: ApplicationScreening | null }>;
 
+// ============================================================================
+// Explainable Candidate Score (Sprint 19B) — a deterministic, fixed-formula
+// breakdown of an already-COMPLETED screening. This is a SEPARATE, distinct
+// number from `ApplicationScreening.result.overallScore` (the AI screening
+// score) — never a replacement for it. No ranking (19D), no gap engine
+// beyond this breakdown (19C), no shortlist automation (19E).
+// ============================================================================
+
+export interface ScreeningScoreComponent {
+  score: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface ScreeningScoreCompetencyBreakdown {
+  name: string;
+  jdWeight: number;
+  matchScore: number;
+  weightedContribution: number;
+  evidence: string[];
+}
+
+export interface ScreeningScore {
+  overallScore: number;
+  components: {
+    skills: ScreeningScoreComponent;
+    competencies: ScreeningScoreComponent;
+    experience: ScreeningScoreComponent;
+    education: ScreeningScoreComponent;
+  };
+  competencyBreakdown: ScreeningScoreCompetencyBreakdown[];
+  calculationVersion: string;
+}
+
+export interface ApplicationScreeningScore {
+  id: string;
+  screeningId: string;
+  applicationId: string;
+  jobId: string;
+  candidateId: string;
+  jdSnapshotId: string;
+  resumeAnalysisId: string;
+  score: ScreeningScore;
+  createdAt: string;
+}
+
+export type CalculateApplicationScreeningScoreResponse = ApiEnvelope<{ score: ApplicationScreeningScore }>;
+export type GetApplicationScreeningScoreResponse = ApiEnvelope<{ score: ApplicationScreeningScore | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1645,6 +1694,31 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load screening');
+    }
+  }
+
+  // ---- Explainable Candidate Score (Sprint 19B) ----
+
+  /** Deterministic — if a score already exists for the current completed screening, the backend returns it without recalculating. */
+  async calculateApplicationScreeningScore(organizationId: string, applicationId: string): Promise<CalculateApplicationScreeningScoreResponse> {
+    try {
+      const response = await this.api.post<CalculateApplicationScreeningScoreResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/screening/score`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to calculate explainable score');
+    }
+  }
+
+  async getApplicationScreeningScore(organizationId: string, applicationId: string): Promise<GetApplicationScreeningScoreResponse> {
+    try {
+      const response = await this.api.get<GetApplicationScreeningScoreResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/screening/score`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load explainable score');
     }
   }
 }
