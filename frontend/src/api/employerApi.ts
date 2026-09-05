@@ -1144,6 +1144,82 @@ export type ShortlistApplicationResponse = ApiEnvelope<{ decision: ApplicationSh
 export type GetApplicationShortlistResponse = ApiEnvelope<{ decision: ApplicationShortlistDecision | null }>;
 export type GetEmployerJobShortlistResponse = ApiEnvelope<{ shortlisted: JobShortlistRow[] }>;
 
+// ============================================================================
+// Employer Interview Blueprint (Sprint 20A) — a structured interview PLAN
+// (question intents / planning slots only, NEVER final candidate-facing
+// questions) for a shortlisted application. No interview session/
+// invitation is created here (20B/20C/20D).
+// ============================================================================
+
+export type EmployerInterviewBlueprintStatus = 'processing' | 'completed' | 'failed';
+export type EmployerInterviewBlueprintSectionCategory =
+  | 'technical'
+  | 'problem_solving'
+  | 'system_design'
+  | 'domain'
+  | 'behavioral'
+  | 'leadership'
+  | 'communication'
+  | 'experience';
+export type EmployerInterviewBlueprintDifficulty = 'easy' | 'medium' | 'hard';
+
+export interface BlueprintQuestionPlanItem {
+  intent: string;
+  difficulty: EmployerInterviewBlueprintDifficulty;
+  evidenceExpected: string[];
+  followUpFocus: string[];
+}
+
+export interface BlueprintSection {
+  id: string;
+  title: string;
+  objective: string;
+  order: number;
+  durationMinutes: number;
+  category: EmployerInterviewBlueprintSectionCategory;
+  competencies: string[];
+  skills: string[];
+  questionPlan: BlueprintQuestionPlanItem[];
+}
+
+export interface BlueprintMetadata {
+  totalSections: number;
+  totalPlannedQuestions: number;
+  sourceCompetencyCount: number;
+  sourceSkillCount: number;
+}
+
+export interface InterviewBlueprint {
+  title: string;
+  estimatedDurationMinutes: number;
+  sections: BlueprintSection[];
+  focusAreas: string[];
+  avoidAreas: string[];
+  metadata: BlueprintMetadata;
+}
+
+export interface ApplicationInterviewBlueprint {
+  id: string;
+  applicationId: string;
+  jobId: string;
+  candidateId: string;
+  shortlistDecisionId: string;
+  jdSnapshotId: string;
+  screeningId: string;
+  screeningScoreId: string;
+  screeningGapId?: string;
+  status: EmployerInterviewBlueprintStatus;
+  blueprint: InterviewBlueprint | null;
+  /** Same shape as a resume analysis's aiUsage — reused rather than redefined. */
+  aiUsage: CandidateResumeAiUsage | null;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type GenerateEmployerInterviewBlueprintResponse = ApiEnvelope<{ blueprint: ApplicationInterviewBlueprint }>;
+export type GetEmployerInterviewBlueprintResponse = ApiEnvelope<{ blueprint: ApplicationInterviewBlueprint | null }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -1967,6 +2043,31 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load job shortlist');
+    }
+  }
+
+  // ---- Employer Interview Blueprint (Sprint 20A) ----
+
+  /** Generates against the CURRENT applicable screening/score/(optional) gap and finalized JD snapshot only. If already completed for that exact screening, the backend returns it without a new AI call. */
+  async generateEmployerInterviewBlueprint(organizationId: string, applicationId: string): Promise<GenerateEmployerInterviewBlueprintResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerInterviewBlueprintResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-blueprint`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate interview blueprint');
+    }
+  }
+
+  async getEmployerInterviewBlueprint(organizationId: string, applicationId: string): Promise<GetEmployerInterviewBlueprintResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewBlueprintResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-blueprint`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview blueprint');
     }
   }
 }

@@ -39,6 +39,7 @@ import employerCandidateScreeningScoreController from '../controllers/EmployerCa
 import employerCandidateScreeningGapController from '../controllers/EmployerCandidateScreeningGapController';
 import employerCandidateRankingController from '../controllers/EmployerCandidateRankingController';
 import employerCandidateShortlistController from '../controllers/EmployerCandidateShortlistController';
+import employerInterviewBlueprintController from '../controllers/EmployerInterviewBlueprintController';
 import { InstitutePlanCode } from '../constants/institutePlan';
 import { protect } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
@@ -2463,6 +2464,50 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCandidateShortlistController.getJobShortlist
+);
+
+// ============================================================================
+// Employer Interview Blueprint (20A) — a structured interview PLAN
+// (question intents / planning slots only, never final candidate-facing
+// questions) for a shortlisted application. Job truth is ONLY the
+// finalized JD Intelligence Snapshot (17E); candidate context is ONLY the
+// structured 19A screening + 19B explainable score + (optional) 19C gap
+// analysis — never raw JD/resume text, never demographic/contact
+// information. No interview session/invitation is created here (20B/20C/
+// 20D). Reads use ORGANIZATION_VIEW (readable even on an archived
+// organization/application); the generate mutation uses INTERVIEWS_MANAGE
+// and requires the application to be shortlisted with all current
+// prerequisites present.
+// ============================================================================
+
+router.post(
+  '/:organizationId/applications/:applicationId/interview-blueprint',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewBlueprintController.generateBlueprint
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-blueprint',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewBlueprintController.getCurrentBlueprint
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/interview-blueprints',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewBlueprintController.getBlueprintHistory
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

@@ -14,8 +14,126 @@ import employerApi, {
   ApplicationScreeningGap,
   ScreeningGap,
   ApplicationShortlistDecision,
+  ApplicationInterviewBlueprint,
+  InterviewBlueprint,
 } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, CheckCircle2, Target, Calculator, GitCompareArrows, Star } from 'lucide-react';
+import {
+  AlertCircle,
+  Loader2,
+  ChevronLeft,
+  CheckCircle2,
+  Target,
+  Calculator,
+  GitCompareArrows,
+  Star,
+  ClipboardList,
+} from 'lucide-react';
+
+const BLUEPRINT_CATEGORY_LABELS: Record<string, string> = {
+  technical: 'Technical',
+  problem_solving: 'Problem Solving',
+  system_design: 'System Design',
+  domain: 'Domain',
+  behavioral: 'Behavioral',
+  leadership: 'Leadership',
+  communication: 'Communication',
+  experience: 'Experience',
+};
+
+const BLUEPRINT_DIFFICULTY_BADGE: Record<string, string> = {
+  easy: 'badge-success',
+  medium: 'badge-warning',
+  hard: 'badge-neutral',
+};
+
+/** Read-only rendering of a completed interview blueprint — a PLAN of question intents, never final candidate-facing questions. */
+const BlueprintView: React.FC<{ blueprint: InterviewBlueprint }> = ({ blueprint }) => (
+  <div className="space-y-5">
+    <div>
+      <p className="text-lg font-semibold text-mentor-text">{blueprint.title}</p>
+      <p className="text-xs text-mentor-text-muted mt-1">
+        {blueprint.estimatedDurationMinutes} min estimated &middot; {blueprint.metadata.totalSections} sections &middot;{' '}
+        {blueprint.metadata.totalPlannedQuestions} planned questions
+      </p>
+    </div>
+
+    {blueprint.focusAreas.length > 0 && (
+      <div>
+        <p className="label mb-2">Focus Areas</p>
+        <div className="flex flex-wrap gap-1.5">
+          {blueprint.focusAreas.map((f) => (
+            <span key={f} className="badge badge-info">
+              {f}
+            </span>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {blueprint.avoidAreas.length > 0 && (
+      <div>
+        <p className="label mb-2">Avoid Areas</p>
+        <div className="flex flex-wrap gap-1.5">
+          {blueprint.avoidAreas.map((a) => (
+            <span key={a} className="badge badge-neutral">
+              {a}
+            </span>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <div className="space-y-3">
+      {blueprint.sections.map((section) => (
+        <div key={section.id} className="surface-muted p-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+            <p className="text-sm font-semibold text-mentor-text">
+              {section.order}. {section.title}
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="badge badge-info">{BLUEPRINT_CATEGORY_LABELS[section.category] || section.category}</span>
+              <span className="text-xs text-mentor-text-muted">{section.durationMinutes} min</span>
+            </div>
+          </div>
+          <p className="text-sm text-mentor-text-secondary mb-2">{section.objective}</p>
+
+          {(section.competencies.length > 0 || section.skills.length > 0) && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {section.competencies.map((c) => (
+                <span key={c} className="badge badge-success">
+                  {c}
+                </span>
+              ))}
+              {section.skills.map((s) => (
+                <span key={s} className="badge badge-neutral">
+                  {s}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <p className="text-xs font-medium text-mentor-text-muted mb-1.5">Question Intents (not final questions)</p>
+          <div className="space-y-2">
+            {section.questionPlan.map((q, i) => (
+              <div key={i} className="bg-mentor-surface rounded-lg p-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm text-mentor-text">{q.intent}</p>
+                  <span className={`badge ${BLUEPRINT_DIFFICULTY_BADGE[q.difficulty]} shrink-0`}>{q.difficulty}</span>
+                </div>
+                {q.evidenceExpected.length > 0 && (
+                  <p className="text-xs text-mentor-text-muted mt-1">Evidence expected: {q.evidenceExpected.join(', ')}</p>
+                )}
+                {q.followUpFocus.length > 0 && (
+                  <p className="text-xs text-mentor-text-muted mt-0.5">Follow-up focus: {q.followUpFocus.join(', ')}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 const RECOMMENDATION_LABELS: Record<string, string> = {
   strong_match: 'Strong Match',
@@ -483,6 +601,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [shortlistDecisionLoading, setShortlistDecisionLoading] = useState(true);
   const [shortlistDecisionError, setShortlistDecisionError] = useState<string | null>(null);
 
+  const [blueprint, setBlueprint] = useState<ApplicationInterviewBlueprint | null>(null);
+  const [blueprintLoading, setBlueprintLoading] = useState(true);
+  const [blueprintError, setBlueprintError] = useState<string | null>(null);
+  const [generatingBlueprint, setGeneratingBlueprint] = useState(false);
+  const [generateBlueprintError, setGenerateBlueprintError] = useState<string | null>(null);
+
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
   const [jdFinalized, setJdFinalized] = useState<boolean | null>(null);
@@ -680,6 +804,42 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchShortlistDecision();
     }
   }, [isSyncing, activeOrganization, canView, fetchShortlistDecision]);
+
+  const fetchBlueprint = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setBlueprintLoading(true);
+    setBlueprintError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewBlueprint(organizationId, applicationId);
+      setBlueprint(response.data.blueprint);
+    } catch (err: any) {
+      setBlueprintError(err.message || 'Failed to load interview blueprint');
+    } finally {
+      setBlueprintLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchBlueprint();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchBlueprint]);
+
+  const handleGenerateBlueprint = async () => {
+    if (!organizationId || !applicationId) return;
+    setGeneratingBlueprint(true);
+    setGenerateBlueprintError(null);
+    try {
+      const response = await employerApi.generateEmployerInterviewBlueprint(organizationId, applicationId);
+      setBlueprint(response.data.blueprint);
+    } catch (err: any) {
+      setGenerateBlueprintError(err.message || 'Failed to generate interview blueprint');
+      // The backend may have already persisted a FAILED row — pick it up.
+      await fetchBlueprint();
+    } finally {
+      setGeneratingBlueprint(false);
+    }
+  };
 
   const handleSaveDetails = async () => {
     if (!organizationId || !applicationId) return;
@@ -1172,6 +1332,85 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 </p>
               ) : (
                 <p className="text-sm text-mentor-text-secondary">Not shortlisted.</p>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <ClipboardList size={18} className="text-mentor-text-muted" />
+                Blueprint / Interview Plan
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                A structured interview plan — question intents to guide the interviewer, never final questions to read aloud.
+              </p>
+
+              {application.status !== 'shortlisted' ? (
+                <p className="text-sm text-mentor-text-secondary py-2">Shortlist this candidate first.</p>
+              ) : blueprintLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : blueprintError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{blueprintError}</p>
+                  <button onClick={fetchBlueprint} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {generateBlueprintError && (
+                    <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                      <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                      <p className="text-sm text-mentor-error">{generateBlueprintError}</p>
+                    </div>
+                  )}
+
+                  {!blueprint ? (
+                    <div className="py-2">
+                      <p className="text-sm text-mentor-text-secondary mb-3">No interview blueprint generated yet.</p>
+                      {canEdit && (
+                        <button onClick={handleGenerateBlueprint} disabled={generatingBlueprint} className="btn btn-primary">
+                          <ClipboardList size={16} />
+                          {generatingBlueprint ? 'Generating...' : 'Generate Interview Blueprint'}
+                        </button>
+                      )}
+                    </div>
+                  ) : blueprint.status === 'processing' ? (
+                    <div className="py-2">
+                      <p className="text-sm text-mentor-text-secondary mb-3">
+                        <span className="badge badge-warning mr-2">Processing</span>
+                        Blueprint generation is in progress...
+                      </p>
+                      <button onClick={fetchBlueprint} className="btn btn-secondary">
+                        Check Status
+                      </button>
+                    </div>
+                  ) : blueprint.status === 'failed' ? (
+                    <div className="py-2">
+                      <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-3">
+                        <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                        <p className="text-sm text-mentor-error">{blueprint.errorMessage || 'Blueprint generation failed.'}</p>
+                      </div>
+                      {canEdit && (
+                        <button onClick={handleGenerateBlueprint} disabled={generatingBlueprint} className="btn btn-primary">
+                          {generatingBlueprint ? 'Retrying...' : 'Retry'}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      {blueprint.blueprint && <BlueprintView blueprint={blueprint.blueprint} />}
+                      {blueprint.aiUsage && (
+                        <p className="text-xs text-mentor-text-muted mt-4">
+                          {blueprint.aiUsage.model} &middot; {blueprint.aiUsage.totalTokens.toLocaleString()} tokens
+                          {blueprint.aiUsage.pricingStatus === 'calculated' ? ` · est. ${formatCost(blueprint.aiUsage.totalCostUsd)}` : ''}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </>
