@@ -46,6 +46,7 @@ import employerJobApplicationDecisionController from '../controllers/EmployerJob
 import employerJobApplicationNoteController from '../controllers/EmployerJobApplicationNoteController';
 import employerJobApplicationCollaborationController from '../controllers/EmployerJobApplicationCollaborationController';
 import employerCollaborationMentionsController from '../controllers/EmployerCollaborationMentionsController';
+import employerCollaborationNotificationController from '../controllers/EmployerCollaborationNotificationController';
 import { EmployerJobApplicationCollaborationRole } from '../constants/employerJobApplicationCollaboration';
 import {
   EMPLOYER_JOB_APPLICATION_DECISION_TYPES,
@@ -2439,6 +2440,39 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCollaborationMentionsController.getMentions
+);
+
+// GET/PATCH/POST .../collaboration/notifications (24C) — in-app-only
+// employer notification center. No email/SMS/push/delivery. Recipient is
+// always the ACTING organization membership, never another member.
+const notificationIdParamValidation = [param('notificationId').isMongoId().withMessage('Invalid notificationId')];
+
+router.get(
+  '/:organizationId/collaboration/notifications',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCollaborationNotificationController.listNotifications
+);
+
+router.patch(
+  '/:organizationId/collaboration/notifications/:notificationId/read',
+  protect,
+  ...organizationIdValidation,
+  ...notificationIdParamValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCollaborationNotificationController.markRead
+);
+
+router.post(
+  '/:organizationId/collaboration/notifications/read-all',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCollaborationNotificationController.markAllRead
 );
 
 // ============================================================================

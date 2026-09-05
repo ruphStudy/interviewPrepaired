@@ -2096,6 +2096,37 @@ export interface EmployerCollaborationMentionsResponseData {
 
 export type GetEmployerCollaborationMentionsResponse = ApiEnvelope<EmployerCollaborationMentionsResponseData>;
 
+// ============================================================================
+// Employer Notification Center (Sprint 24C) — in-app only, no email/SMS/
+// push. Recipient is always the current acting organization membership.
+// Distinct from the 24B Mentions page (content-focused); this is a
+// read/unread event inbox.
+// ============================================================================
+
+export type EmployerCollaborationNotificationType = 'note_mention' | 'collaborator_assigned';
+
+export interface EmployerCollaborationNotificationItem {
+  id: string;
+  type: EmployerCollaborationNotificationType;
+  read: boolean;
+  createdAt: string;
+  actor: { membershipId: string; displayName?: string };
+  applicationId: string;
+  jobId: string;
+  candidate: { id: string; firstName?: string; lastName?: string };
+  context: { noteId?: string; collaborationRole?: EmployerJobApplicationCollaborationRole };
+}
+
+export interface EmployerCollaborationNotificationsResponseData {
+  notifications: EmployerCollaborationNotificationItem[];
+  unreadCount: number;
+  pagination: { page: number; limit: number; total: number; pages: number };
+}
+
+export type GetEmployerCollaborationNotificationsResponse = ApiEnvelope<EmployerCollaborationNotificationsResponseData>;
+export type MarkEmployerNotificationReadResponse = ApiEnvelope<{ id: string; read: boolean; readAt: string }>;
+export type MarkAllEmployerNotificationsReadResponse = ApiEnvelope<{ updatedCount: number }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -3466,6 +3497,45 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load mentions');
+    }
+  }
+
+  async getEmployerCollaborationNotifications(
+    organizationId: string,
+    page = 1,
+    limit = 20,
+    unreadOnly = false
+  ): Promise<GetEmployerCollaborationNotificationsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCollaborationNotificationsResponse>(
+        `/organizations/${organizationId}/collaboration/notifications`,
+        { params: { page, limit, unreadOnly } }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load notifications');
+    }
+  }
+
+  async markEmployerNotificationRead(organizationId: string, notificationId: string): Promise<MarkEmployerNotificationReadResponse> {
+    try {
+      const response = await this.api.patch<MarkEmployerNotificationReadResponse>(
+        `/organizations/${organizationId}/collaboration/notifications/${notificationId}/read`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to mark notification as read');
+    }
+  }
+
+  async markAllEmployerNotificationsRead(organizationId: string): Promise<MarkAllEmployerNotificationsReadResponse> {
+    try {
+      const response = await this.api.post<MarkAllEmployerNotificationsReadResponse>(
+        `/organizations/${organizationId}/collaboration/notifications/read-all`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to mark all notifications as read');
     }
   }
 }

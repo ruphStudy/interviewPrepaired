@@ -4,6 +4,7 @@ import EmployerJobApplication from '../models/EmployerJobApplication.model';
 import { EmployerJobApplicationStatus } from '../constants/employerJobApplication';
 import EmployerJobApplicationCollaborator from '../models/EmployerJobApplicationCollaborator.model';
 import { EmployerJobApplicationCollaborationRole } from '../constants/employerJobApplicationCollaboration';
+import { employerCollaborationNotificationService } from './EmployerCollaborationNotificationService';
 import OrganizationMember from '../models/OrganizationMember.model';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
@@ -91,6 +92,16 @@ export class EmployerJobApplicationCollaborationService {
       throw new ApiError(404, 'Organization member not found');
     }
 
+    // Existence checked BEFORE the upsert so we know whether this is a
+    // brand-new assignment — a notification is only ever created for a
+    // NEW assignment, never merely for a role update.
+    const existing = await EmployerJobApplicationCollaborator.findOne({
+      organizationId: organization._id,
+      applicationId: application._id,
+      membershipId: member._id,
+    }).select('_id');
+    const isNewAssignment = !existing;
+
     const row = await EmployerJobApplicationCollaborator.findOneAndUpdate(
       { organizationId: organization._id, applicationId: application._id, membershipId: member._id },
       {
@@ -103,6 +114,23 @@ export class EmployerJobApplicationCollaborationService {
       },
       { new: true, upsert: true }
     );
+
+    if (isNewAssignment) {
+      // Notification write is secondary — never fails/undoes the already-created assignment.
+      try {
+        await employerCollaborationNotificationService.createCollaboratorAssignedNotification({
+          organizationId: organization._id,
+          applicationId: application._id as Types.ObjectId,
+          jobId: application.jobId,
+          candidateId: application.candidateId,
+          collaboratorAssignmentId: row!._id as Types.ObjectId,
+          recipientMembershipId: member._id as Types.ObjectId,
+          assignerMembershipId: new Types.ObjectId(assignedByMembershipId),
+        });
+      } catch (error) {
+        console.error('[EmployerJobApplicationCollaborationService] Failed to create assignment notification (non-fatal)', error);
+      }
+    }
 
     return this.toDetail(await this.populateRow(row!._id as Types.ObjectId));
   }

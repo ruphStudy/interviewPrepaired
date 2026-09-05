@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import employerApi from '../api/employerApi';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -22,6 +23,7 @@ import {
   Gauge,
   Briefcase,
   AtSign,
+  Bell,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrganization } from '../contexts/OrganizationContext';
@@ -74,6 +76,29 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   const location = useLocation();
   const { user, isAdmin } = useAuth();
   const { activeOrganization, activeOrganizationId, activeRole, hasPermission } = useOrganization();
+
+  // Employer notification bell badge (24C) — in-app only, no delivery. A
+  // lightweight unread-count fetch (limit=1) whenever a company org is
+  // active; never blocks nav rendering if it fails.
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  useEffect(() => {
+    if (activeOrganization?.type !== 'company' || !activeOrganizationId || !hasPermission('organization:view')) {
+      setUnreadNotificationCount(0);
+      return;
+    }
+    let cancelled = false;
+    employerApi
+      .getEmployerCollaborationNotifications(activeOrganizationId, 1, 1, true)
+      .then((response) => {
+        if (!cancelled) setUnreadNotificationCount(response.data.unreadCount);
+      })
+      .catch(() => {
+        if (!cancelled) setUnreadNotificationCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeOrganization?.type, activeOrganizationId, hasPermission]);
 
   // Exact match for '/student' only — it's a path PREFIX of every other
   // Student Portal route (assignments/history/readiness), so a plain
@@ -143,6 +168,12 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
                 { to: `/organizations/${activeOrganizationId}/employer/jobs`, label: 'Jobs', icon: Briefcase },
                 { to: `/organizations/${activeOrganizationId}/employer/candidates`, label: 'Candidates', icon: Users },
                 { to: `/organizations/${activeOrganizationId}/employer/mentions`, label: 'Mentions', icon: AtSign },
+                {
+                  to: `/organizations/${activeOrganizationId}/employer/notifications`,
+                  label: 'Notifications',
+                  icon: Bell,
+                  badge: unreadNotificationCount,
+                },
               ]
             : []),
         ]
@@ -153,7 +184,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
       ? [{ to: `/organizations/${activeOrganizationId}/trainer`, label: 'Trainer Dashboard', icon: Contact2 }]
       : [];
 
-  const renderNavLink = ({ to, label, icon: Icon }: (typeof MAIN_NAV_ITEMS)[number]) => {
+  const renderNavLink = ({ to, label, icon: Icon, badge }: (typeof MAIN_NAV_ITEMS)[number] & { badge?: number }) => {
     const active = isActive(to);
     return (
       <Link
@@ -167,7 +198,12 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
         }`}
       >
         <Icon size={19} className={active ? 'dark:text-future-violet' : ''} />
-        <span>{label}</span>
+        <span className="flex-1">{label}</span>
+        {!!badge && badge > 0 && (
+          <span className="badge badge-info text-[10px] px-1.5 py-0 leading-4 min-w-[18px] text-center">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
       </Link>
     );
   };

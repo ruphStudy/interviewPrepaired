@@ -5,6 +5,7 @@ import EmployerJobApplication from '../models/EmployerJobApplication.model';
 import { EmployerJobApplicationStatus } from '../constants/employerJobApplication';
 import EmployerCandidate from '../models/EmployerCandidate.model';
 import EmployerJobApplicationNote, { IEmployerJobApplicationNote } from '../models/EmployerJobApplicationNote.model';
+import { employerCollaborationNotificationService } from './EmployerCollaborationNotificationService';
 import OrganizationMember from '../models/OrganizationMember.model';
 import { User } from '../models/user.model';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
@@ -59,6 +60,21 @@ export class EmployerJobApplicationNoteService {
       mentionMembershipIds: validatedMentionIds,
       createdByMembershipId: new Types.ObjectId(actingMembershipId),
     });
+
+    // Notification write is secondary — never fails/undoes the already-created note.
+    try {
+      await employerCollaborationNotificationService.createNoteMentionNotifications({
+        organizationId: organization._id,
+        applicationId: application._id as Types.ObjectId,
+        jobId: application.jobId,
+        candidateId: application.candidateId,
+        noteId: note._id as Types.ObjectId,
+        authorMembershipId: new Types.ObjectId(actingMembershipId),
+        mentionMembershipIds: validatedMentionIds,
+      });
+    } catch (error) {
+      console.error('[EmployerJobApplicationNoteService] Failed to create mention notifications (non-fatal)', error);
+    }
 
     const displayNames = await this.resolveDisplayNames(organization._id, [
       actingMembershipId,
