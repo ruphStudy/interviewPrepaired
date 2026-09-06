@@ -1976,6 +1976,82 @@ export type GetEmployerInterviewGraphResponse = ApiEnvelope<EmployerInterviewGra
 export type BuildEmployerInterviewGraphResponse = ApiEnvelope<EmployerInterviewGraph>;
 
 // ============================================================================
+// Dynamic Follow-up Routing (Sprint 27B) — hiring-assessment ROUTING, not
+// coaching. At most one generated follow-up per source question.
+// ============================================================================
+
+export type EmployerInterviewFollowUpDecision = 'follow_up' | 'continue';
+export type EmployerInterviewFollowUpReasonType =
+  | 'insufficient_evidence'
+  | 'partial_answer'
+  | 'competency_gap'
+  | 'clarification_needed';
+
+export interface EmployerInterviewFollowUpRoute {
+  generated: boolean;
+  status?: 'processing' | 'failed';
+  errorMessage?: string;
+  decision?: EmployerInterviewFollowUpDecision;
+  reasonType?: EmployerInterviewFollowUpReasonType;
+  targetCompetencyName?: string;
+  generatedQuestionIndex?: number;
+  generatedQuestionText?: string;
+  generatedAt?: string;
+}
+
+export type GetEmployerInterviewFollowUpRouteResponse = ApiEnvelope<EmployerInterviewFollowUpRoute>;
+export type GenerateEmployerInterviewFollowUpRouteResponse = ApiEnvelope<EmployerInterviewFollowUpRoute>;
+
+// ============================================================================
+// Competency Coverage Graph Intelligence (Sprint 27C) — deterministic (NO
+// AI) LIVE coverage overlay for the 27A graph.
+// ============================================================================
+
+export type EmployerInterviewCompetencyEvidenceState = 'not_started' | 'partial' | 'covered';
+
+export interface EmployerInterviewCompetencyCoverageEntry {
+  competencyNodeId: string;
+  competencyName: string;
+  plannedQuestionCount: number;
+  answeredQuestionCount: number;
+  evaluatedQuestionCount: number;
+  evidenceState: EmployerInterviewCompetencyEvidenceState;
+  questionIndexes: number[];
+  answeredQuestionIndexes: number[];
+  evaluatedQuestionIndexes: number[];
+  dynamicFollowUpCount: number;
+}
+
+export interface EmployerInterviewCompetencyCoverageDynamicEdge {
+  competencyNodeId: string;
+  questionIndex: number;
+  sourceQuestionIndex: number;
+}
+
+export interface EmployerInterviewCompetencyCoverageSummary {
+  competencyCount: number;
+  coveredCount: number;
+  partialCount: number;
+  notStartedCount: number;
+  totalQuestionCount: number;
+  answeredQuestionCount: number;
+  evaluatedQuestionCount: number;
+  coveragePercent: number;
+}
+
+export interface EmployerInterviewCompetencyCoverage {
+  built: boolean;
+  calculationVersion?: string;
+  generatedAt?: string;
+  summary?: EmployerInterviewCompetencyCoverageSummary;
+  competencies?: EmployerInterviewCompetencyCoverageEntry[];
+  dynamicEdges?: EmployerInterviewCompetencyCoverageDynamicEdge[];
+}
+
+export type GetEmployerInterviewCompetencyCoverageResponse = ApiEnvelope<EmployerInterviewCompetencyCoverage>;
+export type BuildEmployerInterviewCompetencyCoverageResponse = ApiEnvelope<EmployerInterviewCompetencyCoverage>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -4063,6 +4139,66 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to build interview graph');
+    }
+  }
+
+  async getEmployerInterviewFollowUpRoute(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GetEmployerInterviewFollowUpRouteResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewFollowUpRouteResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/follow-up-route`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load follow-up route');
+    }
+  }
+
+  /** No client graph/rubric/evaluation IDs — the server resolves everything itself. May append one new question to the interview when decision is follow_up. */
+  async generateEmployerInterviewFollowUpRoute(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GenerateEmployerInterviewFollowUpRouteResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerInterviewFollowUpRouteResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/follow-up-route`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate follow-up route');
+    }
+  }
+
+  async getEmployerInterviewCompetencyCoverage(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GetEmployerInterviewCompetencyCoverageResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewCompetencyCoverageResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/competency-coverage`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load competency coverage');
+    }
+  }
+
+  /** Deterministic, no AI — idempotent upsert-in-place rebuild. No client graph/question IDs. */
+  async buildEmployerInterviewCompetencyCoverage(
+    organizationId: string,
+    interviewId: string
+  ): Promise<BuildEmployerInterviewCompetencyCoverageResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerInterviewCompetencyCoverageResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/competency-coverage/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build competency coverage');
     }
   }
 

@@ -93,6 +93,14 @@ export interface IQuestion {
   evaluationIntent?: string;
   evidenceExpected?: string[];
   followUpFocus?: string[];
+  // Employer hiring-assessment dynamic follow-up routing (27B) — absent on
+  // every non-follow-up question (no schema default). Set ONLY by
+  // `EmployerInterviewFollowUpRouteService` when it appends a validated
+  // generated question; never set by question materialization (21A).
+  // `followUpSourceQuestionIndex` is the SAME question-index identifier
+  // `Interview.evaluateQuestion` already uses — never a separate id.
+  dynamicFollowUp?: boolean;
+  followUpSourceQuestionIndex?: number;
 }
 
 export interface IAIUsageCall {
@@ -449,6 +457,10 @@ const questionSchema = new Schema<IQuestion>(
     evaluationIntent: { type: String, trim: true, maxlength: [500, 'evaluationIntent cannot exceed 500 characters'] },
     evidenceExpected: { type: [String], default: undefined },
     followUpFocus: { type: [String], default: undefined },
+    // Employer hiring-assessment dynamic follow-up routing (27B) — no
+    // `default`, so these stay genuinely absent on every non-follow-up question.
+    dynamicFollowUp: { type: Boolean },
+    followUpSourceQuestionIndex: { type: Number, min: 0 },
   },
   { _id: false, timestamps: false }
 );

@@ -60,6 +60,8 @@ import employerHiringAssessmentConsistencyController from '../controllers/Employ
 import employerHiringClaimVerificationController from '../controllers/EmployerHiringClaimVerificationController';
 import employerHiringReasoningConfidenceAggregateController from '../controllers/EmployerHiringReasoningConfidenceAggregateController';
 import employerInterviewGraphController from '../controllers/EmployerInterviewGraphController';
+import employerInterviewFollowUpRouteController from '../controllers/EmployerInterviewFollowUpRouteController';
+import employerInterviewCompetencyCoverageController from '../controllers/EmployerInterviewCompetencyCoverageController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3457,6 +3459,57 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewGraphController.buildGraph
+);
+
+// GET/POST .../interviews/:interviewId/questions/:questionIndex/follow-up-route
+// (27B) — targeted dynamic follow-up ROUTING, not coaching. At most one
+// generated follow-up per source question; a dynamic follow-up is never
+// itself routed for another follow-up.
+const questionIndexValidation = [param('questionIndex').isInt({ min: 0 }).withMessage('Invalid question index')];
+
+router.get(
+  '/:organizationId/interviews/:interviewId/questions/:questionIndex/follow-up-route',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIndexValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewFollowUpRouteController.getFollowUpRoute
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/questions/:questionIndex/follow-up-route',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIndexValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewFollowUpRouteController.generateFollowUpRoute
+);
+
+// GET/POST .../interviews/:interviewId/competency-coverage[/build] (27C) —
+// deterministic (NO AI) LIVE competency coverage overlay over the 27A
+// graph. Never rebuilds 27A automatically; never generates questions.
+router.get(
+  '/:organizationId/interviews/:interviewId/competency-coverage',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewCompetencyCoverageController.getCoverage
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/competency-coverage/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewCompetencyCoverageController.buildCoverage
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

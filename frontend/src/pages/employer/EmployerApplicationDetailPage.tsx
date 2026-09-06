@@ -29,6 +29,8 @@ import employerApi, {
   EmployerHiringClaimVerification,
   EmployerHiringReasoningConfidenceAggregate,
   EmployerInterviewGraph,
+  EmployerInterviewFollowUpRoute,
+  EmployerInterviewCompetencyCoverage,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -820,6 +822,17 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [buildingInterviewGraph, setBuildingInterviewGraph] = useState(false);
   const [buildInterviewGraphError, setBuildInterviewGraphError] = useState<string | null>(null);
 
+  const [followUpRouteByQuestion, setFollowUpRouteByQuestion] = useState<Record<string, EmployerInterviewFollowUpRoute>>({});
+  const [followUpRouteLoadingByQuestion, setFollowUpRouteLoadingByQuestion] = useState<Record<string, boolean>>({});
+  const [followUpRouteErrorByQuestion, setFollowUpRouteErrorByQuestion] = useState<Record<string, string>>({});
+  const [followUpRouteGeneratingByQuestion, setFollowUpRouteGeneratingByQuestion] = useState<Record<string, boolean>>({});
+
+  const [competencyCoverage, setCompetencyCoverage] = useState<EmployerInterviewCompetencyCoverage | null>(null);
+  const [competencyCoverageLoading, setCompetencyCoverageLoading] = useState(false);
+  const [competencyCoverageError, setCompetencyCoverageError] = useState<string | null>(null);
+  const [buildingCompetencyCoverage, setBuildingCompetencyCoverage] = useState(false);
+  const [buildCompetencyCoverageError, setBuildCompetencyCoverageError] = useState<string | null>(null);
+
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
   const [assessmentResultError, setAssessmentResultError] = useState<string | null>(null);
@@ -1498,6 +1511,85 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setBuildInterviewGraphError(err.message || 'Failed to build interview graph');
     } finally {
       setBuildingInterviewGraph(false);
+    }
+  };
+
+  const fetchFollowUpRoute = useCallback(
+    async (questionId: string) => {
+      if (!organizationId || !sessionAnswers) return;
+      setFollowUpRouteLoadingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+      setFollowUpRouteErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+      try {
+        const response = await employerApi.getEmployerInterviewFollowUpRoute(organizationId, sessionAnswers.sessionId, Number(questionId));
+        setFollowUpRouteByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+      } catch (err: any) {
+        setFollowUpRouteErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to load follow-up route' }));
+      } finally {
+        setFollowUpRouteLoadingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      sessionAnswers.questions.forEach((q) => {
+        if (q.evaluation) fetchFollowUpRoute(q.id);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus, sessionAnswers?.questions.length]);
+
+  const handleGenerateFollowUpRoute = async (questionId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setFollowUpRouteGeneratingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+    setFollowUpRouteErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+    try {
+      const response = await employerApi.generateEmployerInterviewFollowUpRoute(organizationId, sessionAnswers.sessionId, Number(questionId));
+      setFollowUpRouteByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+      if (response.data.generated && response.data.decision === 'follow_up') {
+        // A new answerable question was appended to the interview — refresh so it shows up in the sequence.
+        fetchSessionAnswers();
+      }
+    } catch (err: any) {
+      setFollowUpRouteErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to generate follow-up route' }));
+    } finally {
+      setFollowUpRouteGeneratingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+    }
+  };
+
+  const fetchCompetencyCoverage = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setCompetencyCoverageLoading(true);
+    setCompetencyCoverageError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewCompetencyCoverage(organizationId, sessionAnswers.sessionId);
+      setCompetencyCoverage(response.data);
+    } catch (err: any) {
+      setCompetencyCoverageError(err.message || 'Failed to load competency coverage');
+    } finally {
+      setCompetencyCoverageLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.sessionId) {
+      fetchCompetencyCoverage();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId]);
+
+  const handleBuildCompetencyCoverage = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setBuildingCompetencyCoverage(true);
+    setBuildCompetencyCoverageError(null);
+    try {
+      const response = await employerApi.buildEmployerInterviewCompetencyCoverage(organizationId, sessionAnswers.sessionId);
+      setCompetencyCoverage(response.data);
+    } catch (err: any) {
+      setBuildCompetencyCoverageError(err.message || 'Failed to build competency coverage');
+    } finally {
+      setBuildingCompetencyCoverage(false);
     }
   };
 
@@ -3136,6 +3228,66 @@ const EmployerApplicationDetailPage: React.FC = () => {
                                   )}
                                 </div>
                               )}
+
+                              {q.evaluation && (
+                                <div className="mt-3 pt-3 border-t border-mentor-border">
+                                  <p className="text-xs font-medium text-mentor-text mb-1">Dynamic Follow-up</p>
+                                  <p className="text-[11px] text-mentor-text-muted mb-2">
+                                    Dynamic follow-ups collect additional assessment evidence. They do not provide coaching or
+                                    hints to the candidate.
+                                  </p>
+
+                                  {followUpRouteLoadingByQuestion[q.id] ? (
+                                    <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                  ) : !followUpRouteByQuestion[q.id] || !followUpRouteByQuestion[q.id].generated ? (
+                                    followUpRouteByQuestion[q.id]?.status === 'processing' ? (
+                                      <p className="text-xs text-mentor-text-secondary">Analyzing follow-up need...</p>
+                                    ) : (
+                                      <div>
+                                        {(followUpRouteByQuestion[q.id]?.status === 'failed' || followUpRouteErrorByQuestion[q.id]) && (
+                                          <p className="text-xs text-mentor-error mb-1">
+                                            {followUpRouteByQuestion[q.id]?.errorMessage ||
+                                              followUpRouteErrorByQuestion[q.id] ||
+                                              'Follow-up routing failed.'}
+                                          </p>
+                                        )}
+                                        {!followUpRouteByQuestion[q.id] && !followUpRouteErrorByQuestion[q.id] && (
+                                          <p className="text-xs text-mentor-text-muted mb-1">Not analyzed</p>
+                                        )}
+                                        {canManage && (
+                                          <button
+                                            onClick={() => handleGenerateFollowUpRoute(q.id)}
+                                            disabled={followUpRouteGeneratingByQuestion[q.id]}
+                                            className="btn btn-secondary px-2 py-1 text-xs"
+                                          >
+                                            {followUpRouteGeneratingByQuestion[q.id]
+                                              ? 'Analyzing...'
+                                              : followUpRouteByQuestion[q.id]?.status === 'failed'
+                                                ? 'Retry'
+                                                : 'Evaluate Follow-up Need'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )
+                                  ) : followUpRouteByQuestion[q.id].decision === 'continue' ? (
+                                    <span className="badge badge-success">Continue — sufficient evidence</span>
+                                  ) : (
+                                    <div className="space-y-1">
+                                      <span className="badge badge-warning">Follow-up generated</span>
+                                      <p className="text-xs text-mentor-text-secondary">
+                                        Reason: {labelizeCode(followUpRouteByQuestion[q.id].reasonType)} &middot; Target competency:{' '}
+                                        {followUpRouteByQuestion[q.id].targetCompetencyName}
+                                      </p>
+                                      {followUpRouteByQuestion[q.id].generatedQuestionText && (
+                                        <p className="text-xs text-mentor-text surface-muted p-2">
+                                          Q{(followUpRouteByQuestion[q.id].generatedQuestionIndex ?? 0) + 1}:{' '}
+                                          {followUpRouteByQuestion[q.id].generatedQuestionText}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -3276,6 +3428,142 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           );
                         })()
                       )}
+
+                      <div className="mt-5 pt-5 border-t border-mentor-border">
+                        <h3 className="text-sm font-medium text-mentor-text mb-1">Competency Coverage</h3>
+                        <p className="text-xs text-mentor-text-muted mb-3">
+                          Live overlay of how much assessment evidence has actually been collected for each competency — not
+                          candidate score or performance.
+                        </p>
+
+                        {competencyCoverageLoading ? (
+                          <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                        ) : competencyCoverageError ? (
+                          <div>
+                            <p className="text-sm text-mentor-error mb-2">{competencyCoverageError}</p>
+                            <button onClick={fetchCompetencyCoverage} className="btn btn-secondary">
+                              Try Again
+                            </button>
+                          </div>
+                        ) : !competencyCoverage || !competencyCoverage.built ? (
+                          <div>
+                            <p className="text-sm text-mentor-text-secondary mb-3">
+                              Coverage not built yet. Requires the interview graph above to be built first.
+                            </p>
+                            {canManage && (
+                              <>
+                                {buildCompetencyCoverageError && (
+                                  <p className="text-sm text-mentor-error mb-2">{buildCompetencyCoverageError}</p>
+                                )}
+                                <button
+                                  onClick={handleBuildCompetencyCoverage}
+                                  disabled={buildingCompetencyCoverage || !interviewGraph?.built}
+                                  className="btn btn-primary"
+                                >
+                                  {buildingCompetencyCoverage ? 'Building...' : 'Build Competency Coverage'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          (() => {
+                            const summary = competencyCoverage.summary!;
+                            const competencies = competencyCoverage.competencies || [];
+                            const evidenceStateBadge: Record<string, string> = {
+                              covered: 'badge-success',
+                              partial: 'badge-warning',
+                              not_started: 'badge-neutral',
+                            };
+                            const evidenceStateLabel: Record<string, string> = {
+                              covered: 'Covered',
+                              partial: 'Partial',
+                              not_started: 'Not Started',
+                            };
+
+                            return (
+                              <div className="space-y-4">
+                                {canManage && (
+                                  <div>
+                                    {buildCompetencyCoverageError && (
+                                      <p className="text-sm text-mentor-error mb-2">{buildCompetencyCoverageError}</p>
+                                    )}
+                                    <button
+                                      onClick={handleBuildCompetencyCoverage}
+                                      disabled={buildingCompetencyCoverage}
+                                      className="btn btn-secondary"
+                                    >
+                                      {buildingCompetencyCoverage ? 'Rebuilding...' : 'Rebuild Competency Coverage'}
+                                    </button>
+                                  </div>
+                                )}
+
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Covered</p>
+                                    <p className="text-lg font-semibold text-mentor-success">{summary.coveredCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Partial</p>
+                                    <p className="text-lg font-semibold text-mentor-warning">{summary.partialCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Not Started</p>
+                                    <p className="text-lg font-semibold text-mentor-text">{summary.notStartedCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Coverage %</p>
+                                    <p className="text-lg font-semibold text-mentor-text">{summary.coveragePercent}%</p>
+                                  </div>
+                                </div>
+
+                                {competencies.length === 0 ? (
+                                  <p className="text-xs text-mentor-text-muted">No competencies in graph.</p>
+                                ) : (
+                                  <ul className="space-y-2">
+                                    {competencies.map((c) => (
+                                      <li key={c.competencyNodeId} className="surface-muted p-3">
+                                        <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                                          <p className="text-sm text-mentor-text">{c.competencyName}</p>
+                                          <span className={`badge ${evidenceStateBadge[c.evidenceState] || 'badge-neutral'}`}>
+                                            {evidenceStateLabel[c.evidenceState] || c.evidenceState}
+                                          </span>
+                                        </div>
+                                        <p className="text-xs text-mentor-text-secondary mb-1.5">
+                                          {c.plannedQuestionCount} planned &middot; {c.answeredQuestionCount} answered &middot;{' '}
+                                          {c.evaluatedQuestionCount} evaluated
+                                          {c.dynamicFollowUpCount > 0 &&
+                                            ` · ${c.dynamicFollowUpCount} dynamic follow-up${c.dynamicFollowUpCount === 1 ? '' : 's'}`}
+                                        </p>
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {c.questionIndexes.map((idx) => {
+                                            const isEvaluatedQ = c.evaluatedQuestionIndexes.includes(idx);
+                                            const isAnsweredQ = c.answeredQuestionIndexes.includes(idx);
+                                            const isDynamic = (competencyCoverage.dynamicEdges || []).some(
+                                              (e) => e.competencyNodeId === c.competencyNodeId && e.questionIndex === idx
+                                            );
+                                            const symbol = isEvaluatedQ ? '✓' : isAnsweredQ ? '●' : '○';
+                                            const label = isEvaluatedQ ? 'Evaluated' : isAnsweredQ ? 'Answered' : 'Not answered';
+                                            return (
+                                              <span
+                                                key={idx}
+                                                className={`badge ${isEvaluatedQ ? 'badge-success' : isAnsweredQ ? 'badge-warning' : 'badge-neutral'}`}
+                                                title={label}
+                                              >
+                                                Q{idx + 1} {symbol}
+                                                {isDynamic && ' ↳ Dynamic'}
+                                              </span>
+                                            );
+                                          })}
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            );
+                          })()
+                        )}
+                      </div>
                     </div>
                   )}
 
