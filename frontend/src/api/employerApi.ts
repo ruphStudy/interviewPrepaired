@@ -1668,6 +1668,80 @@ export type GetEmployerInterviewSessionAnswersResponse = ApiEnvelope<{ session: 
 export type EvaluateEmployerInterviewSessionResponse = ApiEnvelope<{ session: EmployerInterviewSessionAnswers }>;
 
 // ============================================================================
+// Answer Reasoning Evidence (Sprint 26A) — deterministic AI analysis of
+// OBSERVABLE reasoning expressed in one hiring-assessment answer. Never
+// chain-of-thought, never intelligence/personality/psychological-state
+// inference, never a hiring recommendation.
+// ============================================================================
+
+export type EmployerHiringReasoningSignalType =
+  | 'problem_decomposition'
+  | 'tradeoff_awareness'
+  | 'assumption_awareness'
+  | 'evidence_usage'
+  | 'causal_reasoning'
+  | 'alternative_consideration'
+  | 'decision_clarity';
+export type EmployerHiringReasoningSignalLevel = 'strong' | 'present' | 'limited' | 'not_observed';
+export type EmployerHiringOverallReasoningEvidence = 'strong' | 'sufficient' | 'limited' | 'insufficient';
+
+export interface EmployerHiringReasoningSignal {
+  type: EmployerHiringReasoningSignalType;
+  level: EmployerHiringReasoningSignalLevel;
+  evidenceSummary: string;
+}
+
+export interface EmployerHiringAnswerReasoningSignals {
+  generated: boolean;
+  status?: 'processing' | 'failed';
+  errorMessage?: string;
+  overallReasoningEvidence?: EmployerHiringOverallReasoningEvidence;
+  signals?: EmployerHiringReasoningSignal[];
+  limitations?: string[];
+  generatedAt?: string;
+}
+
+export type GetEmployerHiringAnswerReasoningSignalsResponse = ApiEnvelope<EmployerHiringAnswerReasoningSignals>;
+export type GenerateEmployerHiringAnswerReasoningSignalsResponse = ApiEnvelope<EmployerHiringAnswerReasoningSignals>;
+
+// ============================================================================
+// Confidence & Uncertainty Intelligence (Sprint 26B) — deterministic AI
+// analysis of OBSERVABLE claim confidence/uncertainty handling in one
+// hiring-assessment answer. NOT lie detection, NOT truth verification, NOT
+// a personality assessment.
+// ============================================================================
+
+export type EmployerHiringExpressionConfidence = 'high' | 'moderate' | 'low' | 'mixed';
+export type EmployerHiringUncertaintyAwareness = 'strong' | 'present' | 'limited' | 'not_observed';
+export type EmployerHiringCalibration = 'well_calibrated' | 'possibly_overconfident' | 'possibly_underconfident' | 'insufficient_evidence';
+export type EmployerHiringClaimConfidenceExpression = 'high' | 'moderate' | 'low' | 'uncertain';
+export type EmployerHiringClaimSupportLevel = 'supported_by_answer' | 'partially_supported' | 'unsupported';
+
+export interface EmployerHiringConfidenceClaim {
+  claimSummary: string;
+  confidenceExpression: EmployerHiringClaimConfidenceExpression;
+  supportLevel: EmployerHiringClaimSupportLevel;
+  uncertaintyAcknowledged: boolean;
+}
+
+export interface EmployerHiringAnswerConfidenceSignals {
+  generated: boolean;
+  status?: 'processing' | 'failed';
+  errorMessage?: string;
+  expressionConfidence?: EmployerHiringExpressionConfidence;
+  uncertaintyAwareness?: EmployerHiringUncertaintyAwareness;
+  calibration?: EmployerHiringCalibration;
+  claims?: EmployerHiringConfidenceClaim[];
+  strengths?: string[];
+  concerns?: string[];
+  limitations?: string[];
+  generatedAt?: string;
+}
+
+export type GetEmployerHiringAnswerConfidenceSignalsResponse = ApiEnvelope<EmployerHiringAnswerConfidenceSignals>;
+export type GenerateEmployerHiringAnswerConfidenceSignalsResponse = ApiEnvelope<EmployerHiringAnswerConfidenceSignals>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -3586,6 +3660,68 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to evaluate interview');
+    }
+  }
+
+  async getEmployerHiringAnswerReasoningSignals(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GetEmployerHiringAnswerReasoningSignalsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringAnswerReasoningSignalsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/reasoning-signals`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load reasoning evidence');
+    }
+  }
+
+  /** No client artifact IDs — the server resolves the question/rubric/evaluation itself. */
+  async generateEmployerHiringAnswerReasoningSignals(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GenerateEmployerHiringAnswerReasoningSignalsResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerHiringAnswerReasoningSignalsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/reasoning-signals/generate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate reasoning evidence');
+    }
+  }
+
+  async getEmployerHiringAnswerConfidenceSignals(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GetEmployerHiringAnswerConfidenceSignalsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringAnswerConfidenceSignalsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/confidence-signals`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load confidence intelligence');
+    }
+  }
+
+  /** No client artifact IDs — the server resolves the question/rubric/evaluation itself. 26A is optional enrichment only. */
+  async generateEmployerHiringAnswerConfidenceSignals(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GenerateEmployerHiringAnswerConfidenceSignalsResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerHiringAnswerConfidenceSignalsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/confidence-signals/generate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate confidence intelligence');
     }
   }
 

@@ -23,6 +23,8 @@ import employerApi, {
   EmployerInterviewSessionSummary,
   EmployerInterviewSessionQuestions,
   EmployerInterviewSessionAnswers,
+  EmployerHiringAnswerReasoningSignals,
+  EmployerHiringAnswerConfidenceSignals,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -782,6 +784,16 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [evaluating, setEvaluating] = useState(false);
   const [evaluateError, setEvaluateError] = useState<string | null>(null);
 
+  const [reasoningSignalsByQuestion, setReasoningSignalsByQuestion] = useState<Record<string, EmployerHiringAnswerReasoningSignals>>({});
+  const [reasoningLoadingByQuestion, setReasoningLoadingByQuestion] = useState<Record<string, boolean>>({});
+  const [reasoningErrorByQuestion, setReasoningErrorByQuestion] = useState<Record<string, string>>({});
+  const [reasoningGeneratingByQuestion, setReasoningGeneratingByQuestion] = useState<Record<string, boolean>>({});
+
+  const [confidenceSignalsByQuestion, setConfidenceSignalsByQuestion] = useState<Record<string, EmployerHiringAnswerConfidenceSignals>>({});
+  const [confidenceLoadingByQuestion, setConfidenceLoadingByQuestion] = useState<Record<string, boolean>>({});
+  const [confidenceErrorByQuestion, setConfidenceErrorByQuestion] = useState<Record<string, string>>({});
+  const [confidenceGeneratingByQuestion, setConfidenceGeneratingByQuestion] = useState<Record<string, boolean>>({});
+
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
   const [assessmentResultError, setAssessmentResultError] = useState<string | null>(null);
@@ -1240,6 +1252,86 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setEvaluateError(err.message || 'Failed to evaluate interview');
     } finally {
       setEvaluating(false);
+    }
+  };
+
+  const fetchReasoningSignals = useCallback(
+    async (questionId: string) => {
+      if (!organizationId || !sessionAnswers) return;
+      setReasoningLoadingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+      setReasoningErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+      try {
+        const response = await employerApi.getEmployerHiringAnswerReasoningSignals(organizationId, sessionAnswers.sessionId, Number(questionId));
+        setReasoningSignalsByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+      } catch (err: any) {
+        setReasoningErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to load reasoning evidence' }));
+      } finally {
+        setReasoningLoadingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      sessionAnswers.questions.forEach((q) => {
+        if (q.evaluation) fetchReasoningSignals(q.id);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus]);
+
+  const handleGenerateReasoningSignals = async (questionId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setReasoningGeneratingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+    setReasoningErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+    try {
+      const response = await employerApi.generateEmployerHiringAnswerReasoningSignals(organizationId, sessionAnswers.sessionId, Number(questionId));
+      setReasoningSignalsByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+    } catch (err: any) {
+      setReasoningErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to generate reasoning evidence' }));
+    } finally {
+      setReasoningGeneratingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+    }
+  };
+
+  const fetchConfidenceSignals = useCallback(
+    async (questionId: string) => {
+      if (!organizationId || !sessionAnswers) return;
+      setConfidenceLoadingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+      setConfidenceErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+      try {
+        const response = await employerApi.getEmployerHiringAnswerConfidenceSignals(organizationId, sessionAnswers.sessionId, Number(questionId));
+        setConfidenceSignalsByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+      } catch (err: any) {
+        setConfidenceErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to load confidence intelligence' }));
+      } finally {
+        setConfidenceLoadingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      sessionAnswers.questions.forEach((q) => {
+        if (q.evaluation) fetchConfidenceSignals(q.id);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus]);
+
+  const handleGenerateConfidenceSignals = async (questionId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setConfidenceGeneratingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+    setConfidenceErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+    try {
+      const response = await employerApi.generateEmployerHiringAnswerConfidenceSignals(organizationId, sessionAnswers.sessionId, Number(questionId));
+      setConfidenceSignalsByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+    } catch (err: any) {
+      setConfidenceErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to generate confidence intelligence' }));
+    } finally {
+      setConfidenceGeneratingByQuestion((prev) => ({ ...prev, [questionId]: false }));
     }
   };
 
@@ -2723,6 +2815,158 @@ const EmployerApplicationDetailPage: React.FC = () => {
                                   )}
                                   {q.evaluation.evidenceSummary && (
                                     <p className="text-xs text-mentor-text-muted">{q.evaluation.evidenceSummary}</p>
+                                  )}
+                                </div>
+                              )}
+
+                              {q.evaluation && (
+                                <div className="mt-3 pt-3 border-t border-mentor-border">
+                                  <p className="text-xs font-medium text-mentor-text mb-1">Reasoning Evidence</p>
+                                  <p className="text-[11px] text-mentor-text-muted mb-2">
+                                    Reasoning Evidence describes observable characteristics of this answer. It does not reveal
+                                    private thought processes or measure intelligence.
+                                  </p>
+
+                                  {reasoningLoadingByQuestion[q.id] ? (
+                                    <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                  ) : !reasoningSignalsByQuestion[q.id] || !reasoningSignalsByQuestion[q.id].generated ? (
+                                    reasoningSignalsByQuestion[q.id]?.status === 'processing' ? (
+                                      <p className="text-xs text-mentor-text-secondary">Analyzing reasoning evidence...</p>
+                                    ) : (
+                                      <div>
+                                        {(reasoningSignalsByQuestion[q.id]?.status === 'failed' ||
+                                          reasoningErrorByQuestion[q.id]) && (
+                                          <p className="text-xs text-mentor-error mb-1">
+                                            {reasoningSignalsByQuestion[q.id]?.errorMessage ||
+                                              reasoningErrorByQuestion[q.id] ||
+                                              'Reasoning evidence generation failed.'}
+                                          </p>
+                                        )}
+                                        {canManage && (
+                                          <button
+                                            onClick={() => handleGenerateReasoningSignals(q.id)}
+                                            disabled={reasoningGeneratingByQuestion[q.id]}
+                                            className="btn btn-secondary px-2 py-1 text-xs"
+                                          >
+                                            {reasoningGeneratingByQuestion[q.id]
+                                              ? 'Analyzing...'
+                                              : reasoningSignalsByQuestion[q.id]?.status === 'failed'
+                                                ? 'Retry'
+                                                : 'Analyze Reasoning Evidence'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      <span className="badge badge-neutral">
+                                        {labelizeCode(reasoningSignalsByQuestion[q.id].overallReasoningEvidence)}
+                                      </span>
+                                      <ul className="space-y-1 mt-1.5">
+                                        {(reasoningSignalsByQuestion[q.id].signals || []).map((s) => (
+                                          <li key={s.type} className="text-xs text-mentor-text-secondary">
+                                            <span className="font-medium text-mentor-text">{labelizeCode(s.type)}</span>
+                                            {' — '}
+                                            <span className="badge badge-neutral">{labelizeCode(s.level)}</span>
+                                            {s.evidenceSummary && <span className="block text-mentor-text-muted">{s.evidenceSummary}</span>}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                      {(reasoningSignalsByQuestion[q.id].limitations || []).length > 0 && (
+                                        <p className="text-[11px] text-mentor-text-muted">
+                                          Limitations: {(reasoningSignalsByQuestion[q.id].limitations || []).join('; ')}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {q.evaluation && (
+                                <div className="mt-3 pt-3 border-t border-mentor-border">
+                                  <p className="text-xs font-medium text-mentor-text mb-1">Confidence &amp; Uncertainty</p>
+                                  <p className="text-[11px] text-mentor-text-muted mb-2">
+                                    Confidence Intelligence reflects how certainty and uncertainty are expressed in this answer.
+                                    It is not lie detection, truth verification, or a personality assessment.
+                                  </p>
+
+                                  {confidenceLoadingByQuestion[q.id] ? (
+                                    <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                  ) : !confidenceSignalsByQuestion[q.id] || !confidenceSignalsByQuestion[q.id].generated ? (
+                                    confidenceSignalsByQuestion[q.id]?.status === 'processing' ? (
+                                      <p className="text-xs text-mentor-text-secondary">Analyzing confidence intelligence...</p>
+                                    ) : (
+                                      <div>
+                                        {(confidenceSignalsByQuestion[q.id]?.status === 'failed' ||
+                                          confidenceErrorByQuestion[q.id]) && (
+                                          <p className="text-xs text-mentor-error mb-1">
+                                            {confidenceSignalsByQuestion[q.id]?.errorMessage ||
+                                              confidenceErrorByQuestion[q.id] ||
+                                              'Confidence intelligence generation failed.'}
+                                          </p>
+                                        )}
+                                        {canManage && (
+                                          <button
+                                            onClick={() => handleGenerateConfidenceSignals(q.id)}
+                                            disabled={confidenceGeneratingByQuestion[q.id]}
+                                            className="btn btn-secondary px-2 py-1 text-xs"
+                                          >
+                                            {confidenceGeneratingByQuestion[q.id]
+                                              ? 'Analyzing...'
+                                              : confidenceSignalsByQuestion[q.id]?.status === 'failed'
+                                                ? 'Retry'
+                                                : 'Analyze Confidence & Uncertainty'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      <div className="flex flex-wrap gap-1.5">
+                                        <span className="badge badge-neutral">
+                                          Expression: {labelizeCode(confidenceSignalsByQuestion[q.id].expressionConfidence)}
+                                        </span>
+                                        <span className="badge badge-neutral">
+                                          Uncertainty Awareness: {labelizeCode(confidenceSignalsByQuestion[q.id].uncertaintyAwareness)}
+                                        </span>
+                                        <span className="badge badge-neutral">
+                                          Calibration: {labelizeCode(confidenceSignalsByQuestion[q.id].calibration)}
+                                        </span>
+                                      </div>
+
+                                      {(confidenceSignalsByQuestion[q.id].claims || []).length > 0 && (
+                                        <div className="mt-1.5">
+                                          <p className="text-[11px] font-medium text-mentor-text-muted mb-1">Observed Claims</p>
+                                          <ul className="space-y-1">
+                                            {(confidenceSignalsByQuestion[q.id].claims || []).map((c, idx) => (
+                                              <li key={idx} className="text-xs text-mentor-text-secondary">
+                                                {c.claimSummary}
+                                                <span className="block text-mentor-text-muted">
+                                                  {labelizeCode(c.confidenceExpression)} confidence &middot; {labelizeCode(c.supportLevel)}
+                                                  &middot; Uncertainty acknowledged: {c.uncertaintyAcknowledged ? 'Yes' : 'No'}
+                                                </span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+
+                                      {(confidenceSignalsByQuestion[q.id].strengths || []).length > 0 && (
+                                        <p className="text-xs text-mentor-success">
+                                          Strengths: {(confidenceSignalsByQuestion[q.id].strengths || []).join('; ')}
+                                        </p>
+                                      )}
+                                      {(confidenceSignalsByQuestion[q.id].concerns || []).length > 0 && (
+                                        <p className="text-xs text-mentor-warning">
+                                          Concerns: {(confidenceSignalsByQuestion[q.id].concerns || []).join('; ')}
+                                        </p>
+                                      )}
+                                      {(confidenceSignalsByQuestion[q.id].limitations || []).length > 0 && (
+                                        <p className="text-[11px] text-mentor-text-muted">
+                                          Limitations: {(confidenceSignalsByQuestion[q.id].limitations || []).join('; ')}
+                                        </p>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               )}

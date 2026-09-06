@@ -54,6 +54,8 @@ import employerSkillEvidenceIntelligenceController from '../controllers/Employer
 import employerCandidateSkillMemoryController from '../controllers/EmployerCandidateSkillMemoryController';
 import employerCandidateSkillEvolutionController from '../controllers/EmployerCandidateSkillEvolutionController';
 import employerTalentSkillMapController from '../controllers/EmployerTalentSkillMapController';
+import employerHiringAnswerReasoningController from '../controllers/EmployerHiringAnswerReasoningController';
+import employerHiringAnswerConfidenceController from '../controllers/EmployerHiringAnswerConfidenceController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3301,6 +3303,62 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringAssessmentFinalizationController.getFinalization
+);
+
+// GET/POST .../interviews/:interviewId/questions/:questionId/reasoning-signals[/generate]
+// (26A) — observable-reasoning-evidence intelligence for ONE hiring-
+// assessment answer. `questionId` is the SAME question-index identifier
+// `Interview.evaluateQuestion` already uses (questions have no persisted
+// `_id`). Never chain-of-thought, never a hiring recommendation.
+const interviewIdValidation = [param('interviewId').isMongoId().withMessage('Invalid interview ID')];
+const questionIdValidation = [param('questionId').isInt({ min: 0 }).withMessage('Invalid question index')];
+
+router.get(
+  '/:organizationId/interviews/:interviewId/questions/:questionId/reasoning-signals',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringAnswerReasoningController.getReasoningSignals
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/questions/:questionId/reasoning-signals/generate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringAnswerReasoningController.generateReasoningSignals
+);
+
+// GET/POST .../interviews/:interviewId/questions/:questionId/confidence-signals[/generate]
+// (26B) — observable confidence/uncertainty-handling intelligence for ONE
+// hiring-assessment answer. NOT lie detection, NOT a truth/personality
+// score. 26A is optional enrichment only; never auto-generated here.
+router.get(
+  '/:organizationId/interviews/:interviewId/questions/:questionId/confidence-signals',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringAnswerConfidenceController.getConfidenceSignals
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/questions/:questionId/confidence-signals/generate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringAnswerConfidenceController.generateConfidenceSignals
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
