@@ -62,6 +62,8 @@ import employerHiringReasoningConfidenceAggregateController from '../controllers
 import employerInterviewGraphController from '../controllers/EmployerInterviewGraphController';
 import employerInterviewFollowUpRouteController from '../controllers/EmployerInterviewFollowUpRouteController';
 import employerInterviewCompetencyCoverageController from '../controllers/EmployerInterviewCompetencyCoverageController';
+import employerInterviewAdaptiveRoutingController from '../controllers/EmployerInterviewAdaptiveRoutingController';
+import employerInterviewGraphAnalyticsController from '../controllers/EmployerInterviewGraphAnalyticsController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3510,6 +3512,59 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewCompetencyCoverageController.buildCoverage
+);
+
+// POST .../interviews/:interviewId/adaptive-route (27D) — deterministic
+// (NO AI) next-EXISTING-question selection. Body may ONLY carry an
+// optional `sourceQuestionIndex`. Append-only routing history.
+const adaptiveRouteBodyValidation = [
+  body('sourceQuestionIndex').optional().isInt({ min: 0 }).withMessage('Invalid sourceQuestionIndex'),
+];
+
+router.post(
+  '/:organizationId/interviews/:interviewId/adaptive-route',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...adaptiveRouteBodyValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewAdaptiveRoutingController.selectNextQuestion
+);
+
+// GET .../interviews/:interviewId/adaptive-routes (27D) — chronological
+// routing history, read-only.
+router.get(
+  '/:organizationId/interviews/:interviewId/adaptive-routes',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewAdaptiveRoutingController.getRouteHistory
+);
+
+// GET/POST .../interviews/:interviewId/graph-analytics[/build] (27E) —
+// deterministic (NO AI) analytics over 27A-27D. Routing/traversal behavior
+// only — never a candidate performance score or hiring recommendation.
+router.get(
+  '/:organizationId/interviews/:interviewId/graph-analytics',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerInterviewGraphAnalyticsController.getAnalytics
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/graph-analytics/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewGraphAnalyticsController.buildAnalytics
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

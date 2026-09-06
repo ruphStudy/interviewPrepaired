@@ -31,6 +31,8 @@ import employerApi, {
   EmployerInterviewGraph,
   EmployerInterviewFollowUpRoute,
   EmployerInterviewCompetencyCoverage,
+  EmployerInterviewAdaptiveRoute,
+  EmployerInterviewGraphAnalytics,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -833,6 +835,18 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [buildingCompetencyCoverage, setBuildingCompetencyCoverage] = useState(false);
   const [buildCompetencyCoverageError, setBuildCompetencyCoverageError] = useState<string | null>(null);
 
+  const [adaptiveRoutes, setAdaptiveRoutes] = useState<EmployerInterviewAdaptiveRoute[]>([]);
+  const [adaptiveRoutesLoading, setAdaptiveRoutesLoading] = useState(false);
+  const [adaptiveRoutesError, setAdaptiveRoutesError] = useState<string | null>(null);
+  const [selectingAdaptiveRoute, setSelectingAdaptiveRoute] = useState(false);
+  const [selectAdaptiveRouteError, setSelectAdaptiveRouteError] = useState<string | null>(null);
+
+  const [graphAnalytics, setGraphAnalytics] = useState<EmployerInterviewGraphAnalytics | null>(null);
+  const [graphAnalyticsLoading, setGraphAnalyticsLoading] = useState(false);
+  const [graphAnalyticsError, setGraphAnalyticsError] = useState<string | null>(null);
+  const [buildingGraphAnalytics, setBuildingGraphAnalytics] = useState(false);
+  const [buildGraphAnalyticsError, setBuildGraphAnalyticsError] = useState<string | null>(null);
+
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
   const [assessmentResultError, setAssessmentResultError] = useState<string | null>(null);
@@ -1590,6 +1604,78 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setBuildCompetencyCoverageError(err.message || 'Failed to build competency coverage');
     } finally {
       setBuildingCompetencyCoverage(false);
+    }
+  };
+
+  const fetchAdaptiveRoutes = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setAdaptiveRoutesLoading(true);
+    setAdaptiveRoutesError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewAdaptiveRouteHistory(organizationId, sessionAnswers.sessionId);
+      setAdaptiveRoutes(response.data.routes);
+    } catch (err: any) {
+      setAdaptiveRoutesError(err.message || 'Failed to load adaptive routing history');
+    } finally {
+      setAdaptiveRoutesLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.sessionId) {
+      fetchAdaptiveRoutes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId]);
+
+  const handleSelectAdaptiveRoute = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setSelectingAdaptiveRoute(true);
+    setSelectAdaptiveRouteError(null);
+    try {
+      const latest = adaptiveRoutes[adaptiveRoutes.length - 1];
+      const sourceQuestionIndex = latest?.selectedQuestionIndex;
+      const response = await employerApi.selectEmployerInterviewAdaptiveRoute(organizationId, sessionAnswers.sessionId, sourceQuestionIndex);
+      setAdaptiveRoutes((prev) => [...prev, response.data]);
+    } catch (err: any) {
+      setSelectAdaptiveRouteError(err.message || 'Failed to select next question');
+    } finally {
+      setSelectingAdaptiveRoute(false);
+    }
+  };
+
+  const fetchGraphAnalytics = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setGraphAnalyticsLoading(true);
+    setGraphAnalyticsError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewGraphAnalytics(organizationId, sessionAnswers.sessionId);
+      setGraphAnalytics(response.data);
+    } catch (err: any) {
+      setGraphAnalyticsError(err.message || 'Failed to load interview graph analytics');
+    } finally {
+      setGraphAnalyticsLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.sessionId) {
+      fetchGraphAnalytics();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId]);
+
+  const handleBuildGraphAnalytics = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setBuildingGraphAnalytics(true);
+    setBuildGraphAnalyticsError(null);
+    try {
+      const response = await employerApi.buildEmployerInterviewGraphAnalytics(organizationId, sessionAnswers.sessionId);
+      setGraphAnalytics(response.data);
+    } catch (err: any) {
+      setBuildGraphAnalyticsError(err.message || 'Failed to build interview graph analytics');
+    } finally {
+      setBuildingGraphAnalytics(false);
     }
   };
 
@@ -3559,6 +3645,206 @@ const EmployerApplicationDetailPage: React.FC = () => {
                                     ))}
                                   </ul>
                                 )}
+                              </div>
+                            );
+                          })()
+                        )}
+                      </div>
+
+                      <div className="mt-5 pt-5 border-t border-mentor-border">
+                        <h3 className="text-sm font-medium text-mentor-text mb-1">Adaptive Interview Routing</h3>
+                        <p className="text-xs text-mentor-text-muted mb-3">
+                          Adaptive routing selects from existing assessment questions using competency coverage and existing
+                          evaluation evidence. It does not generate a candidate score or hiring recommendation.
+                        </p>
+
+                        {adaptiveRoutesLoading ? (
+                          <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                        ) : adaptiveRoutesError ? (
+                          <div>
+                            <p className="text-sm text-mentor-error mb-2">{adaptiveRoutesError}</p>
+                            <button onClick={fetchAdaptiveRoutes} className="btn btn-secondary">
+                              Try Again
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {canManage && (
+                              <div>
+                                {selectAdaptiveRouteError && <p className="text-sm text-mentor-error mb-2">{selectAdaptiveRouteError}</p>}
+                                <button onClick={handleSelectAdaptiveRoute} disabled={selectingAdaptiveRoute} className="btn btn-primary">
+                                  {selectingAdaptiveRoute ? 'Selecting...' : 'Select Next Question'}
+                                </button>
+                              </div>
+                            )}
+
+                            {adaptiveRoutes.length === 0 ? (
+                              <p className="text-sm text-mentor-text-secondary">No routing decisions yet.</p>
+                            ) : (
+                              (() => {
+                                const latest = adaptiveRoutes[adaptiveRoutes.length - 1];
+                                return (
+                                  <div className="space-y-3">
+                                    <div className="surface-muted p-3">
+                                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                                        <span className="badge badge-info">{labelizeCode(latest.decision)}</span>
+                                        {latest.reasonType && <span className="badge badge-neutral">{labelizeCode(latest.reasonType)}</span>}
+                                      </div>
+                                      {latest.decision === 'select_question' && (
+                                        <p className="text-sm text-mentor-text">
+                                          Next: Q{(latest.selectedQuestionIndex ?? 0) + 1}
+                                          {latest.selectedCompetencyNames.length > 0 && ` · ${latest.selectedCompetencyNames.join(', ')}`}
+                                          {latest.selectedDifficulty && ` · ${labelizeCode(latest.selectedDifficulty)}`}
+                                        </p>
+                                      )}
+                                      <p className="text-xs text-mentor-text-muted mt-1">
+                                        {latest.sourceQuestionIndex !== undefined && `From Q${latest.sourceQuestionIndex + 1} · `}
+                                        {formatDateTime(latest.createdAt)}
+                                      </p>
+                                    </div>
+
+                                    {adaptiveRoutes.length > 1 && (
+                                      <div>
+                                        <p className="label mb-2">Routing History</p>
+                                        <ul className="space-y-1.5">
+                                          {[...adaptiveRoutes].reverse().map((r) => (
+                                            <li key={r.id} className="text-xs text-mentor-text-secondary">
+                                              {formatDateTime(r.createdAt)} &middot; {labelizeCode(r.decision)}
+                                              {r.decision === 'select_question' && ` → Q${(r.selectedQuestionIndex ?? 0) + 1}`}
+                                              {r.reasonType && ` · ${labelizeCode(r.reasonType)}`}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-5 pt-5 border-t border-mentor-border">
+                        <h3 className="text-sm font-medium text-mentor-text mb-1">Dynamic Interview Analytics</h3>
+                        <p className="text-xs text-mentor-text-muted mb-3">
+                          Deterministic routing analytics only — not a candidate performance score or hiring recommendation.
+                        </p>
+
+                        {graphAnalyticsLoading ? (
+                          <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                        ) : graphAnalyticsError ? (
+                          <div>
+                            <p className="text-sm text-mentor-error mb-2">{graphAnalyticsError}</p>
+                            <button onClick={fetchGraphAnalytics} className="btn btn-secondary">
+                              Try Again
+                            </button>
+                          </div>
+                        ) : !graphAnalytics || !graphAnalytics.built ? (
+                          <div>
+                            <p className="text-sm text-mentor-text-secondary mb-3">Analytics not built yet.</p>
+                            {canManage && (
+                              <>
+                                {buildGraphAnalyticsError && <p className="text-sm text-mentor-error mb-2">{buildGraphAnalyticsError}</p>}
+                                <button onClick={handleBuildGraphAnalytics} disabled={buildingGraphAnalytics} className="btn btn-primary">
+                                  {buildingGraphAnalytics ? 'Building...' : 'Build Interview Analytics'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          (() => {
+                            const g = graphAnalytics.graph!;
+                            const exec = graphAnalytics.execution!;
+                            const fu = graphAnalytics.followUps!;
+                            const cov = graphAnalytics.coverage!;
+                            const ar = graphAnalytics.adaptiveRouting!;
+                            const diff = graphAnalytics.difficulty!;
+
+                            return (
+                              <div className="space-y-5">
+                                {canManage && (
+                                  <div>
+                                    {buildGraphAnalyticsError && <p className="text-sm text-mentor-error mb-2">{buildGraphAnalyticsError}</p>}
+                                    <button onClick={handleBuildGraphAnalytics} disabled={buildingGraphAnalytics} className="btn btn-secondary">
+                                      {buildingGraphAnalytics ? 'Rebuilding...' : 'Rebuild Interview Analytics'}
+                                    </button>
+                                  </div>
+                                )}
+
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Competency Coverage</p>
+                                    <p className="text-lg font-semibold text-mentor-text">
+                                      {cov.available ? `${cov.coveragePercent}%` : 'N/A'}
+                                    </p>
+                                  </div>
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Dynamic Follow-ups</p>
+                                    <p className="text-lg font-semibold text-mentor-text">{g.dynamicFollowUpCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Adaptive Selections</p>
+                                    <p className="text-lg font-semibold text-mentor-text">{ar.selectionCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-3">
+                                    <p className="text-xs text-mentor-text-muted">Questions Evaluated</p>
+                                    <p className="text-lg font-semibold text-mentor-text">{exec.evaluatedQuestionCount}</p>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="label mb-2">A. Graph Execution</p>
+                                  <p className="text-xs text-mentor-text-secondary">
+                                    Planned: {g.plannedQuestionCount} &middot; Current: {g.totalCurrentQuestionCount} &middot; Answered:{' '}
+                                    {exec.answeredQuestionCount} &middot; Evaluated: {exec.evaluatedQuestionCount} &middot; Unanswered:{' '}
+                                    {exec.unansweredQuestionCount}
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <p className="label mb-2">B. Follow-up Routing</p>
+                                  <p className="text-xs text-mentor-text-secondary">
+                                    Analyzed: {fu.analyzedSourceQuestionCount} &middot; Generated: {fu.followUpGeneratedCount} &middot; Continue:{' '}
+                                    {fu.continueDecisionCount} &middot; Follow-up Rate: {fu.followUpRatePercent}%
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <p className="label mb-2">C. Coverage</p>
+                                  {!cov.available ? (
+                                    <p className="text-xs text-mentor-text-muted">Coverage not available.</p>
+                                  ) : (
+                                    <p className="text-xs text-mentor-text-secondary">
+                                      Covered: {cov.coveredCount} &middot; Partial: {cov.partialCount} &middot; Not Started:{' '}
+                                      {cov.notStartedCount}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div>
+                                  <p className="label mb-2">D. Adaptive Routing</p>
+                                  <p className="text-xs text-mentor-text-secondary">
+                                    Uncovered competency: {ar.uncoveredCompetencySelections} &middot; Partial coverage:{' '}
+                                    {ar.partialCoverageSelections} &middot; Follow-up priority: {ar.followUpPrioritySelections} &middot;
+                                    Difficulty progression: {ar.difficultyProgressionSelections} &middot; Difficulty recovery:{' '}
+                                    {ar.difficultyRecoverySelections} &middot; Remaining question: {ar.remainingQuestionSelections}
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <p className="label mb-2">E. Difficulty Routing</p>
+                                  <p className="text-xs text-mentor-text-secondary">
+                                    Easy: {diff.selectedEasyCount} &middot; Medium: {diff.selectedMediumCount} &middot; Hard:{' '}
+                                    {diff.selectedHardCount}
+                                  </p>
+                                  <p className="text-xs text-mentor-text-secondary mt-1">
+                                    Transitions — easy→medium: {diff.transitions.easyToMedium} &middot; medium→hard:{' '}
+                                    {diff.transitions.mediumToHard} &middot; hard→medium: {diff.transitions.hardToMedium} &middot;
+                                    medium→easy: {diff.transitions.mediumToEasy} &middot; same: {diff.transitions.sameDifficulty} &middot;
+                                    unknown: {diff.transitions.unknown}
+                                  </p>
+                                </div>
                               </div>
                             );
                           })()

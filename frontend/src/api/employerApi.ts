@@ -2052,6 +2052,125 @@ export type GetEmployerInterviewCompetencyCoverageResponse = ApiEnvelope<Employe
 export type BuildEmployerInterviewCompetencyCoverageResponse = ApiEnvelope<EmployerInterviewCompetencyCoverage>;
 
 // ============================================================================
+// Adaptive Difficulty & Question Selection (Sprint 27D) — deterministic (NO
+// AI) selection among EXISTING unanswered questions. Never generates a new
+// question, never creates a candidate score.
+// ============================================================================
+
+export type EmployerInterviewAdaptiveDecision = 'select_question' | 'complete' | 'wait_for_evaluation';
+export type EmployerInterviewAdaptiveReasonType =
+  | 'uncovered_competency'
+  | 'partial_coverage'
+  | 'difficulty_progression'
+  | 'difficulty_recovery'
+  | 'remaining_question'
+  | 'follow_up_priority';
+
+export interface EmployerInterviewAdaptiveConsideredQuestion {
+  questionIndex: number;
+  competencyNames: string[];
+  difficulty?: string;
+  eligible: boolean;
+  priority: number;
+  reasons: string[];
+}
+
+export interface EmployerInterviewAdaptiveRoute {
+  id: string;
+  routeVersion: string;
+  generatedAt: string;
+  sourceQuestionIndex?: number;
+  selectedQuestionIndex?: number;
+  selectedCompetencyNames: string[];
+  selectedDifficulty?: string;
+  decision: EmployerInterviewAdaptiveDecision;
+  reasonType?: EmployerInterviewAdaptiveReasonType;
+  consideredQuestions: EmployerInterviewAdaptiveConsideredQuestion[];
+  createdAt: string;
+}
+
+export type SelectEmployerInterviewAdaptiveRouteResponse = ApiEnvelope<EmployerInterviewAdaptiveRoute>;
+export type GetEmployerInterviewAdaptiveRouteHistoryResponse = ApiEnvelope<{ routes: EmployerInterviewAdaptiveRoute[] }>;
+
+// ============================================================================
+// Dynamic Interview Graph Analytics (Sprint 27E) — deterministic (NO AI)
+// analytics over 27A-27D. Routing/traversal behavior only — never a
+// candidate performance score or hiring recommendation.
+// ============================================================================
+
+export interface EmployerInterviewGraphAnalyticsGraphSummary {
+  competencyCount: number;
+  plannedQuestionCount: number;
+  dynamicFollowUpCount: number;
+  totalCurrentQuestionCount: number;
+}
+
+export interface EmployerInterviewGraphAnalyticsExecutionSummary {
+  answeredQuestionCount: number;
+  evaluatedQuestionCount: number;
+  unansweredQuestionCount: number;
+  adaptiveRouteCount: number;
+  completedRouteCount: number;
+}
+
+export interface EmployerInterviewGraphAnalyticsFollowUpSummary {
+  analyzedSourceQuestionCount: number;
+  followUpGeneratedCount: number;
+  continueDecisionCount: number;
+  followUpRatePercent: number;
+}
+
+export interface EmployerInterviewGraphAnalyticsCoverageSummary {
+  available: boolean;
+  competencyCount?: number;
+  coveredCount?: number;
+  partialCount?: number;
+  notStartedCount?: number;
+  coveragePercent?: number;
+}
+
+export interface EmployerInterviewGraphAnalyticsAdaptiveRoutingSummary {
+  selectionCount: number;
+  followUpPrioritySelections: number;
+  uncoveredCompetencySelections: number;
+  partialCoverageSelections: number;
+  difficultyProgressionSelections: number;
+  difficultyRecoverySelections: number;
+  remainingQuestionSelections: number;
+}
+
+export interface EmployerInterviewGraphAnalyticsDifficultyTransitions {
+  easyToMedium: number;
+  mediumToHard: number;
+  hardToMedium: number;
+  mediumToEasy: number;
+  sameDifficulty: number;
+  unknown: number;
+}
+
+export interface EmployerInterviewGraphAnalyticsDifficultySummary {
+  selectedEasyCount: number;
+  selectedMediumCount: number;
+  selectedHardCount: number;
+  transitions: EmployerInterviewGraphAnalyticsDifficultyTransitions;
+}
+
+export interface EmployerInterviewGraphAnalytics {
+  built: boolean;
+  calculationVersion?: string;
+  generatedAt?: string;
+  graph?: EmployerInterviewGraphAnalyticsGraphSummary;
+  execution?: EmployerInterviewGraphAnalyticsExecutionSummary;
+  followUps?: EmployerInterviewGraphAnalyticsFollowUpSummary;
+  coverage?: EmployerInterviewGraphAnalyticsCoverageSummary;
+  adaptiveRouting?: EmployerInterviewGraphAnalyticsAdaptiveRoutingSummary;
+  difficulty?: EmployerInterviewGraphAnalyticsDifficultySummary;
+}
+
+export type GetEmployerInterviewGraphAnalyticsResponse = ApiEnvelope<EmployerInterviewGraphAnalytics>;
+export type BuildEmployerInterviewGraphAnalyticsResponse = ApiEnvelope<EmployerInterviewGraphAnalytics>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -4199,6 +4318,60 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to build competency coverage');
+    }
+  }
+
+  /** No candidate artifact IDs — body may only carry an optional `sourceQuestionIndex`. Never generates a new question. */
+  async selectEmployerInterviewAdaptiveRoute(
+    organizationId: string,
+    interviewId: string,
+    sourceQuestionIndex?: number
+  ): Promise<SelectEmployerInterviewAdaptiveRouteResponse> {
+    try {
+      const response = await this.api.post<SelectEmployerInterviewAdaptiveRouteResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/adaptive-route`,
+        sourceQuestionIndex !== undefined ? { sourceQuestionIndex } : {}
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to select next question');
+    }
+  }
+
+  async getEmployerInterviewAdaptiveRouteHistory(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GetEmployerInterviewAdaptiveRouteHistoryResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewAdaptiveRouteHistoryResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/adaptive-routes`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load adaptive routing history');
+    }
+  }
+
+  async getEmployerInterviewGraphAnalytics(organizationId: string, interviewId: string): Promise<GetEmployerInterviewGraphAnalyticsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewGraphAnalyticsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/graph-analytics`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview graph analytics');
+    }
+  }
+
+  /** Deterministic, no AI — idempotent upsert-in-place rebuild. No client artifact IDs. */
+  async buildEmployerInterviewGraphAnalytics(organizationId: string, interviewId: string): Promise<BuildEmployerInterviewGraphAnalyticsResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerInterviewGraphAnalyticsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/graph-analytics/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build interview graph analytics');
     }
   }
 
