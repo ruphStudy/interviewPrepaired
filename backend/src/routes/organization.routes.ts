@@ -52,6 +52,8 @@ import employerCollaborationAnalyticsController from '../controllers/EmployerCol
 import employerSkillGraphController from '../controllers/EmployerSkillGraphController';
 import employerSkillEvidenceIntelligenceController from '../controllers/EmployerSkillEvidenceIntelligenceController';
 import employerCandidateSkillMemoryController from '../controllers/EmployerCandidateSkillMemoryController';
+import employerCandidateSkillEvolutionController from '../controllers/EmployerCandidateSkillEvolutionController';
+import employerTalentSkillMapController from '../controllers/EmployerTalentSkillMapController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -2821,6 +2823,80 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerCandidateSkillMemoryController.refreshSkillMemory
+);
+
+// GET/POST .../candidates/:candidateId/skill-evolution[/refresh] (25D) —
+// deterministic (no AI) evidence-evolution/recency built ONLY from an
+// existing 25C skill memory row per skill. Never claims the candidate's
+// actual skill improved/declined — only that collected EVIDENCE did.
+router.get(
+  '/:organizationId/candidates/:candidateId/skill-evolution',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateSkillEvolutionController.getSkillEvolution
+);
+
+router.post(
+  '/:organizationId/candidates/:candidateId/skill-evolution/refresh',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateSkillEvolutionController.refreshSkillEvolution
+);
+
+// GET .../talent/skill-map (25E) — aggregate-only organization talent skill
+// summary over existing 25C memory (+25D enrichment where present). Never
+// returns candidate identities.
+router.get(
+  '/:organizationId/talent/skill-map',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerTalentSkillMapController.getSkillMap
+);
+
+// GET .../talent/skill-search (25E) — deterministic (no AI, no fuzzy/
+// semantic matching) discovery of candidates by existing structured skill
+// evidence. NOT candidate ranking/hiring recommendation.
+const talentSkillSearchValidation = [
+  query('search').optional().isString().trim().isLength({ max: 200 }).withMessage('search must be at most 200 characters'),
+  query('skillNodeIds')
+    .optional()
+    .isString()
+    .custom((value: string) => {
+      const ids = value
+        .split(',')
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0);
+      if (ids.length === 0 || !ids.every((id) => /^[0-9a-fA-F]{24}$/.test(id))) {
+        throw new Error('skillNodeIds must be a comma-separated list of valid IDs');
+      }
+      return true;
+    }),
+  query('classification')
+    .optional()
+    .isIn(['strong_evidence', 'supported', 'limited_evidence', 'additional_candidate_skill'])
+    .withMessage('Invalid classification'),
+  query('recencyBucket').optional().isIn(['recent', 'aging', 'stale']).withMessage('Invalid recencyBucket'),
+  query('minEvidenceStrength').optional().isInt({ min: 0, max: 100 }).withMessage('minEvidenceStrength must be between 0 and 100'),
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+];
+
+router.get(
+  '/:organizationId/talent/skill-search',
+  protect,
+  ...organizationIdValidation,
+  ...talentSkillSearchValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerTalentSkillMapController.searchTalent
 );
 
 // ============================================================================

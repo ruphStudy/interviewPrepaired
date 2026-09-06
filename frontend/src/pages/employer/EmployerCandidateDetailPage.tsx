@@ -16,6 +16,7 @@ import employerApi, {
   EmployerJobApplication,
   CandidateSourceAttribution,
   EmployerCandidateSkillMemory,
+  EmployerCandidateSkillEvolution,
 } from '../../api/employerApi';
 import { EMPTY_CANDIDATE_FORM, CandidateFormState, candidateFormToPayload, candidateToFormState } from './candidateFormUtils';
 import {
@@ -396,6 +397,12 @@ const EmployerCandidateDetailPage: React.FC = () => {
   const [refreshSkillMemoryError, setRefreshSkillMemoryError] = useState<string | null>(null);
   const [expandedMemorySkillId, setExpandedMemorySkillId] = useState<string | null>(null);
 
+  const [skillEvolution, setSkillEvolution] = useState<EmployerCandidateSkillEvolution | null>(null);
+  const [skillEvolutionLoading, setSkillEvolutionLoading] = useState(true);
+  const [skillEvolutionError, setSkillEvolutionError] = useState<string | null>(null);
+  const [refreshingSkillEvolution, setRefreshingSkillEvolution] = useState(false);
+  const [refreshSkillEvolutionError, setRefreshSkillEvolutionError] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -655,6 +662,40 @@ const EmployerCandidateDetailPage: React.FC = () => {
       setRefreshSkillMemoryError(err.message || 'Failed to refresh skill memory');
     } finally {
       setRefreshingSkillMemory(false);
+    }
+  };
+
+  const fetchSkillEvolution = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setSkillEvolutionLoading(true);
+    setSkillEvolutionError(null);
+    try {
+      const response = await employerApi.getEmployerCandidateSkillEvolution(organizationId, candidateId);
+      setSkillEvolution(response.data);
+    } catch (err: any) {
+      setSkillEvolutionError(err.message || 'Failed to load skill evolution');
+    } finally {
+      setSkillEvolutionLoading(false);
+    }
+  }, [organizationId, candidateId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchSkillEvolution();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchSkillEvolution]);
+
+  const handleRefreshSkillEvolution = async () => {
+    if (!organizationId || !candidateId) return;
+    setRefreshingSkillEvolution(true);
+    setRefreshSkillEvolutionError(null);
+    try {
+      const response = await employerApi.refreshEmployerCandidateSkillEvolution(organizationId, candidateId);
+      setSkillEvolution(response.data);
+    } catch (err: any) {
+      setRefreshSkillEvolutionError(err.message || 'Failed to refresh skill evolution');
+    } finally {
+      setRefreshingSkillEvolution(false);
     }
   };
 
@@ -1953,6 +1994,133 @@ const EmployerCandidateDetailPage: React.FC = () => {
                   );
                 })()
               )}
+
+              <div className="mt-6 pt-6 border-t border-mentor-border">
+                <h3 className="section-title mb-1">Evidence Evolution</h3>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Evidence evolution reflects changes in structured evidence collected by this organization. It does not prove
+                  that the candidate's actual skill improved or declined.
+                </p>
+
+                {skillEvolutionLoading ? (
+                  <div className="p-6 text-center">
+                    <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                  </div>
+                ) : skillEvolutionError ? (
+                  <div className="p-6 text-center">
+                    <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                    <p className="text-sm text-mentor-text-secondary mb-4">{skillEvolutionError}</p>
+                    <button onClick={fetchSkillEvolution} className="btn btn-primary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : !skillEvolution || !skillEvolution.built ? (
+                  <div>
+                    <p className="text-sm text-mentor-text-secondary mb-3">
+                      Evidence evolution not built yet. It rebuilds deterministically from existing skill memory already
+                      generated for this candidate.
+                    </p>
+                    {canManage && (
+                      <>
+                        {refreshSkillEvolutionError && <p className="text-sm text-mentor-error mb-2">{refreshSkillEvolutionError}</p>}
+                        <button
+                          onClick={handleRefreshSkillEvolution}
+                          disabled={refreshingSkillEvolution || !skillMemory?.built}
+                          className="btn btn-primary"
+                        >
+                          {refreshingSkillEvolution ? 'Building...' : 'Build Evidence Evolution'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  (() => {
+                    const trendBadge: Record<string, string> = {
+                      stronger_evidence: 'badge-success',
+                      stable_evidence: 'badge-neutral',
+                      weaker_evidence: 'badge-warning',
+                      first_observation: 'badge-neutral',
+                    };
+                    const trendLabel: Record<string, string> = {
+                      stronger_evidence: 'Evidence Stronger',
+                      stable_evidence: 'Evidence Stable',
+                      weaker_evidence: 'Evidence Weaker',
+                      first_observation: 'First Observation',
+                    };
+                    const recencyLabel: Record<string, string> = {
+                      recent: 'Recent',
+                      aging: 'Aging',
+                      stale: 'Stale',
+                    };
+                    const recencyBadge: Record<string, string> = {
+                      recent: 'badge-success',
+                      aging: 'badge-warning',
+                      stale: 'badge-warning',
+                    };
+                    const summary = skillEvolution.summary;
+
+                    return (
+                      <div className="space-y-6">
+                        {canManage && (
+                          <div>
+                            {refreshSkillEvolutionError && (
+                              <p className="text-sm text-mentor-error mb-2">{refreshSkillEvolutionError}</p>
+                            )}
+                            <button onClick={handleRefreshSkillEvolution} disabled={refreshingSkillEvolution} className="btn btn-secondary">
+                              {refreshingSkillEvolution ? 'Refreshing...' : 'Refresh Evidence Evolution'}
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Stronger Evidence</p>
+                            <p className="text-lg font-semibold text-mentor-success">{summary.strongerEvidenceCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Stable Evidence</p>
+                            <p className="text-lg font-semibold text-mentor-text">{summary.stableEvidenceCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Weaker Evidence</p>
+                            <p className="text-lg font-semibold text-mentor-warning">{summary.weakerEvidenceCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Stale Evidence</p>
+                            <p className="text-lg font-semibold text-mentor-warning">{summary.staleEvidenceCount}</p>
+                          </div>
+                        </div>
+
+                        {skillEvolution.skills.length === 0 ? (
+                          <p className="text-xs text-mentor-text-muted">No evidence evolution available.</p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {skillEvolution.skills.map((s) => (
+                              <li key={s.skillNodeId} className="surface-muted p-2.5">
+                                <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                                  <p className="text-sm text-mentor-text">{s.canonicalName}</p>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className={`badge ${trendBadge[s.trend] || 'badge-neutral'}`}>{trendLabel[s.trend] || s.trend}</span>
+                                    <span className={`badge ${recencyBadge[s.recency.bucket] || 'badge-neutral'}`}>
+                                      {recencyLabel[s.recency.bucket] || s.recency.bucket}
+                                    </span>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-mentor-text-muted">
+                                  {s.latest.evidenceStrengthScore !== undefined && `Evidence strength: ${s.latest.evidenceStrengthScore}/100 · `}
+                                  Last observed {formatDate(s.latest.observedAt)} &middot; {s.observationCount} observation
+                                  {s.observationCount === 1 ? '' : 's'} across {s.applicationCount} application
+                                  {s.applicationCount === 1 ? '' : 's'}
+                                </p>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
             </div>
           </>
         )}

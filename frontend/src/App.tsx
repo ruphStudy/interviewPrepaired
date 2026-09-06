@@ -39,6 +39,7 @@ import EmployerJobDetailPage from './pages/employer/EmployerJobDetailPage';
 import EmployerJobDescriptionPage from './pages/employer/EmployerJobDescriptionPage';
 import EmployerCandidatesPage from './pages/employer/EmployerCandidatesPage';
 import EmployerMentionsPage from './pages/employer/EmployerMentionsPage';
+import EmployerTalentSkillsPage from './pages/employer/EmployerTalentSkillsPage';
 import EmployerNotificationsPage from './pages/employer/EmployerNotificationsPage';
 import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
 import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
@@ -339,6 +340,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerMentionsPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Employer Talent Skills (Sprint 25E) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/talent-skills"
+            element={
+              <ProtectedRoute>
+                <EmployerTalentSkillsPage />
               </ProtectedRoute>
             }
           />

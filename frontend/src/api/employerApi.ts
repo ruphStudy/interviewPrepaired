@@ -2411,6 +2411,122 @@ export interface EmployerCandidateSkillMemory {
 export type GetEmployerCandidateSkillMemoryResponse = ApiEnvelope<EmployerCandidateSkillMemory>;
 export type RefreshEmployerCandidateSkillMemoryResponse = ApiEnvelope<EmployerCandidateSkillMemory>;
 
+// ============================================================================
+// Skill Evidence Evolution / Recency (Sprint 25D) — deterministic (no AI)
+// interpretation of how the STRUCTURED EVIDENCE for a candidate skill
+// changed across existing 25C memory observations. Never a claim that the
+// candidate's actual skill improved or declined — only that the evidence
+// this organization has collected got stronger/weaker/staler.
+// ============================================================================
+
+export type EmployerSkillEvolutionTrend = 'stronger_evidence' | 'stable_evidence' | 'weaker_evidence' | 'first_observation';
+export type EmployerSkillEvidenceRecencyBucket = 'recent' | 'aging' | 'stale';
+
+export interface EmployerSkillEvolutionObservationSnapshot {
+  classification: EmployerSkillClassification;
+  evidenceStrengthScore?: number;
+  observedAt: string;
+}
+
+export interface EmployerSkillEvolutionRecency {
+  daysSinceLastObservation: number;
+  bucket: EmployerSkillEvidenceRecencyBucket;
+}
+
+export interface EmployerCandidateSkillEvolutionEntry {
+  skillNodeId: string;
+  canonicalName?: string;
+  latest: EmployerSkillEvolutionObservationSnapshot;
+  previous?: EmployerSkillEvolutionObservationSnapshot;
+  trend: EmployerSkillEvolutionTrend;
+  recency: EmployerSkillEvolutionRecency;
+  observationCount: number;
+  applicationCount: number;
+}
+
+export interface EmployerCandidateSkillEvolutionSummary {
+  skillCount: number;
+  strongerEvidenceCount: number;
+  stableEvidenceCount: number;
+  weakerEvidenceCount: number;
+  staleEvidenceCount: number;
+}
+
+export interface EmployerCandidateSkillEvolution {
+  built: boolean;
+  candidate?: { id: string; firstName: string; lastName: string };
+  summary: EmployerCandidateSkillEvolutionSummary;
+  skills: EmployerCandidateSkillEvolutionEntry[];
+}
+
+export type GetEmployerCandidateSkillEvolutionResponse = ApiEnvelope<EmployerCandidateSkillEvolution>;
+export type RefreshEmployerCandidateSkillEvolutionResponse = ApiEnvelope<EmployerCandidateSkillEvolution>;
+
+// ============================================================================
+// Organization Talent Skill Map & Search (Sprint 25E) — employer-internal
+// discovery across candidates by EXISTING structured skill evidence
+// (25A-25D). A search/read layer only — NOT candidate ranking, NOT a
+// hiring recommendation. `displayPosition` is deterministic discovery
+// ordering, never a fit/rank score.
+// ============================================================================
+
+export interface EmployerTalentSkillMapEntry {
+  skillNodeId: string;
+  canonicalName?: string;
+  candidateCount: number;
+  observationCount: number;
+  recentEvidenceCandidateCount: number;
+  staleEvidenceCandidateCount: number;
+}
+
+export interface EmployerTalentSkillMap {
+  summary: {
+    candidateCountWithSkillMemory: number;
+    uniqueSkillCount: number;
+    totalSkillObservations: number;
+  };
+  skills: EmployerTalentSkillMapEntry[];
+}
+
+export type GetEmployerTalentSkillMapResponse = ApiEnvelope<EmployerTalentSkillMap>;
+
+export interface EmployerTalentSearchFilters {
+  search?: string;
+  skillNodeIds?: string[];
+  classification?: Exclude<EmployerSkillClassification, 'missing'>;
+  recencyBucket?: EmployerSkillEvidenceRecencyBucket;
+  minEvidenceStrength?: number;
+  page?: number;
+  limit?: number;
+}
+
+export interface EmployerTalentMatchingSkill {
+  skillNodeId: string;
+  canonicalName?: string;
+  latestClassification: EmployerSkillClassification;
+  latestEvidenceStrengthScore?: number;
+  lastObservedAt: string;
+  observationCount: number;
+  applicationCount: number;
+  trend?: EmployerSkillEvolutionTrend;
+  recencyBucket?: EmployerSkillEvidenceRecencyBucket;
+}
+
+export interface EmployerTalentSearchCandidateResult {
+  candidate: { id: string; firstName: string; lastName: string };
+  matchingSkills: EmployerTalentMatchingSkill[];
+  matchSummary: { matchedSkillCount: number; strongestEvidenceScore?: number };
+  displayPosition: number;
+}
+
+export interface EmployerTalentSearchResults {
+  candidates: EmployerTalentSearchCandidateResult[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+  skillMatchMode: 'all';
+}
+
+export type EmployerTalentSearchResponse = ApiEnvelope<EmployerTalentSearchResults>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -3945,6 +4061,62 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to refresh skill memory');
+    }
+  }
+
+  async getEmployerCandidateSkillEvolution(organizationId: string, candidateId: string): Promise<GetEmployerCandidateSkillEvolutionResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCandidateSkillEvolutionResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/skill-evolution`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load skill evolution');
+    }
+  }
+
+  /** Requires existing 25C skill memory; never auto-refreshes it. */
+  async refreshEmployerCandidateSkillEvolution(
+    organizationId: string,
+    candidateId: string
+  ): Promise<RefreshEmployerCandidateSkillEvolutionResponse> {
+    try {
+      const response = await this.api.post<RefreshEmployerCandidateSkillEvolutionResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/skill-evolution/refresh`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to refresh skill evolution');
+    }
+  }
+
+  async getEmployerTalentSkillMap(organizationId: string): Promise<GetEmployerTalentSkillMapResponse> {
+    try {
+      const response = await this.api.get<GetEmployerTalentSkillMapResponse>(`/organizations/${organizationId}/talent/skill-map`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load talent skill map');
+    }
+  }
+
+  /** Deterministic discovery only — never candidate ranking/hiring recommendation. */
+  async searchEmployerTalentSkills(organizationId: string, filters: EmployerTalentSearchFilters): Promise<EmployerTalentSearchResponse> {
+    try {
+      const params: Record<string, string | number> = {};
+      if (filters.search) params.search = filters.search;
+      if (filters.skillNodeIds && filters.skillNodeIds.length > 0) params.skillNodeIds = filters.skillNodeIds.join(',');
+      if (filters.classification) params.classification = filters.classification;
+      if (filters.recencyBucket) params.recencyBucket = filters.recencyBucket;
+      if (typeof filters.minEvidenceStrength === 'number') params.minEvidenceStrength = filters.minEvidenceStrength;
+      if (filters.page) params.page = filters.page;
+      if (filters.limit) params.limit = filters.limit;
+
+      const response = await this.api.get<EmployerTalentSearchResponse>(`/organizations/${organizationId}/talent/skill-search`, {
+        params,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to search talent skills');
     }
   }
 }

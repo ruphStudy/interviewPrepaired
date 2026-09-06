@@ -24,6 +24,7 @@ import {
   Briefcase,
   AtSign,
   Bell,
+  Network,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrganization } from '../contexts/OrganizationContext';
@@ -167,6 +168,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
             ? [
                 { to: `/organizations/${activeOrganizationId}/employer/jobs`, label: 'Jobs', icon: Briefcase },
                 { to: `/organizations/${activeOrganizationId}/employer/candidates`, label: 'Candidates', icon: Users },
+                { to: `/organizations/${activeOrganizationId}/employer/talent-skills`, label: 'Talent Skills', icon: Network },
                 { to: `/organizations/${activeOrganizationId}/employer/mentions`, label: 'Mentions', icon: AtSign },
                 {
                   to: `/organizations/${activeOrganizationId}/employer/notifications`,
