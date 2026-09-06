@@ -50,6 +50,8 @@ import employerCollaborationNotificationController from '../controllers/Employer
 import employerCandidateCommunicationController from '../controllers/EmployerCandidateCommunicationController';
 import employerCollaborationAnalyticsController from '../controllers/EmployerCollaborationAnalyticsController';
 import employerSkillGraphController from '../controllers/EmployerSkillGraphController';
+import employerSkillEvidenceIntelligenceController from '../controllers/EmployerSkillEvidenceIntelligenceController';
+import employerCandidateSkillMemoryController from '../controllers/EmployerCandidateSkillMemoryController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -2773,6 +2775,52 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerSkillGraphController.buildSkillGraph
+);
+
+// GET/POST .../applications/:applicationId/skill-intelligence[/build] (25B)
+// — deterministic (no AI) evidence-strength/gap intelligence over the
+// exact 25A graph. Requires an existing built graph; never auto-builds it.
+router.get(
+  '/:organizationId/applications/:applicationId/skill-intelligence',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerSkillEvidenceIntelligenceController.getSkillIntelligence
+);
+
+router.post(
+  '/:organizationId/applications/:applicationId/skill-intelligence/build',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerSkillEvidenceIntelligenceController.buildSkillIntelligence
+);
+
+// GET/POST .../candidates/:candidateId/skill-memory[/refresh] (25C) —
+// organization-scoped historical skill evidence memory across a
+// candidate's applications, rebuilt ONLY from existing 25B intelligence.
+router.get(
+  '/:organizationId/candidates/:candidateId/skill-memory',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCandidateSkillMemoryController.getSkillMemory
+);
+
+router.post(
+  '/:organizationId/candidates/:candidateId/skill-memory/refresh',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateSkillMemoryController.refreshSkillMemory
 );
 
 // ============================================================================

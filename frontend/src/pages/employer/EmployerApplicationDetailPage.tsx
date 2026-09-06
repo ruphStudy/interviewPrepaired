@@ -49,6 +49,7 @@ import employerApi, {
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
   EMPLOYER_CANDIDATE_COMMUNICATION_TYPES,
   EmployerApplicationSkillGraph,
+  EmployerApplicationSkillIntelligence,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -872,6 +873,11 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [skillGraphError, setSkillGraphError] = useState<string | null>(null);
   const [buildingSkillGraph, setBuildingSkillGraph] = useState(false);
   const [buildSkillGraphError, setBuildSkillGraphError] = useState<string | null>(null);
+  const [skillIntelligence, setSkillIntelligence] = useState<EmployerApplicationSkillIntelligence | null>(null);
+  const [skillIntelligenceLoading, setSkillIntelligenceLoading] = useState(true);
+  const [skillIntelligenceError, setSkillIntelligenceError] = useState<string | null>(null);
+  const [buildingSkillIntelligence, setBuildingSkillIntelligence] = useState(false);
+  const [buildSkillIntelligenceError, setBuildSkillIntelligenceError] = useState<string | null>(null);
 
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
@@ -1711,6 +1717,40 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setBuildSkillGraphError(err.message || 'Failed to build skill graph');
     } finally {
       setBuildingSkillGraph(false);
+    }
+  };
+
+  const fetchSkillIntelligence = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setSkillIntelligenceLoading(true);
+    setSkillIntelligenceError(null);
+    try {
+      const response = await employerApi.getEmployerApplicationSkillIntelligence(organizationId, applicationId);
+      setSkillIntelligence(response.data);
+    } catch (err: any) {
+      setSkillIntelligenceError(err.message || 'Failed to load skill evidence intelligence');
+    } finally {
+      setSkillIntelligenceLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchSkillIntelligence();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchSkillIntelligence]);
+
+  const handleBuildSkillIntelligence = async () => {
+    if (!organizationId || !applicationId) return;
+    setBuildingSkillIntelligence(true);
+    setBuildSkillIntelligenceError(null);
+    try {
+      const response = await employerApi.buildEmployerApplicationSkillIntelligence(organizationId, applicationId);
+      setSkillIntelligence(response.data);
+    } catch (err: any) {
+      setBuildSkillIntelligenceError(err.message || 'Failed to build skill evidence intelligence');
+    } finally {
+      setBuildingSkillIntelligence(false);
     }
   };
 
@@ -3785,6 +3825,131 @@ const EmployerApplicationDetailPage: React.FC = () => {
                   );
                 })()
               )}
+
+              <div className="mt-6 pt-6 border-t border-mentor-border">
+                <h3 className="section-title mb-1">Skill Evidence Intelligence</h3>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Evidence strength reflects the amount and quality of structured evidence currently available. It is not a
+                  proficiency or hiring score.
+                </p>
+
+                {skillIntelligenceLoading ? (
+                  <div className="p-6 text-center">
+                    <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                  </div>
+                ) : skillIntelligenceError ? (
+                  <div className="p-6 text-center">
+                    <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                    <p className="text-sm text-mentor-text-secondary mb-4">{skillIntelligenceError}</p>
+                    <button onClick={fetchSkillIntelligence} className="btn btn-primary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : !skillIntelligence || !skillIntelligence.built ? (
+                  <div>
+                    <p className="text-sm text-mentor-text-secondary mb-3">
+                      Skill evidence intelligence not built yet. Build the skill graph above first, then build evidence
+                      intelligence from it.
+                    </p>
+                    {canManage && (
+                      <>
+                        {buildSkillIntelligenceError && <p className="text-sm text-mentor-error mb-2">{buildSkillIntelligenceError}</p>}
+                        <button
+                          onClick={handleBuildSkillIntelligence}
+                          disabled={buildingSkillIntelligence || !skillGraph?.built}
+                          className="btn btn-primary"
+                        >
+                          {buildingSkillIntelligence ? 'Building...' : 'Build Skill Evidence Intelligence'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  (() => {
+                    const classificationBadge: Record<string, string> = {
+                      strong_evidence: 'badge-success',
+                      supported: 'badge-success',
+                      limited_evidence: 'badge-warning',
+                      missing: 'badge-warning',
+                      additional_candidate_skill: 'badge-neutral',
+                    };
+                    const classificationLabel: Record<string, string> = {
+                      strong_evidence: 'Strong Evidence',
+                      supported: 'Supported',
+                      limited_evidence: 'Limited Evidence',
+                      missing: 'Missing',
+                      additional_candidate_skill: 'Additional Candidate Skill',
+                    };
+                    const summary = skillIntelligence.summary!;
+                    const skills = skillIntelligence.skills || [];
+
+                    return (
+                      <div className="space-y-6">
+                        {canManage && (
+                          <div>
+                            {buildSkillIntelligenceError && (
+                              <p className="text-sm text-mentor-error mb-2">{buildSkillIntelligenceError}</p>
+                            )}
+                            <button onClick={handleBuildSkillIntelligence} disabled={buildingSkillIntelligence} className="btn btn-secondary">
+                              {buildingSkillIntelligence ? 'Rebuilding...' : 'Rebuild Skill Evidence Intelligence'}
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Strong Evidence</p>
+                            <p className="text-lg font-semibold text-mentor-success">{summary.strongEvidenceCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Supported</p>
+                            <p className="text-lg font-semibold text-mentor-text">{summary.supportedCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Limited Evidence</p>
+                            <p className="text-lg font-semibold text-mentor-warning">{summary.limitedEvidenceCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Missing</p>
+                            <p className="text-lg font-semibold text-mentor-warning">{summary.missingCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Additional Skills</p>
+                            <p className="text-lg font-semibold text-mentor-text">{summary.additionalCandidateSkillCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Coverage</p>
+                            <p className="text-lg font-semibold text-mentor-text">{summary.coveragePercent}%</p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">Skills</p>
+                          {skills.length === 0 ? (
+                            <p className="text-xs text-mentor-text-muted">No skill evidence intelligence available.</p>
+                          ) : (
+                            <ul className="space-y-2">
+                              {skills.map((s) => (
+                                <li key={s.skillNodeId} className="surface-muted p-2.5">
+                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                    <p className="text-sm text-mentor-text">{s.canonicalName}</p>
+                                    <span className={`badge ${classificationBadge[s.classification] || 'badge-neutral'}`}>
+                                      {classificationLabel[s.classification] || s.classification}
+                                    </span>
+                                  </div>
+                                  {s.evidenceStrengthScore !== undefined && (
+                                    <p className="text-xs text-mentor-text-muted">Evidence strength: {s.evidenceStrengthScore}/100</p>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
             </div>
           </>
         )}

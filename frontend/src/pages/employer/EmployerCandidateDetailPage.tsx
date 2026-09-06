@@ -15,6 +15,7 @@ import employerApi, {
   CandidateResumeProfile,
   EmployerJobApplication,
   CandidateSourceAttribution,
+  EmployerCandidateSkillMemory,
 } from '../../api/employerApi';
 import { EMPTY_CANDIDATE_FORM, CandidateFormState, candidateFormToPayload, candidateToFormState } from './candidateFormUtils';
 import {
@@ -33,6 +34,7 @@ import {
   Tag,
   Plus,
   X,
+  Network,
 } from 'lucide-react';
 
 const CANDIDATE_APPLICATIONS_PAGE_LIMIT = 20;
@@ -387,6 +389,13 @@ const EmployerCandidateDetailPage: React.FC = () => {
   const [addAttributionSubmitting, setAddAttributionSubmitting] = useState(false);
   const [addAttributionError, setAddAttributionError] = useState<string | null>(null);
 
+  const [skillMemory, setSkillMemory] = useState<EmployerCandidateSkillMemory | null>(null);
+  const [skillMemoryLoading, setSkillMemoryLoading] = useState(true);
+  const [skillMemoryError, setSkillMemoryError] = useState<string | null>(null);
+  const [refreshingSkillMemory, setRefreshingSkillMemory] = useState(false);
+  const [refreshSkillMemoryError, setRefreshSkillMemoryError] = useState<string | null>(null);
+  const [expandedMemorySkillId, setExpandedMemorySkillId] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -614,6 +623,40 @@ const EmployerCandidateDetailPage: React.FC = () => {
       fetchSourceAttributions();
     }
   }, [isSyncing, activeOrganization, canView, fetchSourceAttributions]);
+
+  const fetchSkillMemory = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setSkillMemoryLoading(true);
+    setSkillMemoryError(null);
+    try {
+      const response = await employerApi.getEmployerCandidateSkillMemory(organizationId, candidateId);
+      setSkillMemory(response.data);
+    } catch (err: any) {
+      setSkillMemoryError(err.message || 'Failed to load skill memory');
+    } finally {
+      setSkillMemoryLoading(false);
+    }
+  }, [organizationId, candidateId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchSkillMemory();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchSkillMemory]);
+
+  const handleRefreshSkillMemory = async () => {
+    if (!organizationId || !candidateId) return;
+    setRefreshingSkillMemory(true);
+    setRefreshSkillMemoryError(null);
+    try {
+      const response = await employerApi.refreshEmployerCandidateSkillMemory(organizationId, candidateId);
+      setSkillMemory(response.data);
+    } catch (err: any) {
+      setRefreshSkillMemoryError(err.message || 'Failed to refresh skill memory');
+    } finally {
+      setRefreshingSkillMemory(false);
+    }
+  };
 
   const handleOpenAddAttribution = () => {
     setShowAddAttribution(true);
@@ -1770,6 +1813,145 @@ const EmployerCandidateDetailPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <Network size={18} className="text-mentor-text-muted" />
+                Skill Memory
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Skill Memory summarizes historical structured evidence across this organization's applications. Older evidence
+                may not represent the candidate's current skill level.
+              </p>
+
+              {skillMemoryLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : skillMemoryError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{skillMemoryError}</p>
+                  <button onClick={fetchSkillMemory} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !skillMemory || !skillMemory.built ? (
+                <div>
+                  <p className="text-sm text-mentor-text-secondary mb-3">
+                    Skill memory not built yet. It rebuilds deterministically from existing skill evidence intelligence
+                    already generated across this candidate's applications.
+                  </p>
+                  {canManage && (
+                    <>
+                      {refreshSkillMemoryError && <p className="text-sm text-mentor-error mb-2">{refreshSkillMemoryError}</p>}
+                      <button onClick={handleRefreshSkillMemory} disabled={refreshingSkillMemory} className="btn btn-primary">
+                        {refreshingSkillMemory ? 'Building...' : 'Build Skill Memory'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                (() => {
+                  const classificationBadge: Record<string, string> = {
+                    strong_evidence: 'badge-success',
+                    supported: 'badge-success',
+                    limited_evidence: 'badge-warning',
+                    missing: 'badge-warning',
+                    additional_candidate_skill: 'badge-neutral',
+                  };
+                  const classificationLabel: Record<string, string> = {
+                    strong_evidence: 'Strong Evidence',
+                    supported: 'Supported',
+                    limited_evidence: 'Limited Evidence',
+                    missing: 'Missing',
+                    additional_candidate_skill: 'Additional Candidate Skill',
+                  };
+
+                  return (
+                    <div className="space-y-6">
+                      {canManage && (
+                        <div>
+                          {refreshSkillMemoryError && <p className="text-sm text-mentor-error mb-2">{refreshSkillMemoryError}</p>}
+                          <button onClick={handleRefreshSkillMemory} disabled={refreshingSkillMemory} className="btn btn-secondary">
+                            {refreshingSkillMemory ? 'Refreshing...' : 'Refresh Skill Memory'}
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="surface-muted p-3">
+                          <p className="text-xs text-mentor-text-muted">Skills Observed</p>
+                          <p className="text-lg font-semibold text-mentor-text">{skillMemory.summary.skillCount}</p>
+                        </div>
+                        <div className="surface-muted p-3">
+                          <p className="text-xs text-mentor-text-muted">Multi-Application Skills</p>
+                          <p className="text-lg font-semibold text-mentor-text">{skillMemory.summary.multiApplicationSkillCount}</p>
+                        </div>
+                        <div className="surface-muted p-3">
+                          <p className="text-xs text-mentor-text-muted">Total Observations</p>
+                          <p className="text-lg font-semibold text-mentor-text">{skillMemory.summary.totalObservations}</p>
+                        </div>
+                      </div>
+
+                      {skillMemory.skills.length === 0 ? (
+                        <p className="text-xs text-mentor-text-muted">No skill memory available.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {skillMemory.skills.map((s) => {
+                            const isExpanded = expandedMemorySkillId === s.skillNodeId;
+                            return (
+                              <li key={s.skillNodeId} className="surface-muted p-2.5">
+                                <div
+                                  onClick={() => setExpandedMemorySkillId(isExpanded ? null : s.skillNodeId)}
+                                  className="flex items-center justify-between gap-2 cursor-pointer"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-sm text-mentor-text">{s.canonicalName}</p>
+                                    <p className="text-xs text-mentor-text-muted">
+                                      {s.observationCount} observation{s.observationCount === 1 ? '' : 's'} &middot; last observed{' '}
+                                      {formatDate(s.lastObservedAt)}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className={`badge ${classificationBadge[s.latestClassification] || 'badge-neutral'}`}>
+                                      {classificationLabel[s.latestClassification] || s.latestClassification}
+                                    </span>
+                                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                  </div>
+                                </div>
+                                {s.latestEvidenceStrengthScore !== undefined && (
+                                  <p className="text-xs text-mentor-text-muted mt-1">
+                                    Latest evidence strength: {s.latestEvidenceStrengthScore}/100
+                                  </p>
+                                )}
+                                {isExpanded && (
+                                  <ul className="mt-3 space-y-2 border-t border-mentor-border pt-3">
+                                    {s.observations.map((o, idx) => (
+                                      <li key={idx} className="text-xs text-mentor-text-secondary">
+                                        <span className="font-medium text-mentor-text">{o.jobTitle || 'Unknown job'}</span>
+                                        {' — '}
+                                        <span className={`badge ${classificationBadge[o.classification] || 'badge-neutral'}`}>
+                                          {classificationLabel[o.classification] || o.classification}
+                                        </span>
+                                        {o.evidenceStrengthScore !== undefined && ` (${o.evidenceStrengthScore}/100)`}
+                                        {' · '}
+                                        {formatDate(o.observedAt)}
+                                        {o.sourceTypes.length > 0 && ` · ${o.sourceTypes.join(', ')}`}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })()
               )}
             </div>
           </>

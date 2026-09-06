@@ -2312,6 +2312,105 @@ export interface EmployerApplicationSkillGraph {
 export type GetEmployerApplicationSkillGraphResponse = ApiEnvelope<EmployerApplicationSkillGraph>;
 export type BuildEmployerApplicationSkillGraphResponse = ApiEnvelope<EmployerApplicationSkillGraph>;
 
+// ============================================================================
+// Skill Evidence Intelligence (Sprint 25B) — deterministic (no AI)
+// evidence-strength/gap intelligence built from the current 25A skill
+// graph. "Evidence strength" reflects the amount/quality of structured
+// evidence CURRENTLY available — never a proficiency, mastery,
+// success-probability, or hiring-recommendation score.
+// ============================================================================
+
+export type EmployerSkillClassification =
+  | 'strong_evidence'
+  | 'supported'
+  | 'limited_evidence'
+  | 'missing'
+  | 'additional_candidate_skill';
+
+export interface EmployerSkillSourceSummary {
+  resume: boolean;
+  screening: boolean;
+  assessment: boolean;
+  evidence: boolean;
+}
+
+export interface EmployerApplicationSkillIntelligenceEntry {
+  skillNodeId: string;
+  canonicalName?: string;
+  classification: EmployerSkillClassification;
+  evidenceStrengthScore?: number;
+  jobImportance?: string;
+  jobWeight?: number;
+  sourceSummary: EmployerSkillSourceSummary;
+}
+
+export interface EmployerApplicationSkillIntelligenceSummary {
+  jobSkillCount: number;
+  matchedSkillCount: number;
+  strongEvidenceCount: number;
+  supportedCount: number;
+  limitedEvidenceCount: number;
+  missingCount: number;
+  additionalCandidateSkillCount: number;
+  coveragePercent: number;
+}
+
+export interface EmployerApplicationSkillIntelligence {
+  built: boolean;
+  applicationId?: string;
+  calculationVersion?: string;
+  generatedAt?: string;
+  skills?: EmployerApplicationSkillIntelligenceEntry[];
+  summary?: EmployerApplicationSkillIntelligenceSummary;
+}
+
+export type GetEmployerApplicationSkillIntelligenceResponse = ApiEnvelope<EmployerApplicationSkillIntelligence>;
+export type BuildEmployerApplicationSkillIntelligenceResponse = ApiEnvelope<EmployerApplicationSkillIntelligence>;
+
+// ============================================================================
+// Candidate Skill Memory (Sprint 25C) — longitudinal skill EVIDENCE memory
+// across a candidate's applications within the SAME organization, rebuilt
+// only from existing 25B intelligence rows. Older evidence may not
+// represent the candidate's current skill level.
+// ============================================================================
+
+export interface EmployerCandidateSkillMemoryObservation {
+  applicationId: string;
+  jobId: string;
+  jobTitle?: string;
+  classification: EmployerSkillClassification;
+  evidenceStrengthScore?: number;
+  sourceTypes: string[];
+  observedAt: string;
+}
+
+export interface EmployerCandidateSkillMemoryEntry {
+  skillNodeId: string;
+  canonicalName?: string;
+  latestClassification: EmployerSkillClassification;
+  latestEvidenceStrengthScore?: number;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  observationCount: number;
+  observations: EmployerCandidateSkillMemoryObservation[];
+}
+
+export interface EmployerCandidateSkillMemorySummary {
+  skillCount: number;
+  multiApplicationSkillCount: number;
+  totalObservations: number;
+}
+
+export interface EmployerCandidateSkillMemory {
+  built: boolean;
+  candidate?: { id: string; firstName: string; lastName: string };
+  summary: EmployerCandidateSkillMemorySummary;
+  skills: EmployerCandidateSkillMemoryEntry[];
+}
+
+export type GetEmployerCandidateSkillMemoryResponse = ApiEnvelope<EmployerCandidateSkillMemory>;
+export type RefreshEmployerCandidateSkillMemoryResponse = ApiEnvelope<EmployerCandidateSkillMemory>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -3791,6 +3890,61 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to build skill graph');
+    }
+  }
+
+  async getEmployerApplicationSkillIntelligence(
+    organizationId: string,
+    applicationId: string
+  ): Promise<GetEmployerApplicationSkillIntelligenceResponse> {
+    try {
+      const response = await this.api.get<GetEmployerApplicationSkillIntelligenceResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/skill-intelligence`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load skill evidence intelligence');
+    }
+  }
+
+  /** Requires an existing built 25A skill graph; never auto-builds it. */
+  async buildEmployerApplicationSkillIntelligence(
+    organizationId: string,
+    applicationId: string
+  ): Promise<BuildEmployerApplicationSkillIntelligenceResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerApplicationSkillIntelligenceResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/skill-intelligence/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build skill evidence intelligence');
+    }
+  }
+
+  async getEmployerCandidateSkillMemory(organizationId: string, candidateId: string): Promise<GetEmployerCandidateSkillMemoryResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCandidateSkillMemoryResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/skill-memory`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load skill memory');
+    }
+  }
+
+  /** Rebuilds ONLY from existing 25B intelligence rows across this candidate's applications in this organization. */
+  async refreshEmployerCandidateSkillMemory(
+    organizationId: string,
+    candidateId: string
+  ): Promise<RefreshEmployerCandidateSkillMemoryResponse> {
+    try {
+      const response = await this.api.post<RefreshEmployerCandidateSkillMemoryResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/skill-memory/refresh`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to refresh skill memory');
     }
   }
 }
