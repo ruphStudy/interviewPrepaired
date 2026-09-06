@@ -64,6 +64,8 @@ import employerInterviewFollowUpRouteController from '../controllers/EmployerInt
 import employerInterviewCompetencyCoverageController from '../controllers/EmployerInterviewCompetencyCoverageController';
 import employerInterviewAdaptiveRoutingController from '../controllers/EmployerInterviewAdaptiveRoutingController';
 import employerInterviewGraphAnalyticsController from '../controllers/EmployerInterviewGraphAnalyticsController';
+import employerInterviewScenarioController from '../controllers/EmployerInterviewScenarioController';
+import employerInterviewScenarioQuestionGenerationController from '../controllers/EmployerInterviewScenarioQuestionGenerationController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3565,6 +3567,89 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewGraphAnalyticsController.buildAnalytics
+);
+
+// POST/GET .../interviews/:interviewId/scenarios[/:scenarioId][/archive]
+// (28A) — structured, JOB-RELEVANT scenario DEFINITIONS only. Manual
+// employer input, no AI. Definitions only — no execution/evaluation yet.
+const scenarioIdValidation = [param('scenarioId').isMongoId().withMessage('Invalid scenario ID')];
+
+router.post(
+  '/:organizationId/interviews/:interviewId/scenarios',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewScenarioController.createScenario
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/scenarios',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewScenarioController.listScenarios
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewScenarioController.getScenario
+);
+
+router.patch(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewScenarioController.updateScenario
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/archive',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewScenarioController.archiveScenario
+);
+
+// GET/POST .../scenarios/:scenarioId/questions[/generate] (28B) — AI-
+// generated multi-step scenario QUESTION PLAN only. No candidate
+// execution, no response evaluation.
+router.get(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/questions',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewScenarioQuestionGenerationController.getScenarioQuestions
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/questions/generate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewScenarioQuestionGenerationController.generateScenarioQuestions
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

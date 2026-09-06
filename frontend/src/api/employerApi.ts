@@ -2171,6 +2171,115 @@ export type GetEmployerInterviewGraphAnalyticsResponse = ApiEnvelope<EmployerInt
 export type BuildEmployerInterviewGraphAnalyticsResponse = ApiEnvelope<EmployerInterviewGraphAnalytics>;
 
 // ============================================================================
+// Scenario Definitions (Sprint 28A) — structured, JOB-RELEVANT workplace
+// scenario definitions. Manual employer input only, no AI in this sprint.
+// ============================================================================
+
+export type EmployerInterviewScenarioStatus = 'draft' | 'ready' | 'archived';
+export type EmployerInterviewScenarioCategory =
+  | 'technical'
+  | 'system_design'
+  | 'debugging'
+  | 'incident'
+  | 'architecture'
+  | 'leadership'
+  | 'stakeholder'
+  | 'prioritization'
+  | 'communication'
+  | 'domain'
+  | 'other';
+export type EmployerInterviewScenarioDifficulty = 'easy' | 'medium' | 'hard';
+
+export interface EmployerInterviewScenarioContext {
+  situation: string;
+  candidateRole: string;
+  constraints: string[];
+  availableInformation: string[];
+}
+
+export interface EmployerInterviewScenario {
+  id: string;
+  interviewId: string;
+  applicationId: string;
+  jobId: string;
+  blueprintId: string;
+  rubricId: string;
+  scenarioVersion: string;
+  status: EmployerInterviewScenarioStatus;
+  title: string;
+  description: string;
+  category: EmployerInterviewScenarioCategory;
+  context: EmployerInterviewScenarioContext;
+  targetCompetencies: string[];
+  difficulty: EmployerInterviewScenarioDifficulty;
+  objectives: string[];
+  successEvidence: string[];
+  failureSignals: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployerInterviewScenarioInput {
+  title: string;
+  description: string;
+  category: EmployerInterviewScenarioCategory;
+  context: {
+    situation: string;
+    candidateRole: string;
+    constraints?: string[];
+    availableInformation?: string[];
+  };
+  targetCompetencies: string[];
+  difficulty: EmployerInterviewScenarioDifficulty;
+  objectives?: string[];
+  successEvidence?: string[];
+  failureSignals?: string[];
+}
+
+export type CreateEmployerInterviewScenarioResponse = ApiEnvelope<EmployerInterviewScenario>;
+export type UpdateEmployerInterviewScenarioResponse = ApiEnvelope<EmployerInterviewScenario>;
+export type ArchiveEmployerInterviewScenarioResponse = ApiEnvelope<EmployerInterviewScenario>;
+export type GetEmployerInterviewScenarioResponse = ApiEnvelope<EmployerInterviewScenario>;
+export type ListEmployerInterviewScenariosResponse = ApiEnvelope<{ scenarios: EmployerInterviewScenario[] }>;
+
+// ============================================================================
+// Scenario Question Generation (Sprint 28B) — AI-generated multi-step
+// question PLAN for a READY scenario. No candidate execution, no response
+// evaluation yet.
+// ============================================================================
+
+export type EmployerScenarioQuestionType = 'opening' | 'probe' | 'complication' | 'decision' | 'reflection';
+export type EmployerScenarioQuestionDifficulty = 'easy' | 'medium' | 'hard';
+
+export interface EmployerScenarioQuestion {
+  sequence: number;
+  type: EmployerScenarioQuestionType;
+  questionText: string;
+  targetCompetencies: string[];
+  evidenceExpected: string[];
+  difficulty: EmployerScenarioQuestionDifficulty;
+  scenarioUpdate?: string;
+}
+
+export interface EmployerScenarioQuestionSetSummary {
+  questionCount: number;
+  competencyCount: number;
+}
+
+export interface EmployerInterviewScenarioQuestionSet {
+  generated: boolean;
+  status?: 'processing' | 'failed';
+  errorMessage?: string;
+  generationVersion?: string;
+  generatedAt?: string;
+  questions?: EmployerScenarioQuestion[];
+  summary?: EmployerScenarioQuestionSetSummary;
+}
+
+export type GetEmployerInterviewScenarioQuestionsResponse = ApiEnvelope<EmployerInterviewScenarioQuestionSet>;
+export type GenerateEmployerInterviewScenarioQuestionsResponse = ApiEnvelope<EmployerInterviewScenarioQuestionSet>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -4372,6 +4481,111 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to build interview graph analytics');
+    }
+  }
+
+  async createEmployerInterviewScenario(
+    organizationId: string,
+    interviewId: string,
+    input: EmployerInterviewScenarioInput
+  ): Promise<CreateEmployerInterviewScenarioResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerInterviewScenarioResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create scenario');
+    }
+  }
+
+  async listEmployerInterviewScenarios(organizationId: string, interviewId: string): Promise<ListEmployerInterviewScenariosResponse> {
+    try {
+      const response = await this.api.get<ListEmployerInterviewScenariosResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load scenarios');
+    }
+  }
+
+  async getEmployerInterviewScenario(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<GetEmployerInterviewScenarioResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewScenarioResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load scenario');
+    }
+  }
+
+  async updateEmployerInterviewScenario(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string,
+    updates: Partial<EmployerInterviewScenarioInput> & { status?: EmployerInterviewScenarioStatus }
+  ): Promise<UpdateEmployerInterviewScenarioResponse> {
+    try {
+      const response = await this.api.patch<UpdateEmployerInterviewScenarioResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}`,
+        updates
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update scenario');
+    }
+  }
+
+  async archiveEmployerInterviewScenario(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<ArchiveEmployerInterviewScenarioResponse> {
+    try {
+      const response = await this.api.post<ArchiveEmployerInterviewScenarioResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/archive`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to archive scenario');
+    }
+  }
+
+  async getEmployerInterviewScenarioQuestions(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<GetEmployerInterviewScenarioQuestionsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewScenarioQuestionsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/questions`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load scenario questions');
+    }
+  }
+
+  /** No client rubric/application/job IDs — the server resolves everything from the exact ready scenario. */
+  async generateEmployerInterviewScenarioQuestions(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<GenerateEmployerInterviewScenarioQuestionsResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerInterviewScenarioQuestionsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/questions/generate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate scenario questions');
     }
   }
 

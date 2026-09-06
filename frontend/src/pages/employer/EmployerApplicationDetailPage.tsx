@@ -33,6 +33,11 @@ import employerApi, {
   EmployerInterviewCompetencyCoverage,
   EmployerInterviewAdaptiveRoute,
   EmployerInterviewGraphAnalytics,
+  EmployerInterviewScenario,
+  EmployerInterviewScenarioInput,
+  EmployerInterviewScenarioCategory,
+  EmployerInterviewScenarioDifficulty,
+  EmployerInterviewScenarioQuestionSet,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -79,6 +84,7 @@ import {
   UserPlus,
   MessageSquare,
   Network,
+  Plus,
 } from 'lucide-react';
 
 const INVITATION_STATUS_LABELS: Record<string, string> = {
@@ -846,6 +852,34 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [graphAnalyticsError, setGraphAnalyticsError] = useState<string | null>(null);
   const [buildingGraphAnalytics, setBuildingGraphAnalytics] = useState(false);
   const [buildGraphAnalyticsError, setBuildGraphAnalyticsError] = useState<string | null>(null);
+
+  const [scenarios, setScenarios] = useState<EmployerInterviewScenario[]>([]);
+  const [scenariosLoading, setScenariosLoading] = useState(false);
+  const [scenariosError, setScenariosError] = useState<string | null>(null);
+  const [showScenarioForm, setShowScenarioForm] = useState(false);
+  const [editingScenarioId, setEditingScenarioId] = useState<string | null>(null);
+  const [scenarioTitle, setScenarioTitle] = useState('');
+  const [scenarioDescription, setScenarioDescription] = useState('');
+  const [scenarioCategory, setScenarioCategory] = useState<EmployerInterviewScenarioCategory>('technical');
+  const [scenarioSituation, setScenarioSituation] = useState('');
+  const [scenarioCandidateRole, setScenarioCandidateRole] = useState('');
+  const [scenarioConstraints, setScenarioConstraints] = useState('');
+  const [scenarioAvailableInformation, setScenarioAvailableInformation] = useState('');
+  const [scenarioTargetCompetencies, setScenarioTargetCompetencies] = useState<string[]>([]);
+  const [scenarioDifficulty, setScenarioDifficulty] = useState<EmployerInterviewScenarioDifficulty>('medium');
+  const [scenarioObjectives, setScenarioObjectives] = useState('');
+  const [scenarioSuccessEvidence, setScenarioSuccessEvidence] = useState('');
+  const [scenarioFailureSignals, setScenarioFailureSignals] = useState('');
+  const [savingScenario, setSavingScenario] = useState(false);
+  const [saveScenarioError, setSaveScenarioError] = useState<string | null>(null);
+  const [scenarioActionErrorById, setScenarioActionErrorById] = useState<Record<string, string>>({});
+  const [scenarioActionPendingId, setScenarioActionPendingId] = useState<string | null>(null);
+
+  const [expandedScenarioId, setExpandedScenarioId] = useState<string | null>(null);
+  const [scenarioQuestionsById, setScenarioQuestionsById] = useState<Record<string, EmployerInterviewScenarioQuestionSet>>({});
+  const [scenarioQuestionsLoadingById, setScenarioQuestionsLoadingById] = useState<Record<string, boolean>>({});
+  const [scenarioQuestionsErrorById, setScenarioQuestionsErrorById] = useState<Record<string, string>>({});
+  const [generatingScenarioQuestionsId, setGeneratingScenarioQuestionsId] = useState<string | null>(null);
 
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
@@ -1676,6 +1710,181 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setBuildGraphAnalyticsError(err.message || 'Failed to build interview graph analytics');
     } finally {
       setBuildingGraphAnalytics(false);
+    }
+  };
+
+  const fetchScenarios = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setScenariosLoading(true);
+    setScenariosError(null);
+    try {
+      const response = await employerApi.listEmployerInterviewScenarios(organizationId, sessionAnswers.sessionId);
+      setScenarios(response.data.scenarios);
+    } catch (err: any) {
+      setScenariosError(err.message || 'Failed to load scenarios');
+    } finally {
+      setScenariosLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.sessionId) {
+      fetchScenarios();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId]);
+
+  const splitList = (value: string): string[] =>
+    value
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const resetScenarioForm = () => {
+    setEditingScenarioId(null);
+    setScenarioTitle('');
+    setScenarioDescription('');
+    setScenarioCategory('technical');
+    setScenarioSituation('');
+    setScenarioCandidateRole('');
+    setScenarioConstraints('');
+    setScenarioAvailableInformation('');
+    setScenarioTargetCompetencies([]);
+    setScenarioDifficulty('medium');
+    setScenarioObjectives('');
+    setScenarioSuccessEvidence('');
+    setScenarioFailureSignals('');
+    setSaveScenarioError(null);
+  };
+
+  const handleOpenCreateScenario = () => {
+    resetScenarioForm();
+    setShowScenarioForm(true);
+  };
+
+  const handleOpenEditScenario = (scenario: EmployerInterviewScenario) => {
+    setEditingScenarioId(scenario.id);
+    setScenarioTitle(scenario.title);
+    setScenarioDescription(scenario.description);
+    setScenarioCategory(scenario.category);
+    setScenarioSituation(scenario.context.situation);
+    setScenarioCandidateRole(scenario.context.candidateRole);
+    setScenarioConstraints(scenario.context.constraints.join(', '));
+    setScenarioAvailableInformation(scenario.context.availableInformation.join(', '));
+    setScenarioTargetCompetencies(scenario.targetCompetencies);
+    setScenarioDifficulty(scenario.difficulty);
+    setScenarioObjectives(scenario.objectives.join(', '));
+    setScenarioSuccessEvidence(scenario.successEvidence.join(', '));
+    setScenarioFailureSignals(scenario.failureSignals.join(', '));
+    setSaveScenarioError(null);
+    setShowScenarioForm(true);
+  };
+
+  const handleToggleTargetCompetency = (name: string) => {
+    setScenarioTargetCompetencies((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
+  };
+
+  const handleSubmitScenario = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !sessionAnswers) return;
+    setSavingScenario(true);
+    setSaveScenarioError(null);
+    const input: EmployerInterviewScenarioInput = {
+      title: scenarioTitle,
+      description: scenarioDescription,
+      category: scenarioCategory,
+      context: {
+        situation: scenarioSituation,
+        candidateRole: scenarioCandidateRole,
+        constraints: splitList(scenarioConstraints),
+        availableInformation: splitList(scenarioAvailableInformation),
+      },
+      targetCompetencies: scenarioTargetCompetencies,
+      difficulty: scenarioDifficulty,
+      objectives: splitList(scenarioObjectives),
+      successEvidence: splitList(scenarioSuccessEvidence),
+      failureSignals: splitList(scenarioFailureSignals),
+    };
+    try {
+      if (editingScenarioId) {
+        await employerApi.updateEmployerInterviewScenario(organizationId, sessionAnswers.sessionId, editingScenarioId, input);
+      } else {
+        await employerApi.createEmployerInterviewScenario(organizationId, sessionAnswers.sessionId, input);
+      }
+      setShowScenarioForm(false);
+      resetScenarioForm();
+      fetchScenarios();
+    } catch (err: any) {
+      setSaveScenarioError(err.message || 'Failed to save scenario');
+    } finally {
+      setSavingScenario(false);
+    }
+  };
+
+  const handleMarkScenarioReady = async (scenarioId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setScenarioActionPendingId(scenarioId);
+    setScenarioActionErrorById((prev) => ({ ...prev, [scenarioId]: '' }));
+    try {
+      await employerApi.updateEmployerInterviewScenario(organizationId, sessionAnswers.sessionId, scenarioId, { status: 'ready' });
+      fetchScenarios();
+    } catch (err: any) {
+      setScenarioActionErrorById((prev) => ({ ...prev, [scenarioId]: err.message || 'Failed to mark scenario ready' }));
+    } finally {
+      setScenarioActionPendingId(null);
+    }
+  };
+
+  const handleArchiveScenario = async (scenarioId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setScenarioActionPendingId(scenarioId);
+    setScenarioActionErrorById((prev) => ({ ...prev, [scenarioId]: '' }));
+    try {
+      await employerApi.archiveEmployerInterviewScenario(organizationId, sessionAnswers.sessionId, scenarioId);
+      fetchScenarios();
+    } catch (err: any) {
+      setScenarioActionErrorById((prev) => ({ ...prev, [scenarioId]: err.message || 'Failed to archive scenario' }));
+    } finally {
+      setScenarioActionPendingId(null);
+    }
+  };
+
+  const fetchScenarioQuestions = useCallback(
+    async (scenarioId: string) => {
+      if (!organizationId || !sessionAnswers) return;
+      setScenarioQuestionsLoadingById((prev) => ({ ...prev, [scenarioId]: true }));
+      setScenarioQuestionsErrorById((prev) => ({ ...prev, [scenarioId]: '' }));
+      try {
+        const response = await employerApi.getEmployerInterviewScenarioQuestions(organizationId, sessionAnswers.sessionId, scenarioId);
+        setScenarioQuestionsById((prev) => ({ ...prev, [scenarioId]: response.data }));
+      } catch (err: any) {
+        setScenarioQuestionsErrorById((prev) => ({ ...prev, [scenarioId]: err.message || 'Failed to load scenario questions' }));
+      } finally {
+        setScenarioQuestionsLoadingById((prev) => ({ ...prev, [scenarioId]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
+  const handleToggleScenarioExpanded = (scenarioId: string) => {
+    const next = expandedScenarioId === scenarioId ? null : scenarioId;
+    setExpandedScenarioId(next);
+    if (next && !scenarioQuestionsById[next]) {
+      fetchScenarioQuestions(next);
+    }
+  };
+
+  const handleGenerateScenarioQuestions = async (scenarioId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setGeneratingScenarioQuestionsId(scenarioId);
+    setScenarioQuestionsErrorById((prev) => ({ ...prev, [scenarioId]: '' }));
+    try {
+      const response = await employerApi.generateEmployerInterviewScenarioQuestions(organizationId, sessionAnswers.sessionId, scenarioId);
+      setScenarioQuestionsById((prev) => ({ ...prev, [scenarioId]: response.data }));
+    } catch (err: any) {
+      setScenarioQuestionsErrorById((prev) => ({ ...prev, [scenarioId]: err.message || 'Failed to generate scenario questions' }));
+    } finally {
+      setGeneratingScenarioQuestionsId(null);
     }
   };
 
@@ -5451,6 +5660,320 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 )}
               </div>
             </div>
+
+            {isSessionCompleted && (
+              <div className="card mt-6">
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+                  <h2 className="section-title">Scenario Assessments</h2>
+                  {canManage && !showScenarioForm && (
+                    <button onClick={handleOpenCreateScenario} className="btn btn-primary px-3 py-1.5 text-xs">
+                      <Plus size={14} />
+                      New Scenario
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Structured, job-relevant workplace scenarios for this assessment — definitions only, no candidate execution
+                  yet.
+                </p>
+
+                {showScenarioForm && (
+                  <form onSubmit={handleSubmitScenario} className="surface-muted p-4 mb-4 space-y-3">
+                    <h3 className="text-sm font-semibold text-mentor-text">{editingScenarioId ? 'Edit Scenario' : 'New Scenario'}</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Title</label>
+                        <input value={scenarioTitle} onChange={(e) => setScenarioTitle(e.target.value)} className="input" maxLength={200} />
+                      </div>
+                      <div>
+                        <label className="label">Category</label>
+                        <select
+                          value={scenarioCategory}
+                          onChange={(e) => setScenarioCategory(e.target.value as EmployerInterviewScenarioCategory)}
+                          className="input"
+                        >
+                          {[
+                            'technical',
+                            'system_design',
+                            'debugging',
+                            'incident',
+                            'architecture',
+                            'leadership',
+                            'stakeholder',
+                            'prioritization',
+                            'communication',
+                            'domain',
+                            'other',
+                          ].map((c) => (
+                            <option key={c} value={c}>
+                              {labelizeCode(c)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="label">Description</label>
+                      <textarea
+                        value={scenarioDescription}
+                        onChange={(e) => setScenarioDescription(e.target.value)}
+                        className="input"
+                        rows={2}
+                        maxLength={2000}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="label">Situation</label>
+                      <textarea
+                        value={scenarioSituation}
+                        onChange={(e) => setScenarioSituation(e.target.value)}
+                        className="input"
+                        rows={2}
+                        maxLength={2000}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Candidate Role</label>
+                        <input
+                          value={scenarioCandidateRole}
+                          onChange={(e) => setScenarioCandidateRole(e.target.value)}
+                          className="input"
+                          maxLength={300}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Difficulty</label>
+                        <select
+                          value={scenarioDifficulty}
+                          onChange={(e) => setScenarioDifficulty(e.target.value as EmployerInterviewScenarioDifficulty)}
+                          className="input"
+                        >
+                          <option value="easy">Easy</option>
+                          <option value="medium">Medium</option>
+                          <option value="hard">Hard</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">Constraints (comma-separated)</label>
+                        <input value={scenarioConstraints} onChange={(e) => setScenarioConstraints(e.target.value)} className="input" />
+                      </div>
+                      <div>
+                        <label className="label">Available Information (comma-separated)</label>
+                        <input
+                          value={scenarioAvailableInformation}
+                          onChange={(e) => setScenarioAvailableInformation(e.target.value)}
+                          className="input"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="label mb-1.5">Target Competencies</label>
+                      {(rubric?.rubric.competencies.length ?? 0) === 0 ? (
+                        <p className="text-xs text-mentor-text-muted">No rubric competencies available.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {rubric!.rubric.competencies.map((c) => (
+                            <button
+                              type="button"
+                              key={c.competencyName}
+                              onClick={() => handleToggleTargetCompetency(c.competencyName)}
+                              className={`badge ${scenarioTargetCompetencies.includes(c.competencyName) ? 'badge-info' : 'badge-neutral'}`}
+                            >
+                              {c.competencyName}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="label">Objectives (comma-separated)</label>
+                        <input value={scenarioObjectives} onChange={(e) => setScenarioObjectives(e.target.value)} className="input" />
+                      </div>
+                      <div>
+                        <label className="label">Success Evidence (comma-separated)</label>
+                        <input value={scenarioSuccessEvidence} onChange={(e) => setScenarioSuccessEvidence(e.target.value)} className="input" />
+                      </div>
+                      <div>
+                        <label className="label">Failure Signals (comma-separated)</label>
+                        <input value={scenarioFailureSignals} onChange={(e) => setScenarioFailureSignals(e.target.value)} className="input" />
+                      </div>
+                    </div>
+
+                    {saveScenarioError && <p className="text-sm text-mentor-error">{saveScenarioError}</p>}
+                    <div className="flex items-center gap-2">
+                      <button type="submit" disabled={savingScenario} className="btn btn-primary">
+                        {savingScenario ? 'Saving...' : editingScenarioId ? 'Save Changes' : 'Create Scenario'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowScenarioForm(false);
+                          resetScenarioForm();
+                        }}
+                        className="btn btn-secondary"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {scenariosLoading ? (
+                  <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                ) : scenariosError ? (
+                  <div>
+                    <p className="text-sm text-mentor-error mb-2">{scenariosError}</p>
+                    <button onClick={fetchScenarios} className="btn btn-secondary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : scenarios.length === 0 ? (
+                  <p className="text-sm text-mentor-text-secondary">No scenarios yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {scenarios.map((s) => {
+                      const statusBadge: Record<string, string> = { draft: 'badge-neutral', ready: 'badge-success', archived: 'badge-warning' };
+                      const isExpanded = expandedScenarioId === s.id;
+                      const questionSet = scenarioQuestionsById[s.id];
+                      return (
+                        <div key={s.id} className="surface-muted p-4">
+                          <div className="flex items-start justify-between gap-2 flex-wrap mb-1">
+                            <div>
+                              <p className="text-sm font-semibold text-mentor-text">{s.title}</p>
+                              <p className="text-xs text-mentor-text-muted">
+                                {labelizeCode(s.category)} &middot; {labelizeCode(s.difficulty)}
+                              </p>
+                            </div>
+                            <span className={`badge ${statusBadge[s.status] || 'badge-neutral'}`}>{labelizeCode(s.status)}</span>
+                          </div>
+                          {s.targetCompetencies.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
+                              {s.targetCompetencies.map((c) => (
+                                <span key={c} className="badge badge-neutral">
+                                  {c}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {scenarioActionErrorById[s.id] && <p className="text-xs text-mentor-error mb-1.5">{scenarioActionErrorById[s.id]}</p>}
+                          {canManage && (
+                            <div className="flex items-center gap-2 flex-wrap mb-2">
+                              {s.status === 'draft' && (
+                                <>
+                                  <button onClick={() => handleOpenEditScenario(s)} className="btn btn-secondary px-2 py-1 text-xs">
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => handleMarkScenarioReady(s.id)}
+                                    disabled={scenarioActionPendingId === s.id}
+                                    className="btn btn-secondary px-2 py-1 text-xs"
+                                  >
+                                    Mark Ready
+                                  </button>
+                                </>
+                              )}
+                              {s.status !== 'archived' && (
+                                <button
+                                  onClick={() => handleArchiveScenario(s.id)}
+                                  disabled={scenarioActionPendingId === s.id}
+                                  className="btn btn-secondary px-2 py-1 text-xs"
+                                >
+                                  Archive
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => handleToggleScenarioExpanded(s.id)}
+                            className="text-xs text-primary-600 hover:underline"
+                          >
+                            {isExpanded ? 'Hide Scenario Questions' : 'Scenario Questions'}
+                          </button>
+
+                          {isExpanded && (
+                            <div className="mt-3 pt-3 border-t border-mentor-border">
+                              {scenarioQuestionsLoadingById[s.id] ? (
+                                <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                              ) : !questionSet || !questionSet.generated ? (
+                                <div>
+                                  {(questionSet?.status === 'failed' || scenarioQuestionsErrorById[s.id]) && (
+                                    <p className="text-xs text-mentor-error mb-1">
+                                      {questionSet?.errorMessage || scenarioQuestionsErrorById[s.id] || 'Question generation failed.'}
+                                    </p>
+                                  )}
+                                  {questionSet?.status === 'processing' ? (
+                                    <p className="text-xs text-mentor-text-secondary">Generating questions...</p>
+                                  ) : (
+                                    <>
+                                      <p className="text-xs text-mentor-text-secondary mb-2">
+                                        {s.status === 'ready'
+                                          ? 'No question plan generated yet.'
+                                          : 'Mark this scenario ready before generating questions.'}
+                                      </p>
+                                      {canManage && s.status === 'ready' && (
+                                        <button
+                                          onClick={() => handleGenerateScenarioQuestions(s.id)}
+                                          disabled={generatingScenarioQuestionsId === s.id}
+                                          className="btn btn-secondary px-2 py-1 text-xs"
+                                        >
+                                          {generatingScenarioQuestionsId === s.id
+                                            ? 'Generating...'
+                                            : questionSet?.status === 'failed'
+                                              ? 'Retry'
+                                              : 'Generate Questions'}
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              ) : (
+                                <ul className="space-y-2">
+                                  {(questionSet.questions || []).map((q) => (
+                                    <li key={q.sequence} className="p-2.5 bg-white dark:bg-future-elevated rounded-lg border border-mentor-border">
+                                      <p className="text-xs font-medium text-mentor-text-muted mb-1">
+                                        Step {q.sequence} — {labelizeCode(q.type)}
+                                      </p>
+                                      <p className="text-sm text-mentor-text mb-1.5">{q.questionText}</p>
+                                      <div className="flex flex-wrap gap-1.5 mb-1">
+                                        <span className="badge badge-neutral capitalize">{q.difficulty}</span>
+                                        {q.targetCompetencies.map((c) => (
+                                          <span key={c} className="badge badge-info">
+                                            {c}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      {q.evidenceExpected.length > 0 && (
+                                        <p className="text-xs text-mentor-text-muted">
+                                          Expected evidence: {q.evidenceExpected.join('; ')}
+                                        </p>
+                                      )}
+                                      {q.scenarioUpdate && (
+                                        <p className="text-xs text-mentor-warning mt-1">Scenario update: {q.scenarioUpdate}</p>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </main>
