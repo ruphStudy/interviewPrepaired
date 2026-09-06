@@ -69,6 +69,13 @@ import employerInterviewScenarioQuestionGenerationController from '../controller
 import employerInterviewScenarioResponseEvaluationController from '../controllers/EmployerInterviewScenarioResponseEvaluationController';
 import employerInterviewScenarioSessionController from '../controllers/EmployerInterviewScenarioSessionController';
 import employerInterviewScenarioReportController from '../controllers/EmployerInterviewScenarioReportController';
+import organizationKnowledgeBaseController from '../controllers/OrganizationKnowledgeBaseController';
+import organizationKnowledgeDocumentController from '../controllers/OrganizationKnowledgeDocumentController';
+import {
+  MAX_KNOWLEDGE_DOCUMENT_FILE_SIZE_BYTES,
+  ALLOWED_KNOWLEDGE_DOCUMENT_EXTENSIONS,
+  isAllowedKnowledgeDocumentFile,
+} from '../constants/organizationKnowledgeDocument';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3719,6 +3726,162 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewScenarioReportController.buildScenarioReport
+);
+
+// ============================================================================
+// Organization Knowledge Base (29A) + document upload/parsing (29B) —
+// company-only, organization-scoped internal knowledge. NO embeddings, NO
+// vector search, NO RAG injection, NO AI (that is 29C+). `rawText` is
+// confidential internal knowledge — never exposed publicly.
+// ============================================================================
+
+const knowledgeBaseIdValidation = [param('knowledgeBaseId').isMongoId().withMessage('Invalid knowledge base ID')];
+const knowledgeDocumentIdValidation = [param('documentId').isMongoId().withMessage('Invalid document ID')];
+
+const createTextDocumentValidation = [
+  body('title').isString().trim().isLength({ min: 1, max: 200 }).withMessage('title is required (max 200 characters)'),
+  body('description').optional().isString().trim().isLength({ max: 1000 }).withMessage('description must be at most 1000 characters'),
+  body('text').isString().trim().isLength({ min: 1, max: 100_000 }).withMessage('text is required (max 100000 characters)'),
+];
+
+// Memory storage only — the buffer is handed to OrganizationKnowledgeDocumentService,
+// which writes it to local knowledge-document storage itself. Mirrors the
+// existing resume upload size/validation convention.
+const knowledgeDocumentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_KNOWLEDGE_DOCUMENT_FILE_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const check = isAllowedKnowledgeDocumentFile(file.originalname, file.mimetype);
+    if (!check.allowed) {
+      cb(new Error(`Unsupported file type. Supported types: ${ALLOWED_KNOWLEDGE_DOCUMENT_EXTENSIONS.join(', ')}`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+router.post(
+  '/:organizationId/knowledge-bases',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeBaseController.createKnowledgeBase
+);
+
+router.get(
+  '/:organizationId/knowledge-bases',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  organizationKnowledgeBaseController.listKnowledgeBases
+);
+
+router.get(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  organizationKnowledgeBaseController.getKnowledgeBase
+);
+
+router.patch(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeBaseController.updateKnowledgeBase
+);
+
+router.post(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/archive',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeBaseController.archiveKnowledgeBase
+);
+
+router.get(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  organizationKnowledgeDocumentController.listDocuments
+);
+
+router.get(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents/:documentId',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  ...knowledgeDocumentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  organizationKnowledgeDocumentController.getDocument
+);
+
+router.get(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents/:documentId/content',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  ...knowledgeDocumentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  organizationKnowledgeDocumentController.getDocumentContent
+);
+
+router.post(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents/upload',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  knowledgeDocumentUpload.single('file'),
+  organizationKnowledgeDocumentController.uploadDocument
+);
+
+router.post(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents/text',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  ...createTextDocumentValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeDocumentController.createTextDocument
+);
+
+router.post(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents/:documentId/reprocess',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  ...knowledgeDocumentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeDocumentController.reprocessDocument
+);
+
+router.post(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents/:documentId/archive',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  ...knowledgeDocumentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeDocumentController.archiveDocument
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

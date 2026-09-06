@@ -169,6 +169,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
                 { to: `/organizations/${activeOrganizationId}/employer/jobs`, label: 'Jobs', icon: Briefcase },
                 { to: `/organizations/${activeOrganizationId}/employer/candidates`, label: 'Candidates', icon: Users },
                 { to: `/organizations/${activeOrganizationId}/employer/talent-skills`, label: 'Talent Skills', icon: Network },
+                { to: `/organizations/${activeOrganizationId}/employer/knowledge-base`, label: 'Knowledge Base', icon: BookOpen },
                 { to: `/organizations/${activeOrganizationId}/employer/mentions`, label: 'Mentions', icon: AtSign },
                 {
                   to: `/organizations/${activeOrganizationId}/employer/notifications`,

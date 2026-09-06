@@ -40,6 +40,8 @@ import EmployerJobDescriptionPage from './pages/employer/EmployerJobDescriptionP
 import EmployerCandidatesPage from './pages/employer/EmployerCandidatesPage';
 import EmployerMentionsPage from './pages/employer/EmployerMentionsPage';
 import EmployerTalentSkillsPage from './pages/employer/EmployerTalentSkillsPage';
+import EmployerKnowledgeBasesPage from './pages/employer/EmployerKnowledgeBasesPage';
+import EmployerKnowledgeBaseDetailPage from './pages/employer/EmployerKnowledgeBaseDetailPage';
 import EmployerNotificationsPage from './pages/employer/EmployerNotificationsPage';
 import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
 import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
@@ -349,6 +351,23 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerTalentSkillsPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Employer Knowledge Base (Sprint 29A/29B) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/knowledge-base"
+            element={
+              <ProtectedRoute>
+                <EmployerKnowledgeBasesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/employer/knowledge-base/:knowledgeBaseId"
+            element={
+              <ProtectedRoute>
+                <EmployerKnowledgeBaseDetailPage />
               </ProtectedRoute>
             }
           />

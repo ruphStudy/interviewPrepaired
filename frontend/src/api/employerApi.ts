@@ -2434,6 +2434,66 @@ export type GetEmployerInterviewScenarioReportResponse = ApiEnvelope<EmployerInt
 export type BuildEmployerInterviewScenarioReportResponse = ApiEnvelope<EmployerInterviewScenarioReport>;
 
 // ============================================================================
+// Organization Knowledge Base (Sprint 29A) + document upload/parsing
+// (Sprint 29B) — organization-scoped internal knowledge. NO embeddings, NO
+// vector search, NO AI (that is 29C+). `rawText`/full content is
+// employer-internal only.
+// ============================================================================
+
+export type OrganizationKnowledgeBaseStatus = 'active' | 'archived';
+
+export interface OrganizationKnowledgeBase {
+  id: string;
+  name: string;
+  description?: string;
+  status: OrganizationKnowledgeBaseStatus;
+  knowledgeVersion: string;
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizationKnowledgeBaseInput {
+  name: string;
+  description?: string;
+}
+
+export type CreateOrganizationKnowledgeBaseResponse = ApiEnvelope<OrganizationKnowledgeBase>;
+export type UpdateOrganizationKnowledgeBaseResponse = ApiEnvelope<OrganizationKnowledgeBase>;
+export type ArchiveOrganizationKnowledgeBaseResponse = ApiEnvelope<OrganizationKnowledgeBase>;
+export type GetOrganizationKnowledgeBaseResponse = ApiEnvelope<OrganizationKnowledgeBase>;
+export type ListOrganizationKnowledgeBasesResponse = ApiEnvelope<{ knowledgeBases: OrganizationKnowledgeBase[] }>;
+
+export type OrganizationKnowledgeDocumentSourceType = 'file' | 'text';
+export type OrganizationKnowledgeDocumentStatus = 'draft' | 'processing' | 'ready' | 'failed' | 'archived';
+
+export interface OrganizationKnowledgeDocument {
+  id: string;
+  title: string;
+  description?: string;
+  sourceType: OrganizationKnowledgeDocumentSourceType;
+  originalFileName?: string;
+  mimeType?: string;
+  fileSizeBytes?: number;
+  status: OrganizationKnowledgeDocumentStatus;
+  parsingVersion?: string;
+  characterCount?: number;
+  wordCount?: number;
+  parseError?: string;
+  createdAt: string;
+  updatedAt: string;
+  parsedTextPreview?: string;
+}
+
+export type ListOrganizationKnowledgeDocumentsResponse = ApiEnvelope<{ documents: OrganizationKnowledgeDocument[] }>;
+export type GetOrganizationKnowledgeDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
+export type GetOrganizationKnowledgeDocumentContentResponse = ApiEnvelope<{ id: string; rawText: string }>;
+export type UploadOrganizationKnowledgeDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
+export type CreateOrganizationKnowledgeTextDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
+export type ReprocessOrganizationKnowledgeDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
+export type ArchiveOrganizationKnowledgeDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -4819,6 +4879,180 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to build scenario report');
+    }
+  }
+
+  async createOrganizationKnowledgeBase(
+    organizationId: string,
+    input: OrganizationKnowledgeBaseInput
+  ): Promise<CreateOrganizationKnowledgeBaseResponse> {
+    try {
+      const response = await this.api.post<CreateOrganizationKnowledgeBaseResponse>(`/organizations/${organizationId}/knowledge-bases`, input);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create knowledge base');
+    }
+  }
+
+  async listOrganizationKnowledgeBases(organizationId: string): Promise<ListOrganizationKnowledgeBasesResponse> {
+    try {
+      const response = await this.api.get<ListOrganizationKnowledgeBasesResponse>(`/organizations/${organizationId}/knowledge-bases`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load knowledge bases');
+    }
+  }
+
+  async getOrganizationKnowledgeBase(organizationId: string, knowledgeBaseId: string): Promise<GetOrganizationKnowledgeBaseResponse> {
+    try {
+      const response = await this.api.get<GetOrganizationKnowledgeBaseResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load knowledge base');
+    }
+  }
+
+  async updateOrganizationKnowledgeBase(
+    organizationId: string,
+    knowledgeBaseId: string,
+    updates: Partial<OrganizationKnowledgeBaseInput>
+  ): Promise<UpdateOrganizationKnowledgeBaseResponse> {
+    try {
+      const response = await this.api.patch<UpdateOrganizationKnowledgeBaseResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}`,
+        updates
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update knowledge base');
+    }
+  }
+
+  async archiveOrganizationKnowledgeBase(organizationId: string, knowledgeBaseId: string): Promise<ArchiveOrganizationKnowledgeBaseResponse> {
+    try {
+      const response = await this.api.post<ArchiveOrganizationKnowledgeBaseResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/archive`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to archive knowledge base');
+    }
+  }
+
+  async listOrganizationKnowledgeDocuments(
+    organizationId: string,
+    knowledgeBaseId: string
+  ): Promise<ListOrganizationKnowledgeDocumentsResponse> {
+    try {
+      const response = await this.api.get<ListOrganizationKnowledgeDocumentsResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load documents');
+    }
+  }
+
+  async getOrganizationKnowledgeDocument(
+    organizationId: string,
+    knowledgeBaseId: string,
+    documentId: string
+  ): Promise<GetOrganizationKnowledgeDocumentResponse> {
+    try {
+      const response = await this.api.get<GetOrganizationKnowledgeDocumentResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents/${documentId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load document');
+    }
+  }
+
+  /** Employer-only full parsed text — never exposed publicly. */
+  async getOrganizationKnowledgeDocumentContent(
+    organizationId: string,
+    knowledgeBaseId: string,
+    documentId: string
+  ): Promise<GetOrganizationKnowledgeDocumentContentResponse> {
+    try {
+      const response = await this.api.get<GetOrganizationKnowledgeDocumentContentResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents/${documentId}/content`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load document content');
+    }
+  }
+
+  async uploadOrganizationKnowledgeDocument(
+    organizationId: string,
+    knowledgeBaseId: string,
+    file: File,
+    title?: string,
+    description?: string
+  ): Promise<UploadOrganizationKnowledgeDocumentResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (title) formData.append('title', title);
+      if (description) formData.append('description', description);
+      const response = await this.api.post<UploadOrganizationKnowledgeDocumentResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents/upload`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to upload document');
+    }
+  }
+
+  async createOrganizationKnowledgeTextDocument(
+    organizationId: string,
+    knowledgeBaseId: string,
+    input: { title: string; description?: string; text: string }
+  ): Promise<CreateOrganizationKnowledgeTextDocumentResponse> {
+    try {
+      const response = await this.api.post<CreateOrganizationKnowledgeTextDocumentResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents/text`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create document');
+    }
+  }
+
+  /** Reparses from the persisted original file only — never available for `text` documents. */
+  async reprocessOrganizationKnowledgeDocument(
+    organizationId: string,
+    knowledgeBaseId: string,
+    documentId: string
+  ): Promise<ReprocessOrganizationKnowledgeDocumentResponse> {
+    try {
+      const response = await this.api.post<ReprocessOrganizationKnowledgeDocumentResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents/${documentId}/reprocess`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to reprocess document');
+    }
+  }
+
+  async archiveOrganizationKnowledgeDocument(
+    organizationId: string,
+    knowledgeBaseId: string,
+    documentId: string
+  ): Promise<ArchiveOrganizationKnowledgeDocumentResponse> {
+    try {
+      const response = await this.api.post<ArchiveOrganizationKnowledgeDocumentResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents/${documentId}/archive`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to archive document');
     }
   }
 
