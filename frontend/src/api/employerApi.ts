@@ -2263,6 +2263,55 @@ export interface CreateEmployerCandidateCommunicationPayload {
 export type GetEmployerCandidateCommunicationsResponse = ApiEnvelope<{ communications: EmployerCandidateCommunicationRecord[] }>;
 export type CreateEmployerCandidateCommunicationResponse = ApiEnvelope<{ communication: EmployerCandidateCommunicationRecord }>;
 
+// ============================================================================
+// Skill Graph (Sprint 25A) — deterministic (no AI) unification of
+// structured skill/competency names into shared skill nodes + evidence
+// edges. Candidate evidence is structured evidence PRESENCE only, never a
+// proficiency certification.
+// ============================================================================
+
+export type EmployerSkillEvidenceSourceType = 'resume' | 'screening' | 'assessment' | 'evidence';
+
+export interface EmployerSkillEvidenceSource {
+  type: EmployerSkillEvidenceSourceType;
+  sourceArtifactId: string;
+  evidenceLevel?: string;
+  score?: number;
+}
+
+export interface EmployerJobSkillGraphEntry {
+  skillNodeId: string;
+  canonicalName?: string;
+  aliases: string[];
+  importance?: string;
+  weight?: number;
+}
+
+export interface EmployerCandidateSkillGraphEntry {
+  skillNodeId: string;
+  canonicalName?: string;
+  aliases: string[];
+  evidenceSources: EmployerSkillEvidenceSource[];
+}
+
+export interface EmployerSkillGraphCoverage {
+  jobSkillCount: number;
+  candidateEvidenceSkillCount: number;
+  matchedSkillCount: number;
+  missingJobSkillCount: number;
+}
+
+export interface EmployerApplicationSkillGraph {
+  built: boolean;
+  applicationId: string;
+  jobSkills: EmployerJobSkillGraphEntry[];
+  candidateSkills: EmployerCandidateSkillGraphEntry[];
+  coverage: EmployerSkillGraphCoverage;
+}
+
+export type GetEmployerApplicationSkillGraphResponse = ApiEnvelope<EmployerApplicationSkillGraph>;
+export type BuildEmployerApplicationSkillGraphResponse = ApiEnvelope<EmployerApplicationSkillGraph>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -3716,6 +3765,32 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to record communication');
+    }
+  }
+
+  async getEmployerApplicationSkillGraph(organizationId: string, applicationId: string): Promise<GetEmployerApplicationSkillGraphResponse> {
+    try {
+      const response = await this.api.get<GetEmployerApplicationSkillGraphResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/skill-graph`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load skill graph');
+    }
+  }
+
+  /** Idempotent deterministic rebuild — never accepts artifact ids from the caller. */
+  async buildEmployerApplicationSkillGraph(
+    organizationId: string,
+    applicationId: string
+  ): Promise<BuildEmployerApplicationSkillGraphResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerApplicationSkillGraphResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/skill-graph/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build skill graph');
     }
   }
 }

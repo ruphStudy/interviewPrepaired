@@ -48,6 +48,7 @@ import employerApi, {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
   EMPLOYER_CANDIDATE_COMMUNICATION_TYPES,
+  EmployerApplicationSkillGraph,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -66,6 +67,7 @@ import {
   X,
   UserPlus,
   MessageSquare,
+  Network,
 } from 'lucide-react';
 
 const INVITATION_STATUS_LABELS: Record<string, string> = {
@@ -864,6 +866,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [commOccurredAt, setCommOccurredAt] = useState('');
   const [savingCommunication, setSavingCommunication] = useState(false);
   const [saveCommunicationError, setSaveCommunicationError] = useState<string | null>(null);
+
+  const [skillGraph, setSkillGraph] = useState<EmployerApplicationSkillGraph | null>(null);
+  const [skillGraphLoading, setSkillGraphLoading] = useState(true);
+  const [skillGraphError, setSkillGraphError] = useState<string | null>(null);
+  const [buildingSkillGraph, setBuildingSkillGraph] = useState(false);
+  const [buildSkillGraphError, setBuildSkillGraphError] = useState<string | null>(null);
 
   // Best-effort prerequisite hints only — the backend's own 409 messages on
   // "Run Screening" remain the actual authority if these can't be determined.
@@ -1669,6 +1677,40 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setSaveCommunicationError(err.message || 'Failed to record communication');
     } finally {
       setSavingCommunication(false);
+    }
+  };
+
+  const fetchSkillGraph = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setSkillGraphLoading(true);
+    setSkillGraphError(null);
+    try {
+      const response = await employerApi.getEmployerApplicationSkillGraph(organizationId, applicationId);
+      setSkillGraph(response.data);
+    } catch (err: any) {
+      setSkillGraphError(err.message || 'Failed to load skill graph');
+    } finally {
+      setSkillGraphLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchSkillGraph();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchSkillGraph]);
+
+  const handleBuildSkillGraph = async () => {
+    if (!organizationId || !applicationId) return;
+    setBuildingSkillGraph(true);
+    setBuildSkillGraphError(null);
+    try {
+      const response = await employerApi.buildEmployerApplicationSkillGraph(organizationId, applicationId);
+      setSkillGraph(response.data);
+    } catch (err: any) {
+      setBuildSkillGraphError(err.message || 'Failed to build skill graph');
+    } finally {
+      setBuildingSkillGraph(false);
     }
   };
 
@@ -3604,6 +3646,144 @@ const EmployerApplicationDetailPage: React.FC = () => {
                     </li>
                   ))}
                 </ul>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <Network size={18} className="text-mentor-text-muted" />
+                Skill Graph
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">Structured skill graph — deterministic, no AI, no fake proficiency scores.</p>
+
+              {skillGraphLoading ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : skillGraphError ? (
+                <div className="p-6 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{skillGraphError}</p>
+                  <button onClick={fetchSkillGraph} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !skillGraph || !skillGraph.built ? (
+                <div>
+                  <p className="text-sm text-mentor-text-secondary mb-3">
+                    Skill graph not built yet — this deterministically unifies structured skills already extracted from the job and
+                    candidate artifacts.
+                  </p>
+                  {canManage && (
+                    <>
+                      {buildSkillGraphError && <p className="text-sm text-mentor-error mb-2">{buildSkillGraphError}</p>}
+                      <button onClick={handleBuildSkillGraph} disabled={buildingSkillGraph} className="btn btn-primary">
+                        {buildingSkillGraph ? 'Building...' : 'Build Skill Graph'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                (() => {
+                  const jobSkillIds = new Set(skillGraph.jobSkills.map((s) => s.skillNodeId));
+                  const candidateSkillIds = new Set(skillGraph.candidateSkills.map((s) => s.skillNodeId));
+                  const matchedSkills = skillGraph.jobSkills.filter((s) => candidateSkillIds.has(s.skillNodeId));
+                  const missingJobSkills = skillGraph.jobSkills.filter((s) => !candidateSkillIds.has(s.skillNodeId));
+                  const additionalCandidateSkills = skillGraph.candidateSkills.filter((s) => !jobSkillIds.has(s.skillNodeId));
+
+                  const evidenceBadgeLabel: Record<string, string> = {
+                    resume: 'Resume',
+                    screening: 'Screening',
+                    assessment: 'Assessment',
+                    evidence: 'Evidence',
+                  };
+
+                  return (
+                    <div className="space-y-6">
+                      {canManage && (
+                        <div>
+                          {buildSkillGraphError && <p className="text-sm text-mentor-error mb-2">{buildSkillGraphError}</p>}
+                          <button onClick={handleBuildSkillGraph} disabled={buildingSkillGraph} className="btn btn-secondary">
+                            {buildingSkillGraph ? 'Rebuilding...' : 'Rebuild Skill Graph'}
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="surface-muted p-3">
+                          <p className="text-xs text-mentor-text-muted">Job Skills</p>
+                          <p className="text-lg font-semibold text-mentor-text">{skillGraph.coverage.jobSkillCount}</p>
+                        </div>
+                        <div className="surface-muted p-3">
+                          <p className="text-xs text-mentor-text-muted">Candidate Evidence Skills</p>
+                          <p className="text-lg font-semibold text-mentor-text">{skillGraph.coverage.candidateEvidenceSkillCount}</p>
+                        </div>
+                        <div className="surface-muted p-3">
+                          <p className="text-xs text-mentor-text-muted">Matched</p>
+                          <p className="text-lg font-semibold text-mentor-success">{skillGraph.coverage.matchedSkillCount}</p>
+                        </div>
+                        <div className="surface-muted p-3">
+                          <p className="text-xs text-mentor-text-muted">Missing Job Skills</p>
+                          <p className="text-lg font-semibold text-mentor-warning">{skillGraph.coverage.missingJobSkillCount}</p>
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="label mb-2">Matched Skills</p>
+                        {matchedSkills.length === 0 ? (
+                          <p className="text-xs text-mentor-text-muted">No matched skill evidence yet.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {matchedSkills.map((s) => (
+                              <span key={s.skillNodeId} className="badge badge-success">
+                                {s.canonicalName}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="label mb-2">Missing Job Skills</p>
+                        {missingJobSkills.length === 0 ? (
+                          <p className="text-xs text-mentor-text-muted">No missing job skills.</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {missingJobSkills.map((s) => (
+                              <span key={s.skillNodeId} className="badge badge-warning">
+                                {s.canonicalName}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="label mb-2">Additional Candidate Skills</p>
+                        {additionalCandidateSkills.length === 0 ? (
+                          <p className="text-xs text-mentor-text-muted">No additional candidate skill evidence.</p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {additionalCandidateSkills.map((s) => (
+                              <li key={s.skillNodeId} className="surface-muted p-2.5">
+                                <p className="text-sm text-mentor-text mb-1">{s.canonicalName}</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {s.evidenceSources.map((src, idx) => (
+                                    <span key={idx} className="badge badge-neutral">
+                                      {evidenceBadgeLabel[src.type] || src.type}
+                                      {src.evidenceLevel ? `: ${labelizeCode(src.evidenceLevel)}` : ''}
+                                      {src.score !== undefined ? ` (${src.score})` : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()
               )}
             </div>
           </>

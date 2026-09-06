@@ -49,6 +49,7 @@ import employerCollaborationMentionsController from '../controllers/EmployerColl
 import employerCollaborationNotificationController from '../controllers/EmployerCollaborationNotificationController';
 import employerCandidateCommunicationController from '../controllers/EmployerCandidateCommunicationController';
 import employerCollaborationAnalyticsController from '../controllers/EmployerCollaborationAnalyticsController';
+import employerSkillGraphController from '../controllers/EmployerSkillGraphController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -2749,6 +2750,29 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
   employerCollaborationAnalyticsController.getJobAnalytics
+);
+
+// GET/POST .../applications/:applicationId/skill-graph[/build] (25A) —
+// deterministic (no AI) unification of structured skill/competency names
+// already present across existing hiring artifacts. GET never auto-builds.
+router.get(
+  '/:organizationId/applications/:applicationId/skill-graph',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerSkillGraphController.getSkillGraph
+);
+
+router.post(
+  '/:organizationId/applications/:applicationId/skill-graph/build',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerSkillGraphController.buildSkillGraph
 );
 
 // ============================================================================
