@@ -1918,6 +1918,64 @@ export type GetEmployerHiringReasoningConfidenceAggregateResponse = ApiEnvelope<
 export type BuildEmployerHiringReasoningConfidenceAggregateResponse = ApiEnvelope<EmployerHiringReasoningConfidenceAggregate>;
 
 // ============================================================================
+// Interview Graph (Sprint 27A) — deterministic (NO AI) structural graph of
+// one hiring-assessment interview's competencies/questions, built from the
+// existing 20A blueprint/20B rubric/21A materialized questions. Stored
+// structure only — never adapts the running interview.
+// ============================================================================
+
+export type EmployerInterviewGraphNodeType = 'competency' | 'question';
+export type EmployerInterviewGraphEdgeType = 'competency_to_question' | 'question_to_competency' | 'possible_followup';
+
+export interface EmployerInterviewGraphNodeMetadata {
+  difficulty?: string;
+  questionType?: string;
+  importance?: string;
+  weight?: number;
+}
+
+export interface EmployerInterviewGraphNode {
+  nodeId: string;
+  type: EmployerInterviewGraphNodeType;
+  competencyName?: string;
+  questionIndex?: number;
+  label: string;
+  metadata?: EmployerInterviewGraphNodeMetadata;
+}
+
+export interface EmployerInterviewGraphEdgeMetadata {
+  reason?: string;
+}
+
+export interface EmployerInterviewGraphEdge {
+  edgeId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  type: EmployerInterviewGraphEdgeType;
+  metadata?: EmployerInterviewGraphEdgeMetadata;
+}
+
+export interface EmployerInterviewGraphSummary {
+  competencyNodeCount: number;
+  questionNodeCount: number;
+  edgeCount: number;
+  coveredCompetencyCount: number;
+}
+
+export interface EmployerInterviewGraph {
+  built: boolean;
+  graphVersion?: string;
+  generatedAt?: string;
+  summary?: EmployerInterviewGraphSummary;
+  uncoveredCompetencies?: string[];
+  nodes?: EmployerInterviewGraphNode[];
+  edges?: EmployerInterviewGraphEdge[];
+}
+
+export type GetEmployerInterviewGraphResponse = ApiEnvelope<EmployerInterviewGraph>;
+export type BuildEmployerInterviewGraphResponse = ApiEnvelope<EmployerInterviewGraph>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -3982,6 +4040,29 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to build reasoning & confidence overview');
+    }
+  }
+
+  async getEmployerInterviewGraph(organizationId: string, interviewId: string): Promise<GetEmployerInterviewGraphResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewGraphResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/graph`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview graph');
+    }
+  }
+
+  /** Deterministic, no AI — idempotent upsert-in-place rebuild. No client artifact IDs. */
+  async buildEmployerInterviewGraph(organizationId: string, interviewId: string): Promise<BuildEmployerInterviewGraphResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerInterviewGraphResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/graph/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build interview graph');
     }
   }
 

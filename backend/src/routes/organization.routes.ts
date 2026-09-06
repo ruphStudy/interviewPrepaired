@@ -59,6 +59,7 @@ import employerHiringAnswerConfidenceController from '../controllers/EmployerHir
 import employerHiringAssessmentConsistencyController from '../controllers/EmployerHiringAssessmentConsistencyController';
 import employerHiringClaimVerificationController from '../controllers/EmployerHiringClaimVerificationController';
 import employerHiringReasoningConfidenceAggregateController from '../controllers/EmployerHiringReasoningConfidenceAggregateController';
+import employerInterviewGraphController from '../controllers/EmployerInterviewGraphController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3432,6 +3433,30 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerHiringReasoningConfidenceAggregateController.buildAggregate
+);
+
+// GET/POST .../interviews/:interviewId/graph[/build] (27A) — deterministic
+// (NO AI) structural graph over the existing 20A blueprint/20B rubric/21A
+// materialized questions. Stored structure only; never adapts the running
+// interview. Dynamic follow-up routing/adaptive difficulty are 27B+.
+router.get(
+  '/:organizationId/interviews/:interviewId/graph',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewGraphController.getGraph
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/graph/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewGraphController.buildGraph
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

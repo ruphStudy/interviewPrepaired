@@ -28,6 +28,7 @@ import employerApi, {
   EmployerHiringAssessmentConsistency,
   EmployerHiringClaimVerification,
   EmployerHiringReasoningConfidenceAggregate,
+  EmployerInterviewGraph,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -813,6 +814,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [buildingAggregate, setBuildingAggregate] = useState(false);
   const [buildAggregateError, setBuildAggregateError] = useState<string | null>(null);
 
+  const [interviewGraph, setInterviewGraph] = useState<EmployerInterviewGraph | null>(null);
+  const [interviewGraphLoading, setInterviewGraphLoading] = useState(false);
+  const [interviewGraphError, setInterviewGraphError] = useState<string | null>(null);
+  const [buildingInterviewGraph, setBuildingInterviewGraph] = useState(false);
+  const [buildInterviewGraphError, setBuildInterviewGraphError] = useState<string | null>(null);
+
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
   const [assessmentResultError, setAssessmentResultError] = useState<string | null>(null);
@@ -1456,6 +1463,41 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setBuildAggregateError(err.message || 'Failed to build reasoning & confidence overview');
     } finally {
       setBuildingAggregate(false);
+    }
+  };
+
+  const fetchInterviewGraph = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setInterviewGraphLoading(true);
+    setInterviewGraphError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewGraph(organizationId, sessionAnswers.sessionId);
+      setInterviewGraph(response.data);
+    } catch (err: any) {
+      setInterviewGraphError(err.message || 'Failed to load interview graph');
+    } finally {
+      setInterviewGraphLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.sessionId) {
+      fetchInterviewGraph();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId]);
+
+  const handleBuildInterviewGraph = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setBuildingInterviewGraph(true);
+    setBuildInterviewGraphError(null);
+    try {
+      const response = await employerApi.buildEmployerInterviewGraph(organizationId, sessionAnswers.sessionId);
+      setInterviewGraph(response.data);
+    } catch (err: any) {
+      setBuildInterviewGraphError(err.message || 'Failed to build interview graph');
+    } finally {
+      setBuildingInterviewGraph(false);
     }
   };
 
@@ -3104,6 +3146,135 @@ const EmployerApplicationDetailPage: React.FC = () => {
                             {evaluating ? 'Evaluating...' : 'Evaluate Assessment'}
                           </button>
                         </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isSessionCompleted && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Interview Graph</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">
+                        Deterministic structure of how this interview's competencies map to its materialized questions — no
+                        AI, no dynamic follow-up generation, never changes a running interview.
+                      </p>
+
+                      {interviewGraphLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : interviewGraphError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{interviewGraphError}</p>
+                          <button onClick={fetchInterviewGraph} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : !interviewGraph || !interviewGraph.built ? (
+                        <div>
+                          <p className="text-sm text-mentor-text-secondary mb-3">
+                            Graph not built yet. It deterministically maps the interview's blueprint/rubric competencies to
+                            its materialized questions.
+                          </p>
+                          {canManage && (
+                            <>
+                              {buildInterviewGraphError && (
+                                <p className="text-sm text-mentor-error mb-2">{buildInterviewGraphError}</p>
+                              )}
+                              <button onClick={handleBuildInterviewGraph} disabled={buildingInterviewGraph} className="btn btn-primary">
+                                {buildingInterviewGraph ? 'Building...' : 'Build Interview Graph'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        (() => {
+                          const summary = interviewGraph.summary!;
+                          const nodes = interviewGraph.nodes || [];
+                          const edges = interviewGraph.edges || [];
+                          const uncovered = interviewGraph.uncoveredCompetencies || [];
+                          const competencyNodes = nodes.filter((n) => n.type === 'competency');
+                          const questionNodes = nodes.filter((n) => n.type === 'question');
+
+                          return (
+                            <div className="space-y-4">
+                              {canManage && (
+                                <div>
+                                  {buildInterviewGraphError && (
+                                    <p className="text-sm text-mentor-error mb-2">{buildInterviewGraphError}</p>
+                                  )}
+                                  <button onClick={handleBuildInterviewGraph} disabled={buildingInterviewGraph} className="btn btn-secondary">
+                                    {buildingInterviewGraph ? 'Rebuilding...' : 'Rebuild Interview Graph'}
+                                  </button>
+                                </div>
+                              )}
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Competencies</p>
+                                  <p className="text-lg font-semibold text-mentor-text">{summary.competencyNodeCount}</p>
+                                </div>
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Questions</p>
+                                  <p className="text-lg font-semibold text-mentor-text">{summary.questionNodeCount}</p>
+                                </div>
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Connections</p>
+                                  <p className="text-lg font-semibold text-mentor-text">{summary.edgeCount}</p>
+                                </div>
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Covered Competencies</p>
+                                  <p className="text-lg font-semibold text-mentor-success">{summary.coveredCompetencyCount}</p>
+                                </div>
+                              </div>
+
+                              <div>
+                                <p className="label mb-2">Competency Coverage</p>
+                                {competencyNodes.length === 0 ? (
+                                  <p className="text-xs text-mentor-text-muted">No competency nodes.</p>
+                                ) : (
+                                  <ul className="space-y-2">
+                                    {competencyNodes.map((c) => {
+                                      const questionIndexes = edges
+                                        .filter((e) => e.type === 'competency_to_question' && e.fromNodeId === c.nodeId)
+                                        .map((e) => questionNodes.find((q) => q.nodeId === e.toNodeId)?.questionIndex)
+                                        .filter((idx): idx is number => typeof idx === 'number')
+                                        .sort((a, b) => a - b);
+                                      return (
+                                        <li key={c.nodeId} className="surface-muted p-3">
+                                          <p className="text-sm text-mentor-text">
+                                            {c.label} <span className="text-xs text-mentor-text-muted capitalize">({c.metadata?.importance})</span>
+                                          </p>
+                                          {questionIndexes.length === 0 ? (
+                                            <p className="text-xs text-mentor-warning mt-1">No connected questions</p>
+                                          ) : (
+                                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                              {questionIndexes.map((idx) => (
+                                                <span key={idx} className="badge badge-neutral">
+                                                  Q{idx + 1}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                )}
+                              </div>
+
+                              {uncovered.length > 0 && (
+                                <div>
+                                  <p className="label mb-2">Uncovered Competencies</p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {uncovered.map((name) => (
+                                      <span key={name} className="badge badge-warning">
+                                        {name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
                       )}
                     </div>
                   )}
