@@ -21,6 +21,7 @@ import employerApi, {
   JobCandidateComparisonFilters,
   JobHiringPipeline,
   JobPipelineAnalytics,
+  JobCollaborationAnalytics,
   JobShortlistRow,
   EMPLOYER_JOB_WORKPLACE_TYPES,
   EMPLOYER_JOB_EMPLOYMENT_TYPES,
@@ -51,6 +52,7 @@ import {
   ChevronUp,
   LayoutGrid,
   BarChart3,
+  Activity,
 } from 'lucide-react';
 
 const APPLICATIONS_PAGE_LIMIT = 20;
@@ -278,6 +280,10 @@ const EmployerJobDetailPage: React.FC = () => {
   const [pipelineAnalytics, setPipelineAnalytics] = useState<JobPipelineAnalytics | null>(null);
   const [pipelineAnalyticsLoading, setPipelineAnalyticsLoading] = useState(true);
   const [pipelineAnalyticsError, setPipelineAnalyticsError] = useState<string | null>(null);
+
+  const [collaborationAnalytics, setCollaborationAnalytics] = useState<JobCollaborationAnalytics | null>(null);
+  const [collaborationAnalyticsLoading, setCollaborationAnalyticsLoading] = useState(true);
+  const [collaborationAnalyticsError, setCollaborationAnalyticsError] = useState<string | null>(null);
 
   const [shortlistingApplicationId, setShortlistingApplicationId] = useState<string | null>(null);
   const [shortlistActionError, setShortlistActionError] = useState<string | null>(null);
@@ -571,6 +577,26 @@ const EmployerJobDetailPage: React.FC = () => {
       fetchPipelineAnalytics();
     }
   }, [isSyncing, activeOrganization, canView, fetchPipelineAnalytics]);
+
+  const fetchCollaborationAnalytics = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setCollaborationAnalyticsLoading(true);
+    setCollaborationAnalyticsError(null);
+    try {
+      const response = await employerApi.getEmployerJobCollaborationAnalytics(organizationId, jobId);
+      setCollaborationAnalytics(response.data);
+    } catch (err: any) {
+      setCollaborationAnalyticsError(err.message || 'Failed to load collaboration analytics');
+    } finally {
+      setCollaborationAnalyticsLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchCollaborationAnalytics();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchCollaborationAnalytics]);
 
   const fetchJobShortlist = useCallback(async () => {
     if (!organizationId || !jobId) return;
@@ -2331,6 +2357,166 @@ const EmployerJobDetailPage: React.FC = () => {
                     Tracking coverage: {pipelineAnalytics.dataCoverage.trackedApplications}/{pipelineAnalytics.dataCoverage.totalApplications}{' '}
                     applications ({pipelineAnalytics.dataCoverage.trackingCoveragePercent}%)
                   </p>
+                </div>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">
+                <Activity size={18} className="text-mentor-text-muted" />
+                Collaboration Analytics
+              </h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Collaboration activity &amp; communication activity — deterministic counts, never a recruiter performance score.
+              </p>
+
+              {collaborationAnalyticsLoading ? (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                </div>
+              ) : collaborationAnalyticsError ? (
+                <div className="p-8 text-center">
+                  <AlertCircle className="w-10 h-10 text-mentor-error mx-auto mb-3" />
+                  <p className="text-sm text-mentor-text-secondary mb-4">{collaborationAnalyticsError}</p>
+                  <button onClick={fetchCollaborationAnalytics} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !collaborationAnalytics || collaborationAnalytics.coverage.totalApplications === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-6">No applications yet.</p>
+              ) : (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">With Collaborators</p>
+                      <p className="text-lg font-semibold text-mentor-text">
+                        {collaborationAnalytics.coverage.applicationsWithCollaborators}
+                      </p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Internal Notes</p>
+                      <p className="text-lg font-semibold text-mentor-text">{collaborationAnalytics.collaboration.totalInternalNotes}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Mentions</p>
+                      <p className="text-lg font-semibold text-mentor-text">{collaborationAnalytics.collaboration.totalMentions}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Communications</p>
+                      <p className="text-lg font-semibold text-mentor-text">{collaborationAnalytics.communication.totalCommunications}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Decision Logs</p>
+                      <p className="text-lg font-semibold text-mentor-text">{collaborationAnalytics.decisionActivity.totalDecisionLogs}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Unread Notifications</p>
+                      <p className="text-lg font-semibold text-mentor-text">{collaborationAnalytics.notifications.unreadNotifications}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                      <p className="label mb-2">Collaborator Role Distribution</p>
+                      <div className="space-y-1.5">
+                        {Object.entries(collaborationAnalytics.collaboration.collaborationRoleCounts).map(([role, count]) => {
+                          const max = Math.max(1, collaborationAnalytics.collaboration.totalCollaboratorAssignments);
+                          return (
+                            <div key={role} className="flex items-center gap-2">
+                              <span className="text-xs text-mentor-text-secondary w-24 shrink-0 capitalize">{role}</span>
+                              <div className="flex-1 h-2 rounded bg-mentor-surface overflow-hidden">
+                                <div className="h-full bg-primary-500" style={{ width: `${(count / max) * 100}%` }} />
+                              </div>
+                              <span className="text-xs text-mentor-text-muted w-8 text-right shrink-0">{count}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="label mb-2">Communication Channel Distribution</p>
+                      <div className="space-y-1.5">
+                        {Object.entries(collaborationAnalytics.communication.channelCounts).map(([channel, count]) => {
+                          const max = Math.max(1, collaborationAnalytics.communication.totalCommunications);
+                          return (
+                            <div key={channel} className="flex items-center gap-2">
+                              <span className="text-xs text-mentor-text-secondary w-20 shrink-0 capitalize">{channel.replace('_', ' ')}</span>
+                              <div className="flex-1 h-2 rounded bg-mentor-surface overflow-hidden">
+                                <div className="h-full bg-primary-500" style={{ width: `${(count / max) * 100}%` }} />
+                              </div>
+                              <span className="text-xs text-mentor-text-muted w-8 text-right shrink-0">{count}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                      <p className="label mb-2">Inbound vs Outbound</p>
+                      <div className="flex items-center gap-4">
+                        <span className="badge badge-info">Employer → Candidate: {collaborationAnalytics.communication.outboundCount}</span>
+                        <span className="badge badge-neutral">Candidate → Employer: {collaborationAnalytics.communication.inboundCount}</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="label mb-2">Observed Response Time</p>
+                      {collaborationAnalytics.communication.observedResponseSamples > 0 ? (
+                        <p className="text-sm text-mentor-text-secondary">
+                          Avg {collaborationAnalytics.communication.averageResponseHours}h &middot; Median{' '}
+                          {collaborationAnalytics.communication.medianResponseHours}h &middot;{' '}
+                          {collaborationAnalytics.communication.observedResponseSamples} observed sample
+                          {collaborationAnalytics.communication.observedResponseSamples === 1 ? '' : 's'}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-mentor-text-muted">No observed inbound → outbound pairs yet.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">Communication Type Distribution</p>
+                    <div className="space-y-1.5">
+                      {Object.entries(collaborationAnalytics.communication.typeCounts)
+                        .filter(([, count]) => count > 0)
+                        .map(([type, count]) => {
+                          const max = Math.max(1, collaborationAnalytics.communication.totalCommunications);
+                          return (
+                            <div key={type} className="flex items-center gap-2">
+                              <span className="text-xs text-mentor-text-secondary w-40 shrink-0 capitalize">{type.replace(/_/g, ' ')}</span>
+                              <div className="flex-1 h-2 rounded bg-mentor-surface overflow-hidden">
+                                <div className="h-full bg-primary-500" style={{ width: `${(count / max) * 100}%` }} />
+                              </div>
+                              <span className="text-xs text-mentor-text-muted w-8 text-right shrink-0">{count}</span>
+                            </div>
+                          );
+                        })}
+                      {collaborationAnalytics.communication.totalCommunications === 0 && (
+                        <p className="text-xs text-mentor-text-muted">No communications recorded yet.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">30-Day Activity Trend (UTC)</p>
+                    <div className="flex items-end gap-0.5 h-24 overflow-x-auto">
+                      {collaborationAnalytics.activityTrend.map((day) => {
+                        const total = day.notes + day.communications + day.decisions;
+                        const max = Math.max(1, ...collaborationAnalytics.activityTrend.map((d) => d.notes + d.communications + d.decisions));
+                        return (
+                          <div
+                            key={day.date}
+                            title={`${day.date}: ${day.notes} notes, ${day.communications} communications, ${day.decisions} decisions`}
+                            className="w-2.5 bg-primary-500 rounded-t shrink-0"
+                            style={{ height: `${Math.max(2, (total / max) * 100)}%` }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

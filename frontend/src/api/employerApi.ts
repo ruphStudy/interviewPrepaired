@@ -1289,6 +1289,69 @@ export interface JobPipelineAnalytics {
 export type GetJobPipelineAnalyticsResponse = ApiEnvelope<JobPipelineAnalytics>;
 
 // ============================================================================
+// Job Collaboration & Communication Analytics (Sprint 24E) — deterministic,
+// live, never persisted. Activity-frequency aggregates only — no recruiter
+// ranking/scoring, no recommendation. Distinct from 23D pipeline analytics.
+// ============================================================================
+
+export interface CollaborationAnalyticsCoverage {
+  totalApplications: number;
+  applicationsWithCollaborators: number;
+  applicationsWithInternalNotes: number;
+  applicationsWithCommunications: number;
+  applicationsWithDecisions: number;
+}
+
+export interface CollaborationAnalyticsCollaboration {
+  totalInternalNotes: number;
+  totalMentions: number;
+  totalCollaboratorAssignments: number;
+  uniqueCollaborators: number;
+  collaborationRoleCounts: Record<EmployerJobApplicationCollaborationRole, number>;
+}
+
+export interface CollaborationAnalyticsNotifications {
+  totalNotifications: number;
+  unreadNotifications: number;
+  notificationTypeCounts: Record<EmployerCollaborationNotificationType, number>;
+}
+
+export interface CollaborationAnalyticsCommunication {
+  totalCommunications: number;
+  outboundCount: number;
+  inboundCount: number;
+  channelCounts: Record<EmployerCandidateCommunicationChannel, number>;
+  typeCounts: Record<EmployerCandidateCommunicationType, number>;
+  observedResponseSamples: number;
+  averageResponseHours?: number;
+  medianResponseHours?: number;
+}
+
+export interface CollaborationAnalyticsDecisionActivity {
+  totalDecisionLogs: number;
+  decisionTypeCounts: Record<EmployerJobApplicationDecisionType, number>;
+}
+
+export interface CollaborationAnalyticsTrendDay {
+  date: string;
+  notes: number;
+  communications: number;
+  decisions: number;
+}
+
+export interface JobCollaborationAnalytics {
+  job: { id: string; title: string; jobCode?: string; status: EmployerJobStatus };
+  coverage: CollaborationAnalyticsCoverage;
+  collaboration: CollaborationAnalyticsCollaboration;
+  notifications: CollaborationAnalyticsNotifications;
+  communication: CollaborationAnalyticsCommunication;
+  decisionActivity: CollaborationAnalyticsDecisionActivity;
+  activityTrend: CollaborationAnalyticsTrendDay[];
+}
+
+export type GetJobCollaborationAnalyticsResponse = ApiEnvelope<JobCollaborationAnalytics>;
+
+// ============================================================================
 // Employer Shortlist Workflow (Sprint 19E) — an explicit recruiter action
 // only, never automatic. Reuses the existing 18D application status
 // transition (screening -> shortlisted) under the hood; this is purely an
@@ -3049,6 +3112,19 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load pipeline analytics');
+    }
+  }
+
+  // ---- Collaboration & Communication Analytics (Sprint 24E) ----
+
+  async getEmployerJobCollaborationAnalytics(organizationId: string, jobId: string): Promise<GetJobCollaborationAnalyticsResponse> {
+    try {
+      const response = await this.api.get<GetJobCollaborationAnalyticsResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/collaboration-analytics`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load collaboration analytics');
     }
   }
 

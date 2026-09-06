@@ -48,6 +48,7 @@ import employerJobApplicationCollaborationController from '../controllers/Employ
 import employerCollaborationMentionsController from '../controllers/EmployerCollaborationMentionsController';
 import employerCollaborationNotificationController from '../controllers/EmployerCollaborationNotificationController';
 import employerCandidateCommunicationController from '../controllers/EmployerCandidateCommunicationController';
+import employerCollaborationAnalyticsController from '../controllers/EmployerCollaborationAnalyticsController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -2735,6 +2736,19 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringPipelineAnalyticsController.getJobPipelineAnalytics
+);
+
+// GET .../jobs/:jobId/collaboration-analytics (24E) — deterministic (no
+// AI) aggregate of 24A-24D employer collaboration/communication activity.
+// Activity-frequency only — never recruiter ranking/scoring. Never persisted.
+router.get(
+  '/:organizationId/jobs/:jobId/collaboration-analytics',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerCollaborationAnalyticsController.getJobAnalytics
 );
 
 // ============================================================================
