@@ -1,120 +1,78 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AvatarState } from './AvatarState';
-
-// Import media files (will use dynamic imports with error handling)
-const INTERVIEWER_VIDEO = '/src/assets/media/interviewer-speaking.mp4';
-const INTERVIEWER_IMAGE = '/src/assets/media/interviewer-idle.png';
+import React, { useEffect, useRef } from 'react';
+import { useInterviewerAvatar, InterviewerSpeakingContext } from './useInterviewerAvatar';
 
 interface InterviewAvatarProps {
-  currentState: AvatarState;
+  /** Interviewer/system TTS is currently playing. */
+  isSpeaking: boolean;
+  /** Candidate's microphone/speech recognition is currently active. */
+  isListening: boolean;
+  /** Coarse context for SPEAKING clip selection (welcome/question/closing) — read from the existing interview phase, not new business logic. */
+  speakingContext?: InterviewerSpeakingContext;
+  /** Changing this resets avatar behavior state for a brand-new interview session. */
+  resetKey?: string | number | null;
   className?: string;
 }
 
+const STATE_LABELS: Record<string, { label: string; dotColor: string }> = {
+  SPEAKING: { label: 'Speaking', dotColor: 'bg-blue-400' },
+  LISTENING: { label: 'Listening', dotColor: 'bg-green-400' },
+  INTERRUPTION: { label: 'Listening', dotColor: 'bg-green-400' },
+  IDLE: { label: 'Ready', dotColor: 'bg-gray-400' },
+};
+
 export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
-  currentState,
+  isSpeaking,
+  isListening,
+  speakingContext,
+  resetKey,
   className = '',
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isVideoLoaded, setIsVideoLoaded] = useState(false);
-  const [showVideo, setShowVideo] = useState(false);
-  const [mediaError, setMediaError] = useState(false);
+  const { semanticState, mediaSrc, isVideo, handleClipEnded } = useInterviewerAvatar({
+    isSpeaking,
+    isListening,
+    speakingContext,
+    resetKey,
+  });
 
-  // Preload video on component mount
+  // A new clip src means a new file — always (re)start it from the top
+  // rather than relying on the browser to notice the `src` changed mid-seek.
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.load();
-      const handleCanPlay = () => setIsVideoLoaded(true);
-      const handleError = () => {
-        console.warn('Video failed to load, using fallback');
-        setMediaError(true);
-      };
-
-      videoRef.current.addEventListener('canplaythrough', handleCanPlay);
-      videoRef.current.addEventListener('error', handleError);
-
-      return () => {
-        videoRef.current?.removeEventListener('canplaythrough', handleCanPlay);
-        videoRef.current?.removeEventListener('error', handleError);
-      };
+    if (isVideo && videoRef.current) {
+      const video = videoRef.current;
+      video.currentTime = 0;
+      video.play().catch((err) => {
+        console.warn('Interviewer video play failed:', err);
+      });
     }
-  }, []);
+  }, [mediaSrc, isVideo]);
 
-  // Control video playback based on state
-  useEffect(() => {
-    const shouldPlayVideo = currentState === AvatarState.SPEAKING;
-    setShowVideo(shouldPlayVideo);
-
-    if (videoRef.current && isVideoLoaded) {
-      if (shouldPlayVideo) {
-        videoRef.current.play().catch(err => {
-          console.warn('Video play failed:', err);
-        });
-      } else {
-        videoRef.current.pause();
-        videoRef.current.currentTime = 0; // Reset to start
-      }
-    }
-  }, [currentState, isVideoLoaded]);
-
-  // Presentation-only: a compact video-call-style state indicator overlaid
-  // on the media itself. Does not touch avatar/interview state logic.
-  const getStateConfig = () => {
-    switch (currentState) {
-      case AvatarState.SPEAKING:
-        return { label: 'Speaking', dotColor: 'bg-blue-400' };
-      case AvatarState.LISTENING:
-        return { label: 'Listening', dotColor: 'bg-green-400' };
-      case AvatarState.THINKING:
-        return { label: 'Thinking', dotColor: 'bg-yellow-400' };
-      case AvatarState.COMPLETED:
-        return { label: 'Completed', dotColor: 'bg-emerald-400' };
-      case AvatarState.IDLE:
-      default:
-        return { label: 'Ready', dotColor: 'bg-gray-400' };
-    }
-  };
-
-  const config = getStateConfig();
+  const config = STATE_LABELS[semanticState] || STATE_LABELS.IDLE;
 
   return (
     <div className={`relative w-full h-full bg-gray-900 overflow-hidden ${className}`}>
-      {!mediaError ? (
-        <>
-          {/* Video - shown when SPEAKING */}
-          <video
-            ref={videoRef}
-            src={INTERVIEWER_VIDEO}
-            loop
-            muted
-            playsInline
-            className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
-              showVideo ? 'opacity-100' : 'opacity-0'
-            }`}
-            style={{ display: showVideo ? 'block' : 'none' }}
-          />
-
-          {/* Static Image - shown when NOT speaking */}
-          <img
-            src={INTERVIEWER_IMAGE}
-            alt="Interviewer"
-            onError={() => setMediaError(true)}
-            className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
-              !showVideo ? 'opacity-100' : 'opacity-0'
-            }`}
-            style={{ display: !showVideo ? 'block' : 'none' }}
-          />
-        </>
+      {/* ONE persistent media container — dimensions never change between
+          idle image and any MP4 state, so switching states never reflows
+          or flashes the panel. */}
+      {isVideo ? (
+        <video
+          key={mediaSrc}
+          ref={videoRef}
+          src={mediaSrc}
+          muted
+          playsInline
+          autoPlay
+          onEnded={handleClipEnded}
+          onError={handleClipEnded}
+          className="absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-200"
+        />
       ) : (
-        /* Fallback - show placeholder when media files are missing */
-        <div className="absolute inset-0 flex items-center justify-center text-white text-center p-8">
-          <div>
-            <div className="text-6xl mb-4">🎤</div>
-            <div className="text-sm opacity-75">
-              Add media files to:<br />
-              /assets/media/
-            </div>
-          </div>
-        </div>
+        <img
+          key={mediaSrc}
+          src={mediaSrc}
+          alt="Interviewer"
+          className="absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-200"
+        />
       )}
 
       {/* Video-call style overlay: interviewer name + compact state chip,

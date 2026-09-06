@@ -35,7 +35,7 @@ export const InterviewScreen: React.FC = () => {
   const [phase, setPhase] = useState<InterviewPhase>('READY');
   const [isProcessing, setIsProcessing] = useState(false);
   const [interviewStarted, setInterviewStarted] = useState(false);
-  const [avatarState, setAvatarState] = useState<AvatarState>(AvatarState.IDLE);
+  const [, setAvatarState] = useState<AvatarState>(AvatarState.IDLE);
   const [loadError, setLoadError] = useState<string>('');
 
   // Handle when question finishes speaking
@@ -372,7 +372,12 @@ export const InterviewScreen: React.FC = () => {
             avatar/video fills this container completely (no circular crop). */}
         <div className="card p-0 overflow-hidden flex flex-col min-h-[380px] sm:min-h-[440px] lg:min-h-0">
           <div className="flex-1 min-h-0">
-            <InterviewAvatar currentState={avatarState} />
+            <InterviewAvatar
+              isSpeaking={isSpeaking}
+              isListening={isListening}
+              speakingContext={phase === 'WELCOME' ? 'welcome' : phase === 'NEXT_QUESTION' ? 'closing' : 'question'}
+              resetKey={interviewId}
+            />
           </div>
           <div className="px-5 py-3 border-t border-mentor-border flex items-center justify-center shrink-0">
             <span className={`badge ${getPhaseChipClass(phase)}`}>{getPhaseLabel(phase)}</span>
