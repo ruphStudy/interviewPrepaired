@@ -40,6 +40,7 @@ import employerApi, {
   EmployerInterviewScenarioQuestionSet,
   EmployerInterviewScenarioResponseEvaluation,
   EmployerInterviewScenarioSessionDetail,
+  EmployerInterviewScenarioReport,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -891,6 +892,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [evaluationLoadingByStepKey, setEvaluationLoadingByStepKey] = useState<Record<string, boolean>>({});
   const [evaluationErrorByStepKey, setEvaluationErrorByStepKey] = useState<Record<string, string>>({});
   const [evaluatingStepKey, setEvaluatingStepKey] = useState<string | null>(null);
+
+  const [scenarioReportById, setScenarioReportById] = useState<Record<string, EmployerInterviewScenarioReport>>({});
+  const [scenarioReportLoadingById, setScenarioReportLoadingById] = useState<Record<string, boolean>>({});
+  const [scenarioReportErrorById, setScenarioReportErrorById] = useState<Record<string, string>>({});
+  const [buildingScenarioReportId, setBuildingScenarioReportId] = useState<string | null>(null);
+  const [buildScenarioReportErrorById, setBuildScenarioReportErrorById] = useState<Record<string, string>>({});
 
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
@@ -1894,6 +1901,37 @@ const EmployerApplicationDetailPage: React.FC = () => {
     [organizationId, sessionAnswers]
   );
 
+  const fetchScenarioReport = useCallback(
+    async (scenarioId: string) => {
+      if (!organizationId || !sessionAnswers) return;
+      setScenarioReportLoadingById((prev) => ({ ...prev, [scenarioId]: true }));
+      setScenarioReportErrorById((prev) => ({ ...prev, [scenarioId]: '' }));
+      try {
+        const response = await employerApi.getEmployerInterviewScenarioReport(organizationId, sessionAnswers.sessionId, scenarioId);
+        setScenarioReportById((prev) => ({ ...prev, [scenarioId]: response.data }));
+      } catch (err: any) {
+        setScenarioReportErrorById((prev) => ({ ...prev, [scenarioId]: err.message || 'Failed to load scenario report' }));
+      } finally {
+        setScenarioReportLoadingById((prev) => ({ ...prev, [scenarioId]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
+  const handleBuildScenarioReport = async (scenarioId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setBuildingScenarioReportId(scenarioId);
+    setBuildScenarioReportErrorById((prev) => ({ ...prev, [scenarioId]: '' }));
+    try {
+      const response = await employerApi.buildEmployerInterviewScenarioReport(organizationId, sessionAnswers.sessionId, scenarioId);
+      setScenarioReportById((prev) => ({ ...prev, [scenarioId]: response.data }));
+    } catch (err: any) {
+      setBuildScenarioReportErrorById((prev) => ({ ...prev, [scenarioId]: err.message || 'Failed to build scenario report' }));
+    } finally {
+      setBuildingScenarioReportId(null);
+    }
+  };
+
   const handleToggleScenarioExpanded = (scenarioId: string) => {
     const next = expandedScenarioId === scenarioId ? null : scenarioId;
     setExpandedScenarioId(next);
@@ -1902,6 +1940,9 @@ const EmployerApplicationDetailPage: React.FC = () => {
     }
     if (next && !scenarioSessionById[next]) {
       fetchScenarioSession(next);
+    }
+    if (next && !scenarioReportById[next]) {
+      fetchScenarioReport(next);
     }
   };
 
@@ -6137,6 +6178,128 @@ const EmployerApplicationDetailPage: React.FC = () => {
                                   ))}
                                 </ul>
                               )}
+
+                              <div className="mt-3 pt-3 border-t border-mentor-border">
+                                <p className="text-xs font-medium text-mentor-text-muted mb-1">Scenario Performance Report</p>
+                                <p className="text-[11px] text-mentor-text-muted mb-2">
+                                  Deterministic evidence coverage aggregate — not a hiring recommendation, ranking, or
+                                  performance score.
+                                </p>
+
+                                {scenarioReportLoadingById[s.id] ? (
+                                  <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                ) : scenarioReportErrorById[s.id] ? (
+                                  <div>
+                                    <p className="text-xs text-mentor-error mb-1">{scenarioReportErrorById[s.id]}</p>
+                                    <button onClick={() => fetchScenarioReport(s.id)} className="btn btn-secondary px-2 py-1 text-xs">
+                                      Try Again
+                                    </button>
+                                  </div>
+                                ) : !scenarioReportById[s.id] || !scenarioReportById[s.id].built ? (
+                                  <div>
+                                    <p className="text-xs text-mentor-text-secondary mb-2">Not available.</p>
+                                    {canManage && (
+                                      <>
+                                        {buildScenarioReportErrorById[s.id] && (
+                                          <p className="text-xs text-mentor-error mb-1">{buildScenarioReportErrorById[s.id]}</p>
+                                        )}
+                                        <button
+                                          onClick={() => handleBuildScenarioReport(s.id)}
+                                          disabled={buildingScenarioReportId === s.id}
+                                          className="btn btn-secondary px-2 py-1 text-xs"
+                                        >
+                                          {buildingScenarioReportId === s.id ? 'Building...' : 'Build Report'}
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                ) : (
+                                  (() => {
+                                    const report = scenarioReportById[s.id];
+                                    const exec = report.execution!;
+                                    const cov = report.coverage!;
+                                    const signals = report.responseSignals!;
+                                    const followUp = report.followUp!;
+                                    const summary = report.summary!;
+                                    const signalRows: Array<[string, { strong: number; sufficient: number; limited: number; insufficient: number }]> = [
+                                      ['Relevance', signals.relevance],
+                                      ['Reasoning Quality', signals.reasoningQuality],
+                                      ['Decision Clarity', signals.decisionClarity],
+                                      ['Constraint Awareness', signals.constraintAwareness],
+                                    ];
+
+                                    return (
+                                      <div className="space-y-3">
+                                        {canManage && (
+                                          <div>
+                                            {buildScenarioReportErrorById[s.id] && (
+                                              <p className="text-xs text-mentor-error mb-1">{buildScenarioReportErrorById[s.id]}</p>
+                                            )}
+                                            <button
+                                              onClick={() => handleBuildScenarioReport(s.id)}
+                                              disabled={buildingScenarioReportId === s.id}
+                                              className="btn btn-secondary px-2 py-1 text-xs"
+                                            >
+                                              {buildingScenarioReportId === s.id ? 'Rebuilding...' : 'Rebuild Report'}
+                                            </button>
+                                          </div>
+                                        )}
+
+                                        <p className="text-xs text-mentor-text-secondary">
+                                          {exec.answeredSteps} of {exec.totalSteps} steps answered &middot; {exec.evaluatedSteps} of{' '}
+                                          {exec.answeredSteps} responses evaluated &middot; {exec.completed ? 'Completed' : 'In progress'}
+                                          {exec.durationSeconds !== undefined && ` · ${Math.round(exec.durationSeconds / 60)} min`}
+                                        </p>
+
+                                        <p className="text-xs text-mentor-text-secondary">
+                                          Evidence Coverage: {cov.observedCompetencyCount}/{cov.targetCompetencyCount} competencies (
+                                          {cov.coveragePercent}%) &middot; {cov.missingCompetencyCount} missing
+                                        </p>
+
+                                        <div>
+                                          <p className="text-[11px] font-medium text-mentor-text-muted mb-1">Competency Evidence</p>
+                                          <ul className="space-y-1">
+                                            {(report.competencyEvidence || []).map((c) => (
+                                              <li key={c.competencyName} className="text-xs text-mentor-text-secondary">
+                                                <span className="font-medium text-mentor-text">{c.competencyName}</span>:{' '}
+                                                {labelizeCode(c.overallEvidenceState)} ({c.evaluatedStepCount} evaluated)
+                                                {c.evidence.length > 0 && <span className="block text-mentor-text-muted">Evidence: {c.evidence.join('; ')}</span>}
+                                                {c.missingEvidence.length > 0 && (
+                                                  <span className="block text-mentor-text-muted">Missing: {c.missingEvidence.join('; ')}</span>
+                                                )}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+
+                                        <div>
+                                          <p className="text-[11px] font-medium text-mentor-text-muted mb-1">Response Signals</p>
+                                          <ul className="space-y-0.5">
+                                            {signalRows.map(([label, counts]) => (
+                                              <li key={label} className="text-xs text-mentor-text-secondary">
+                                                {label}: strong {counts.strong} &middot; sufficient {counts.sufficient} &middot; limited{' '}
+                                                {counts.limited} &middot; insufficient {counts.insufficient}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+
+                                        <p className="text-xs text-mentor-text-secondary">
+                                          Follow-up Need: {followUp.usefulCount} useful &middot; {followUp.notUsefulCount} not useful
+                                          {followUp.reasons.length > 0 && ` — ${followUp.reasons.join('; ')}`}
+                                        </p>
+
+                                        {summary.strengths.length > 0 && (
+                                          <p className="text-xs text-mentor-success">{summary.strengths.join(' ')}</p>
+                                        )}
+                                        {summary.evidenceGaps.length > 0 && (
+                                          <p className="text-xs text-mentor-warning">{summary.evidenceGaps.join(' ')}</p>
+                                        )}
+                                      </div>
+                                    );
+                                  })()
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>

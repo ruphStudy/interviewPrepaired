@@ -2347,6 +2347,93 @@ export interface EmployerInterviewScenarioSessionDetail {
 export type GetEmployerInterviewScenarioSessionResponse = ApiEnvelope<EmployerInterviewScenarioSessionDetail>;
 
 // ============================================================================
+// Scenario Performance Report (Sprint 28E) — deterministic (NO AI)
+// aggregate over completed 28C evaluations for a completed 28D session.
+// Evidence aggregation/coverage only — never a hiring recommendation,
+// candidate ranking, or numeric performance score.
+// ============================================================================
+
+export interface EmployerScenarioReportSnapshot {
+  title: string;
+  category: string;
+  difficulty: string;
+  targetCompetencies: string[];
+}
+
+export interface EmployerScenarioReportExecution {
+  totalSteps: number;
+  answeredSteps: number;
+  evaluatedSteps: number;
+  durationSeconds?: number;
+  completed: boolean;
+}
+
+export interface EmployerScenarioReportEvidenceStateCounts {
+  strong: number;
+  sufficient: number;
+  partial: number;
+  insufficient: number;
+  notObserved: number;
+}
+
+export interface EmployerScenarioReportCompetencyEvidence {
+  competencyName: string;
+  evaluatedStepCount: number;
+  states: EmployerScenarioReportEvidenceStateCounts;
+  overallEvidenceState: EmployerScenarioEvidenceState;
+  evidence: string[];
+  missingEvidence: string[];
+}
+
+export interface EmployerScenarioReportAssessmentLevelCounts {
+  strong: number;
+  sufficient: number;
+  limited: number;
+  insufficient: number;
+}
+
+export interface EmployerScenarioReportResponseSignals {
+  relevance: EmployerScenarioReportAssessmentLevelCounts;
+  reasoningQuality: EmployerScenarioReportAssessmentLevelCounts;
+  decisionClarity: EmployerScenarioReportAssessmentLevelCounts;
+  constraintAwareness: EmployerScenarioReportAssessmentLevelCounts;
+}
+
+export interface EmployerScenarioReportFollowUp {
+  usefulCount: number;
+  notUsefulCount: number;
+  reasons: string[];
+}
+
+export interface EmployerScenarioReportCoverage {
+  targetCompetencyCount: number;
+  observedCompetencyCount: number;
+  missingCompetencyCount: number;
+  coveragePercent: number;
+}
+
+export interface EmployerScenarioReportSummary {
+  strengths: string[];
+  evidenceGaps: string[];
+}
+
+export interface EmployerInterviewScenarioReport {
+  built: boolean;
+  reportVersion?: string;
+  generatedAt?: string;
+  scenarioSnapshot?: EmployerScenarioReportSnapshot;
+  execution?: EmployerScenarioReportExecution;
+  competencyEvidence?: EmployerScenarioReportCompetencyEvidence[];
+  responseSignals?: EmployerScenarioReportResponseSignals;
+  followUp?: EmployerScenarioReportFollowUp;
+  coverage?: EmployerScenarioReportCoverage;
+  summary?: EmployerScenarioReportSummary;
+}
+
+export type GetEmployerInterviewScenarioReportResponse = ApiEnvelope<EmployerInterviewScenarioReport>;
+export type BuildEmployerInterviewScenarioReportResponse = ApiEnvelope<EmployerInterviewScenarioReport>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -4701,6 +4788,37 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load scenario session');
+    }
+  }
+
+  async getEmployerInterviewScenarioReport(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<GetEmployerInterviewScenarioReportResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewScenarioReportResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/report`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load scenario report');
+    }
+  }
+
+  /** Deterministic, no AI — idempotent upsert-in-place rebuild. No client session/questionSet/rubric/application/job IDs. */
+  async buildEmployerInterviewScenarioReport(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<BuildEmployerInterviewScenarioReportResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerInterviewScenarioReportResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/report/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build scenario report');
     }
   }
 

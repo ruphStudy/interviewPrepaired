@@ -68,6 +68,7 @@ import employerInterviewScenarioController from '../controllers/EmployerIntervie
 import employerInterviewScenarioQuestionGenerationController from '../controllers/EmployerInterviewScenarioQuestionGenerationController';
 import employerInterviewScenarioResponseEvaluationController from '../controllers/EmployerInterviewScenarioResponseEvaluationController';
 import employerInterviewScenarioSessionController from '../controllers/EmployerInterviewScenarioSessionController';
+import employerInterviewScenarioReportController from '../controllers/EmployerInterviewScenarioReportController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3693,6 +3694,31 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerInterviewScenarioSessionController.getSessionDetail
+);
+
+// GET/POST .../scenarios/:scenarioId/report[/build] (28E) — deterministic
+// (NO AI) aggregate over completed 28C evaluations for a completed 28D
+// session. Never a hiring recommendation, ranking, or candidate score.
+router.get(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/report',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.REPORTS_VIEW),
+  employerInterviewScenarioReportController.getScenarioReport
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/report/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewScenarioReportController.buildScenarioReport
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
