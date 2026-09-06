@@ -368,9 +368,10 @@ export const InterviewScreen: React.FC = () => {
 
       {/* Main Content */}
       <div className="flex-1 w-full max-w-[1440px] mx-auto px-4 md:px-7 py-5 md:py-6 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-5 md:gap-6 min-h-0">
-        {/* Interviewer Panel */}
-        <div className="card p-0 overflow-hidden flex flex-col min-h-[320px] lg:min-h-0">
-          <div className="flex-1 flex items-center justify-center bg-mentor-surface min-h-0">
+        {/* Interviewer Panel — large rectangular video-call-style tile; the
+            avatar/video fills this container completely (no circular crop). */}
+        <div className="card p-0 overflow-hidden flex flex-col min-h-[380px] sm:min-h-[440px] lg:min-h-0">
+          <div className="flex-1 min-h-0">
             <InterviewAvatar currentState={avatarState} />
           </div>
           <div className="px-5 py-3 border-t border-mentor-border flex items-center justify-center shrink-0">

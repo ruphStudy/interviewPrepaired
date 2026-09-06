@@ -28,10 +28,10 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
         console.warn('Video failed to load, using fallback');
         setMediaError(true);
       };
-      
+
       videoRef.current.addEventListener('canplaythrough', handleCanPlay);
       videoRef.current.addEventListener('error', handleError);
-      
+
       return () => {
         videoRef.current?.removeEventListener('canplaythrough', handleCanPlay);
         videoRef.current?.removeEventListener('error', handleError);
@@ -56,123 +56,73 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
     }
   }, [currentState, isVideoLoaded]);
 
+  // Presentation-only: a compact video-call-style state indicator overlaid
+  // on the media itself. Does not touch avatar/interview state logic.
   const getStateConfig = () => {
     switch (currentState) {
       case AvatarState.SPEAKING:
-        return {
-          gradient: 'from-blue-500 via-purple-500 to-pink-500',
-          label: 'SPEAKING',
-          ringColor: 'border-blue-400',
-          ringAnimation: 'animate-ping',
-        };
+        return { label: 'Speaking', dotColor: 'bg-blue-400' };
       case AvatarState.LISTENING:
-        return {
-          gradient: 'from-green-500 via-teal-500 to-blue-500',
-          label: 'LISTENING',
-          ringColor: 'border-green-400',
-          ringAnimation: 'animate-pulse',
-        };
+        return { label: 'Listening', dotColor: 'bg-green-400' };
       case AvatarState.THINKING:
-        return {
-          gradient: 'from-yellow-500 via-orange-500 to-red-500',
-          label: 'THINKING',
-          ringColor: 'border-yellow-400',
-          ringAnimation: 'animate-spin',
-        };
+        return { label: 'Thinking', dotColor: 'bg-yellow-400' };
       case AvatarState.COMPLETED:
-        return {
-          gradient: 'from-green-400 via-emerald-500 to-teal-600',
-          label: 'COMPLETED',
-          ringColor: 'border-green-300',
-          ringAnimation: 'animate-bounce',
-        };
+        return { label: 'Completed', dotColor: 'bg-emerald-400' };
       case AvatarState.IDLE:
       default:
-        return {
-          gradient: 'from-gray-500 via-gray-600 to-gray-700',
-          label: 'READY',
-          ringColor: 'border-gray-400',
-          ringAnimation: '',
-        };
+        return { label: 'Ready', dotColor: 'bg-gray-400' };
     }
   };
 
   const config = getStateConfig();
 
   return (
-    <div className={`flex flex-col items-center justify-center ${className}`}>
-      {/* Avatar Container */}
-      <div className="relative">
-        {/* Main Avatar Circle — sized to fit within the screen's constrained
-            height (max-h-[60vh] on the parent) with room left for the state
-            chip below and the question card/controls that follow; a fixed
-            32rem circle used to overflow that budget and collide with them. */}
-        <div
-          className={`relative w-40 h-40 sm:w-56 sm:h-56 md:w-64 md:h-64 lg:w-72 lg:h-72 rounded-full bg-gradient-to-br ${config.gradient} flex items-center justify-center shadow-2xl transform transition-all duration-500 overflow-hidden`}
-        >
-          {/* Glow Effect */}
-          <div className="absolute inset-0 rounded-full bg-white opacity-10 animate-pulse" />
-          
-          {/* Video or Image Content */}
-          <div className="relative z-10 w-full h-full flex items-center justify-center overflow-hidden rounded-full">
-            {!mediaError ? (
-              <>
-                {/* Video - shown when SPEAKING */}
-                <video
-                  ref={videoRef}
-                  src={INTERVIEWER_VIDEO}
-                  loop
-                  muted
-                  playsInline
-                  className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
-                    showVideo ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  style={{ display: showVideo ? 'block' : 'none' }}
-                />
-                
-                {/* Static Image - shown when NOT speaking */}
-                <img
-                  src={INTERVIEWER_IMAGE}
-                  alt="Interviewer"
-                  onError={() => setMediaError(true)}
-                  className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
-                    !showVideo ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  style={{ display: !showVideo ? 'block' : 'none' }}
-                />
-              </>
-            ) : (
-              /* Fallback - show placeholder when media files are missing */
-              <div className="text-white text-center p-8">
-                <div className="text-6xl mb-4">🎤</div>
-                <div className="text-sm opacity-75">
-                  Add media files to:<br/>
-                  /assets/media/
-                </div>
-              </div>
-            )}
+    <div className={`relative w-full h-full bg-gray-900 overflow-hidden ${className}`}>
+      {!mediaError ? (
+        <>
+          {/* Video - shown when SPEAKING */}
+          <video
+            ref={videoRef}
+            src={INTERVIEWER_VIDEO}
+            loop
+            muted
+            playsInline
+            className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
+              showVideo ? 'opacity-100' : 'opacity-0'
+            }`}
+            style={{ display: showVideo ? 'block' : 'none' }}
+          />
+
+          {/* Static Image - shown when NOT speaking */}
+          <img
+            src={INTERVIEWER_IMAGE}
+            alt="Interviewer"
+            onError={() => setMediaError(true)}
+            className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
+              !showVideo ? 'opacity-100' : 'opacity-0'
+            }`}
+            style={{ display: !showVideo ? 'block' : 'none' }}
+          />
+        </>
+      ) : (
+        /* Fallback - show placeholder when media files are missing */
+        <div className="absolute inset-0 flex items-center justify-center text-white text-center p-8">
+          <div>
+            <div className="text-6xl mb-4">🎤</div>
+            <div className="text-sm opacity-75">
+              Add media files to:<br />
+              /assets/media/
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Animated Ring */}
-        <div
-          className={`absolute inset-0 rounded-full border-4 ${config.ringColor} ${config.ringAnimation}`}
-          style={{ opacity: 0.5 }}
-        />
-
-        {/* Outer Glow Ring */}
-        <div
-          className={`absolute -inset-6 rounded-full border-2 ${config.ringColor} opacity-20 animate-pulse`}
-        />
-      </div>
-
-      {/* State Label — a compact chip, not a second large stacked pill, so
-          this block's total height stays small and predictable. */}
-      <div className="mt-3 text-center">
-        <span className={`
-          inline-block px-4 py-1 rounded-full text-xs font-bold uppercase tracking-widest
-          bg-gradient-to-r ${config.gradient} text-white shadow-md
-        `}>
+      {/* Video-call style overlay: interviewer name + compact state chip,
+          bottom-left, over a subtle gradient so the person's face stays clear. */}
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 px-4 py-3 bg-gradient-to-t from-black/60 via-black/10 to-transparent pointer-events-none">
+        <span className="text-sm font-semibold text-white drop-shadow">AI Interviewer</span>
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-white bg-black/35 px-2.5 py-1 rounded-full">
+          <span className={`w-1.5 h-1.5 rounded-full ${config.dotColor}`} />
           {config.label}
         </span>
       </div>
