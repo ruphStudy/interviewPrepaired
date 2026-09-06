@@ -2280,6 +2280,73 @@ export type GetEmployerInterviewScenarioQuestionsResponse = ApiEnvelope<Employer
 export type GenerateEmployerInterviewScenarioQuestionsResponse = ApiEnvelope<EmployerInterviewScenarioQuestionSet>;
 
 // ============================================================================
+// Scenario Response Evaluation (Sprint 28C) — evidence-based evaluation of
+// one candidate response to one scenario question. Employer-only, never
+// exposed to the candidate.
+// ============================================================================
+
+export type EmployerScenarioEvidenceState = 'strong' | 'sufficient' | 'partial' | 'insufficient' | 'not_observed';
+export type EmployerScenarioAssessmentLevel = 'strong' | 'sufficient' | 'limited' | 'insufficient';
+
+export interface EmployerScenarioCompetencyEvidence {
+  competencyName: string;
+  evidenceState: EmployerScenarioEvidenceState;
+  evidence: string[];
+  missingEvidence: string[];
+}
+
+export interface EmployerScenarioResponseAssessment {
+  relevance: EmployerScenarioAssessmentLevel;
+  reasoningQuality: EmployerScenarioAssessmentLevel;
+  decisionClarity: EmployerScenarioAssessmentLevel;
+  constraintAwareness: EmployerScenarioAssessmentLevel;
+}
+
+export interface EmployerInterviewScenarioResponseEvaluation {
+  evaluated: boolean;
+  status?: 'processing' | 'failed';
+  errorMessage?: string;
+  evaluationVersion?: string;
+  targetedCompetencies?: string[];
+  competencyEvidence?: EmployerScenarioCompetencyEvidence[];
+  responseAssessment?: EmployerScenarioResponseAssessment;
+  evidenceSummary?: string;
+  followUpUseful?: boolean;
+  followUpReason?: string;
+  evaluatedAt?: string;
+}
+
+export type GetEmployerScenarioResponseEvaluationResponse = ApiEnvelope<EmployerInterviewScenarioResponseEvaluation>;
+export type GenerateEmployerScenarioResponseEvaluationResponse = ApiEnvelope<EmployerInterviewScenarioResponseEvaluation>;
+
+// ============================================================================
+// Scenario Session (Sprint 28D) — employer-internal, read-only view of the
+// candidate's multi-step scenario execution progress + responses.
+// ============================================================================
+
+export type EmployerScenarioSessionStatus = 'not_started' | 'in_progress' | 'completed';
+
+export interface EmployerScenarioSessionResponse {
+  questionSequence: number;
+  questionTextSnapshot: string;
+  scenarioUpdateSnapshot?: string;
+  answerText: string;
+  answeredAt?: string;
+  durationSeconds?: number;
+}
+
+export interface EmployerInterviewScenarioSessionDetail {
+  started: boolean;
+  status: EmployerScenarioSessionStatus;
+  progress: { current: number; total: number };
+  responses: EmployerScenarioSessionResponse[];
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export type GetEmployerInterviewScenarioSessionResponse = ApiEnvelope<EmployerInterviewScenarioSessionDetail>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -4586,6 +4653,54 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to generate scenario questions');
+    }
+  }
+
+  async getEmployerScenarioResponseEvaluation(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string,
+    questionSequence: number
+  ): Promise<GetEmployerScenarioResponseEvaluationResponse> {
+    try {
+      const response = await this.api.get<GetEmployerScenarioResponseEvaluationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/responses/${questionSequence}/evaluate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load response evaluation');
+    }
+  }
+
+  /** No client rubric/questionSet/application IDs. */
+  async generateEmployerScenarioResponseEvaluation(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string,
+    questionSequence: number
+  ): Promise<GenerateEmployerScenarioResponseEvaluationResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerScenarioResponseEvaluationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/responses/${questionSequence}/evaluate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate response evaluation');
+    }
+  }
+
+  async getEmployerInterviewScenarioSession(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<GetEmployerInterviewScenarioSessionResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewScenarioSessionResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/scenarios/${scenarioId}/session`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load scenario session');
     }
   }
 

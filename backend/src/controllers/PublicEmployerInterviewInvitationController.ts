@@ -72,6 +72,28 @@ export class PublicEmployerInterviewInvitationController {
     const session = await publicEmployerInterviewInvitationService.completeSession(token);
     res.status(200).json(successResponse('Assessment submitted successfully', { session }));
   });
+
+  /** GET /api/v1/public/employer-interview-invitations/:token/session/scenarios (28D) */
+  public getReadyScenarios = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token } = req.params;
+    const scenarios = await publicEmployerInterviewInvitationService.getReadyScenarios(token);
+    res.status(200).json(successResponse('Scenarios retrieved successfully', { scenarios }));
+  });
+
+  /** GET /api/v1/public/employer-interview-invitations/:token/session/scenarios/:scenarioId (28D) */
+  public getCurrentScenarioStep = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token, scenarioId } = req.params;
+    const step = await publicEmployerInterviewInvitationService.getCurrentScenarioStep(token, scenarioId);
+    res.status(200).json(successResponse('Scenario step retrieved successfully', step));
+  });
+
+  /** POST /api/v1/public/employer-interview-invitations/:token/session/scenarios/:scenarioId (28D) */
+  public submitScenarioResponse = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token, scenarioId } = req.params;
+    const { answerText } = req.body;
+    const step = await publicEmployerInterviewInvitationService.submitScenarioResponse(token, scenarioId, answerText);
+    res.status(200).json(successResponse('Scenario response submitted successfully', step));
+  });
 }
 
 export default new PublicEmployerInterviewInvitationController();

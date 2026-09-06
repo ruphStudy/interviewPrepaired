@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Types } from 'mongoose';
 import Organization, { IOrganization } from '../models/Organization.model';
 import EmployerJob, { IEmployerJob } from '../models/EmployerJob.model';
 import { EmployerJobStatus } from '../constants/employerJob';
@@ -12,6 +13,9 @@ import EmployerInterviewInvitation from '../models/EmployerInterviewInvitation.m
 import { EmployerInterviewInvitationStatus } from '../constants/employerInterviewInvitation';
 import Interview, { IInterview } from '../models/interview.model';
 import { InterviewPurpose, InterviewStatus } from '../constants/interview';
+import EmployerInterviewScenario, { IEmployerInterviewScenario } from '../models/EmployerInterviewScenario.model';
+import EmployerInterviewScenarioQuestionSet, { IEmployerInterviewScenarioQuestionSet } from '../models/EmployerInterviewScenarioQuestionSet.model';
+import EmployerInterviewScenarioSession, { IEmployerInterviewScenarioSession } from '../models/EmployerInterviewScenarioSession.model';
 import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { employerJobApplicationService } from './EmployerJobApplicationService';
@@ -20,6 +24,7 @@ import { OrganizationStatus } from '../constants/organization';
 import { ApiError } from '../utils/ApiError';
 
 const MAX_ANSWER_LENGTH = 5000; // matches the schema's own answerText cap
+const SCENARIO_SESSION_VERSION = 'scenario-session-v1';
 const MAX_ANSWER_DURATION_SECONDS = 3600; // matches the schema's own duration cap
 
 interface ResolvedChain {
@@ -444,6 +449,265 @@ export class PublicEmployerInterviewInvitationService {
     }
 
     return this.toCompletionDetail(completed);
+  }
+
+  /**
+   * GET /public/employer-interview-invitations/:token/session/scenarios
+   * (28D) — candidate-safe list of READY scenarios for this exact
+   * interview only (id/title/category/difficulty). Never exposes context,
+   * rubric, or evidence expectations. Returns [] (never throws) when the
+   * invitation isn't accepted yet or no session exists — mirrors the
+   * existing getSession/getAssessment "not ready" convention.
+   */
+  async getReadyScenarios(rawToken: string): Promise<Array<Record<string, unknown>>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+    await this.resolveChain(invitation);
+
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACCEPTED || !invitation.interviewId) {
+      return [];
+    }
+    const interview = await Interview.findById(invitation.interviewId).select('_id purpose');
+    if (!interview || interview.purpose !== InterviewPurpose.HIRING_ASSESSMENT) {
+      return [];
+    }
+
+    const scenarios = await EmployerInterviewScenario.find({
+      organizationId: invitation.organizationId,
+      interviewId: interview._id,
+      status: 'ready',
+    })
+      .select('_id title category difficulty')
+      .lean();
+
+    return scenarios.map((s) => ({ id: s._id.toString(), title: s.title, category: s.category, difficulty: s.difficulty }));
+  }
+
+  /**
+   * GET /public/employer-interview-invitations/:token/session/scenarios/:scenarioId
+   * (28D) — candidate-safe current scenario STEP. Starts the scenario
+   * session idempotently on first access. `scenarioId` is validated
+   * against THIS EXACT interview/organization — never resolvable across
+   * interviews/applications/orgs, and a non-existent/foreign/not-ready
+   * scenario collapses to the SAME generic 404 as any other broken
+   * reference (never reveals whether a scenarioId exists elsewhere). Never
+   * exposes target-competency rubric details, evidenceExpected,
+   * successEvidence, or failureSignals.
+   */
+  async getCurrentScenarioStep(rawToken: string, scenarioId: string): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+    await this.resolveChain(invitation);
+
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACCEPTED || !invitation.interviewId) {
+      throw this.notFoundError();
+    }
+    const interview = await Interview.findById(invitation.interviewId).select('_id purpose');
+    if (!interview || interview.purpose !== InterviewPurpose.HIRING_ASSESSMENT) {
+      throw this.notFoundError();
+    }
+
+    const { scenario, questionSet } = await this.resolveCandidateScenario(invitation.organizationId.toString(), interview._id.toString(), scenarioId);
+    const session = await this.ensureScenarioSession(
+      invitation.organizationId,
+      invitation.applicationId,
+      interview._id,
+      scenario._id,
+      questionSet._id
+    );
+
+    return this.toScenarioStepDetail(scenario, questionSet, session);
+  }
+
+  /**
+   * POST /public/employer-interview-invitations/:token/session/scenarios/:scenarioId
+   * (28D) — submits the candidate's response to the CURRENT step only
+   * (server determines current sequence; client never supplies question
+   * text/competencies/evidence). No AI runs here — response submission
+   * stays fast regardless of 28C evaluation availability.
+   */
+  async submitScenarioResponse(rawToken: string, scenarioId: string, answerText: string): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+    await this.resolveChain(invitation);
+
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACCEPTED || !invitation.interviewId) {
+      throw this.notFoundError();
+    }
+    const interview = await Interview.findById(invitation.interviewId).select('_id purpose');
+    if (!interview || interview.purpose !== InterviewPurpose.HIRING_ASSESSMENT) {
+      throw this.notFoundError();
+    }
+
+    const { scenario, questionSet } = await this.resolveCandidateScenario(invitation.organizationId.toString(), interview._id.toString(), scenarioId);
+    const session = await this.ensureScenarioSession(
+      invitation.organizationId,
+      invitation.applicationId,
+      interview._id,
+      scenario._id,
+      questionSet._id
+    );
+
+    if (session.status === 'completed') {
+      throw new ApiError(409, 'This scenario has already been completed.');
+    }
+
+    const trimmedAnswer = typeof answerText === 'string' ? answerText.trim() : '';
+    if (!trimmedAnswer) {
+      throw new ApiError(400, 'answerText is required');
+    }
+    if (trimmedAnswer.length > MAX_ANSWER_LENGTH) {
+      throw new ApiError(400, `answerText cannot exceed ${MAX_ANSWER_LENGTH} characters`);
+    }
+
+    const currentSequence = session.currentSequence;
+    const currentQuestion = questionSet.questions!.find((q) => q.sequence === currentSequence);
+    if (!currentQuestion) {
+      throw new ApiError(409, 'No active scenario step.');
+    }
+    if (session.responses.some((r) => r.questionSequence === currentSequence)) {
+      throw new ApiError(409, 'This step has already been answered.');
+    }
+
+    const now = new Date();
+    session.responses.push({
+      questionSequence: currentSequence,
+      questionTextSnapshot: currentQuestion.questionText,
+      scenarioUpdateSnapshot: currentQuestion.scenarioUpdate,
+      answerText: trimmedAnswer,
+      answeredAt: now,
+    });
+
+    const totalQuestions = questionSet.questions!.length;
+    if (currentSequence >= totalQuestions) {
+      session.status = 'completed';
+      session.completedAt = now;
+    } else {
+      session.currentSequence = currentSequence + 1;
+    }
+    await session.save();
+
+    return this.toScenarioStepDetail(scenario, questionSet, session);
+  }
+
+  /** Re-derives + validates the exact tenant/interview-scoped READY scenario + its completed 28B question set — never trusts any id beyond `scenarioId` itself, and a foreign/missing/not-ready scenario is indistinguishable from "does not exist". */
+  private async resolveCandidateScenario(
+    organizationId: string,
+    interviewId: string,
+    scenarioId: string
+  ): Promise<{ scenario: IEmployerInterviewScenario; questionSet: IEmployerInterviewScenarioQuestionSet }> {
+    const scenario = await EmployerInterviewScenario.findOne({
+      _id: scenarioId,
+      organizationId,
+      interviewId,
+      status: 'ready',
+    });
+    if (!scenario) {
+      throw this.notFoundError();
+    }
+    const questionSet = await EmployerInterviewScenarioQuestionSet.findOne({
+      organizationId,
+      scenarioId: scenario._id,
+      status: 'completed',
+    });
+    if (!questionSet || !questionSet.questions || questionSet.questions.length === 0) {
+      throw new ApiError(409, 'Scenario questions are not ready yet.');
+    }
+    return { scenario, questionSet };
+  }
+
+  /** Idempotent session start — never restarts a completed session, never inserted into `Interview.questions`. */
+  private async ensureScenarioSession(
+    organizationId: Types.ObjectId,
+    applicationId: Types.ObjectId,
+    interviewId: Types.ObjectId,
+    scenarioId: Types.ObjectId,
+    questionSetId: Types.ObjectId
+  ): Promise<IEmployerInterviewScenarioSession> {
+    const existing = await EmployerInterviewScenarioSession.findOne({ organizationId, interviewId, scenarioId });
+    if (existing) {
+      return existing;
+    }
+    try {
+      return await EmployerInterviewScenarioSession.create({
+        organizationId,
+        applicationId,
+        interviewId,
+        scenarioId,
+        questionSetId,
+        sessionVersion: SCENARIO_SESSION_VERSION,
+        status: 'in_progress',
+        currentSequence: 1,
+        startedAt: new Date(),
+      });
+    } catch (error: any) {
+      if (error?.code !== 11000) {
+        throw error;
+      }
+      const winner = await EmployerInterviewScenarioSession.findOne({ organizationId, interviewId, scenarioId });
+      if (!winner) {
+        throw new ApiError(409, 'Scenario session is already being prepared — please try again shortly');
+      }
+      return winner;
+    }
+  }
+
+  /**
+   * Candidate-safe scenario step response (28D). NEVER includes target-
+   * competency rubric details, evidenceExpected, successEvidence, or
+   * failureSignals.
+   */
+  private toScenarioStepDetail(
+    scenario: IEmployerInterviewScenario,
+    questionSet: IEmployerInterviewScenarioQuestionSet,
+    session: IEmployerInterviewScenarioSession
+  ): Record<string, unknown> {
+    const totalQuestions = questionSet.questions!.length;
+    const scenarioDetail = {
+      title: scenario.title,
+      description: scenario.description,
+      situation: scenario.context.situation,
+      candidateRole: scenario.context.candidateRole,
+      constraints: scenario.context.constraints,
+      availableInformation: scenario.context.availableInformation,
+    };
+
+    if (session.status === 'completed') {
+      return { scenario: scenarioDetail, progress: { current: totalQuestions, total: totalQuestions }, completed: true };
+    }
+
+    const currentQuestion = questionSet.questions!.find((q) => q.sequence === session.currentSequence);
+    if (!currentQuestion) {
+      return { scenario: scenarioDetail, progress: { current: totalQuestions, total: totalQuestions }, completed: true };
+    }
+
+    return {
+      scenario: scenarioDetail,
+      progress: { current: session.currentSequence, total: totalQuestions },
+      completed: false,
+      step: {
+        sequence: currentQuestion.sequence,
+        type: currentQuestion.type,
+        questionText: currentQuestion.questionText,
+        difficulty: currentQuestion.difficulty,
+        scenarioUpdate: currentQuestion.scenarioUpdate,
+      },
+    };
   }
 
   /**

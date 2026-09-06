@@ -38,6 +38,8 @@ import employerApi, {
   EmployerInterviewScenarioCategory,
   EmployerInterviewScenarioDifficulty,
   EmployerInterviewScenarioQuestionSet,
+  EmployerInterviewScenarioResponseEvaluation,
+  EmployerInterviewScenarioSessionDetail,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -880,6 +882,15 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [scenarioQuestionsLoadingById, setScenarioQuestionsLoadingById] = useState<Record<string, boolean>>({});
   const [scenarioQuestionsErrorById, setScenarioQuestionsErrorById] = useState<Record<string, string>>({});
   const [generatingScenarioQuestionsId, setGeneratingScenarioQuestionsId] = useState<string | null>(null);
+
+  const [scenarioSessionById, setScenarioSessionById] = useState<Record<string, EmployerInterviewScenarioSessionDetail>>({});
+  const [scenarioSessionLoadingById, setScenarioSessionLoadingById] = useState<Record<string, boolean>>({});
+  const [scenarioSessionErrorById, setScenarioSessionErrorById] = useState<Record<string, string>>({});
+
+  const [evaluationByStepKey, setEvaluationByStepKey] = useState<Record<string, EmployerInterviewScenarioResponseEvaluation>>({});
+  const [evaluationLoadingByStepKey, setEvaluationLoadingByStepKey] = useState<Record<string, boolean>>({});
+  const [evaluationErrorByStepKey, setEvaluationErrorByStepKey] = useState<Record<string, string>>({});
+  const [evaluatingStepKey, setEvaluatingStepKey] = useState<string | null>(null);
 
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
@@ -1866,11 +1877,77 @@ const EmployerApplicationDetailPage: React.FC = () => {
     [organizationId, sessionAnswers]
   );
 
+  const fetchScenarioSession = useCallback(
+    async (scenarioId: string) => {
+      if (!organizationId || !sessionAnswers) return;
+      setScenarioSessionLoadingById((prev) => ({ ...prev, [scenarioId]: true }));
+      setScenarioSessionErrorById((prev) => ({ ...prev, [scenarioId]: '' }));
+      try {
+        const response = await employerApi.getEmployerInterviewScenarioSession(organizationId, sessionAnswers.sessionId, scenarioId);
+        setScenarioSessionById((prev) => ({ ...prev, [scenarioId]: response.data }));
+      } catch (err: any) {
+        setScenarioSessionErrorById((prev) => ({ ...prev, [scenarioId]: err.message || 'Failed to load scenario session' }));
+      } finally {
+        setScenarioSessionLoadingById((prev) => ({ ...prev, [scenarioId]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
   const handleToggleScenarioExpanded = (scenarioId: string) => {
     const next = expandedScenarioId === scenarioId ? null : scenarioId;
     setExpandedScenarioId(next);
     if (next && !scenarioQuestionsById[next]) {
       fetchScenarioQuestions(next);
+    }
+    if (next && !scenarioSessionById[next]) {
+      fetchScenarioSession(next);
+    }
+  };
+
+  const fetchScenarioResponseEvaluation = useCallback(
+    async (scenarioId: string, sequence: number) => {
+      if (!organizationId || !sessionAnswers) return;
+      const key = `${scenarioId}:${sequence}`;
+      setEvaluationLoadingByStepKey((prev) => ({ ...prev, [key]: true }));
+      setEvaluationErrorByStepKey((prev) => ({ ...prev, [key]: '' }));
+      try {
+        const response = await employerApi.getEmployerScenarioResponseEvaluation(organizationId, sessionAnswers.sessionId, scenarioId, sequence);
+        setEvaluationByStepKey((prev) => ({ ...prev, [key]: response.data }));
+      } catch (err: any) {
+        setEvaluationErrorByStepKey((prev) => ({ ...prev, [key]: err.message || 'Failed to load response evaluation' }));
+      } finally {
+        setEvaluationLoadingByStepKey((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
+  useEffect(() => {
+    if (!expandedScenarioId) return;
+    const session = scenarioSessionById[expandedScenarioId];
+    if (!session) return;
+    session.responses.forEach((r) => {
+      const key = `${expandedScenarioId}:${r.questionSequence}`;
+      if (!evaluationByStepKey[key] && !evaluationLoadingByStepKey[key]) {
+        fetchScenarioResponseEvaluation(expandedScenarioId, r.questionSequence);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedScenarioId, scenarioSessionById]);
+
+  const handleGenerateScenarioResponseEvaluation = async (scenarioId: string, sequence: number) => {
+    if (!organizationId || !sessionAnswers) return;
+    const key = `${scenarioId}:${sequence}`;
+    setEvaluatingStepKey(key);
+    setEvaluationErrorByStepKey((prev) => ({ ...prev, [key]: '' }));
+    try {
+      const response = await employerApi.generateEmployerScenarioResponseEvaluation(organizationId, sessionAnswers.sessionId, scenarioId, sequence);
+      setEvaluationByStepKey((prev) => ({ ...prev, [key]: response.data }));
+    } catch (err: any) {
+      setEvaluationErrorByStepKey((prev) => ({ ...prev, [key]: err.message || 'Failed to generate response evaluation' }));
+    } finally {
+      setEvaluatingStepKey(null);
     }
   };
 
@@ -5903,6 +5980,23 @@ const EmployerApplicationDetailPage: React.FC = () => {
 
                           {isExpanded && (
                             <div className="mt-3 pt-3 border-t border-mentor-border">
+                              <div className="mb-3">
+                                <p className="text-xs font-medium text-mentor-text-muted mb-1">Scenario Session</p>
+                                {scenarioSessionLoadingById[s.id] ? (
+                                  <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                ) : scenarioSessionErrorById[s.id] ? (
+                                  <p className="text-xs text-mentor-error">{scenarioSessionErrorById[s.id]}</p>
+                                ) : !scenarioSessionById[s.id] || !scenarioSessionById[s.id].started ? (
+                                  <span className="badge badge-neutral">Not started</span>
+                                ) : scenarioSessionById[s.id].status === 'completed' ? (
+                                  <span className="badge badge-success">Completed</span>
+                                ) : (
+                                  <span className="badge badge-warning">
+                                    In progress {scenarioSessionById[s.id].progress.current}/{scenarioSessionById[s.id].progress.total}
+                                  </span>
+                                )}
+                              </div>
+
                               {scenarioQuestionsLoadingById[s.id] ? (
                                 <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
                               ) : !questionSet || !questionSet.generated ? (
@@ -5961,6 +6055,84 @@ const EmployerApplicationDetailPage: React.FC = () => {
                                       {q.scenarioUpdate && (
                                         <p className="text-xs text-mentor-warning mt-1">Scenario update: {q.scenarioUpdate}</p>
                                       )}
+
+                                      {(() => {
+                                        const session = scenarioSessionById[s.id];
+                                        const response = session?.responses.find((r) => r.questionSequence === q.sequence);
+                                        if (!response) {
+                                          return <p className="text-xs text-mentor-text-muted mt-2">Not answered yet.</p>;
+                                        }
+                                        const stepKey = `${s.id}:${q.sequence}`;
+                                        const evaluation = evaluationByStepKey[stepKey];
+                                        return (
+                                          <div className="mt-2 pt-2 border-t border-mentor-border">
+                                            <p className="text-xs text-mentor-text-muted mb-1">
+                                              Response: {response.answerText}
+                                            </p>
+                                            <p className="text-xs font-medium text-mentor-text-muted mb-1">Response Evaluation</p>
+                                            {evaluationLoadingByStepKey[stepKey] ? (
+                                              <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                            ) : !evaluation || !evaluation.evaluated ? (
+                                              <div>
+                                                {(evaluation?.status === 'failed' || evaluationErrorByStepKey[stepKey]) && (
+                                                  <p className="text-xs text-mentor-error mb-1">
+                                                    {evaluation?.errorMessage || evaluationErrorByStepKey[stepKey] || 'Evaluation failed.'}
+                                                  </p>
+                                                )}
+                                                {evaluation?.status === 'processing' ? (
+                                                  <p className="text-xs text-mentor-text-secondary">Evaluating...</p>
+                                                ) : (
+                                                  canManage && (
+                                                    <button
+                                                      onClick={() => handleGenerateScenarioResponseEvaluation(s.id, q.sequence)}
+                                                      disabled={evaluatingStepKey === stepKey}
+                                                      className="btn btn-secondary px-2 py-1 text-xs"
+                                                    >
+                                                      {evaluatingStepKey === stepKey
+                                                        ? 'Evaluating...'
+                                                        : evaluation?.status === 'failed'
+                                                          ? 'Retry'
+                                                          : 'Evaluate Response'}
+                                                    </button>
+                                                  )
+                                                )}
+                                              </div>
+                                            ) : (
+                                              <div className="space-y-1">
+                                                <div className="flex flex-wrap gap-1.5">
+                                                  <span className="badge badge-neutral">
+                                                    Relevance: {labelizeCode(evaluation.responseAssessment?.relevance)}
+                                                  </span>
+                                                  <span className="badge badge-neutral">
+                                                    Reasoning: {labelizeCode(evaluation.responseAssessment?.reasoningQuality)}
+                                                  </span>
+                                                  <span className="badge badge-neutral">
+                                                    Decision: {labelizeCode(evaluation.responseAssessment?.decisionClarity)}
+                                                  </span>
+                                                  <span className="badge badge-neutral">
+                                                    Constraints: {labelizeCode(evaluation.responseAssessment?.constraintAwareness)}
+                                                  </span>
+                                                </div>
+                                                {(evaluation.competencyEvidence || []).map((ce) => (
+                                                  <p key={ce.competencyName} className="text-xs text-mentor-text-secondary">
+                                                    {ce.competencyName}: {labelizeCode(ce.evidenceState)}
+                                                    {ce.evidence.length > 0 && ` — ${ce.evidence.join('; ')}`}
+                                                    {ce.missingEvidence.length > 0 && ` (missing: ${ce.missingEvidence.join('; ')})`}
+                                                  </p>
+                                                ))}
+                                                {evaluation.evidenceSummary && (
+                                                  <p className="text-xs text-mentor-text-muted">{evaluation.evidenceSummary}</p>
+                                                )}
+                                                {evaluation.followUpUseful && (
+                                                  <p className="text-xs text-mentor-warning">
+                                                    Follow-up may be useful{evaluation.followUpReason ? `: ${evaluation.followUpReason}` : ''}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
                                     </li>
                                   ))}
                                 </ul>

@@ -155,6 +155,54 @@ export interface PublicAssessmentCompletion {
 
 export type CompletePublicSessionResponse = ApiEnvelope<{ session: PublicAssessmentCompletion }>;
 
+// ============================================================================
+// Multi-step scenario simulation (Sprint 28D) — candidate-safe scenario
+// execution, isolated from the standard Interview.questions flow. NEVER
+// exposes target-competency rubric details, evidenceExpected,
+// successEvidence, or failureSignals.
+// ============================================================================
+
+export interface PublicScenarioListItem {
+  id: string;
+  title: string;
+  category: string;
+  difficulty: string;
+}
+
+export type GetPublicReadyScenariosResponse = ApiEnvelope<{ scenarios: PublicScenarioListItem[] }>;
+
+export interface PublicScenarioDetail {
+  title: string;
+  description: string;
+  situation: string;
+  candidateRole: string;
+  constraints: string[];
+  availableInformation: string[];
+}
+
+export interface PublicScenarioProgress {
+  current: number;
+  total: number;
+}
+
+export interface PublicScenarioStep {
+  sequence: number;
+  type: string;
+  questionText: string;
+  difficulty: string;
+  scenarioUpdate?: string;
+}
+
+export interface PublicScenarioStepDetail {
+  scenario: PublicScenarioDetail;
+  progress: PublicScenarioProgress;
+  completed: boolean;
+  step?: PublicScenarioStep;
+}
+
+export type GetPublicScenarioStepResponse = ApiEnvelope<PublicScenarioStepDetail>;
+export type SubmitPublicScenarioResponseResponse = ApiEnvelope<PublicScenarioStepDetail>;
+
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
 
@@ -282,6 +330,42 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to submit assessment');
+    }
+  }
+
+  async getPublicReadyScenarios(token: string): Promise<GetPublicReadyScenariosResponse> {
+    try {
+      const response = await this.api.get<GetPublicReadyScenariosResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/scenarios`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load scenarios');
+    }
+  }
+
+  /** Starts the scenario session idempotently on first access. */
+  async getPublicScenarioStep(token: string, scenarioId: string): Promise<GetPublicScenarioStepResponse> {
+    try {
+      const response = await this.api.get<GetPublicScenarioStepResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/scenarios/${scenarioId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load scenario step');
+    }
+  }
+
+  /** Submits a response to the CURRENT step only — no AI runs here. */
+  async submitPublicScenarioResponse(token: string, scenarioId: string, answerText: string): Promise<SubmitPublicScenarioResponseResponse> {
+    try {
+      const response = await this.api.post<SubmitPublicScenarioResponseResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/scenarios/${scenarioId}`,
+        { answerText }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to submit scenario response');
     }
   }
 }

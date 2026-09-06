@@ -66,6 +66,8 @@ import employerInterviewAdaptiveRoutingController from '../controllers/EmployerI
 import employerInterviewGraphAnalyticsController from '../controllers/EmployerInterviewGraphAnalyticsController';
 import employerInterviewScenarioController from '../controllers/EmployerInterviewScenarioController';
 import employerInterviewScenarioQuestionGenerationController from '../controllers/EmployerInterviewScenarioQuestionGenerationController';
+import employerInterviewScenarioResponseEvaluationController from '../controllers/EmployerInterviewScenarioResponseEvaluationController';
+import employerInterviewScenarioSessionController from '../controllers/EmployerInterviewScenarioSessionController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3650,6 +3652,47 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewScenarioQuestionGenerationController.generateScenarioQuestions
+);
+
+// GET/POST .../scenarios/:scenarioId/responses/:questionSequence/evaluate
+// (28C) — evidence-based response evaluation. Never exposed to candidate.
+const questionSequenceValidation = [param('questionSequence').isInt({ min: 1 }).withMessage('Invalid question sequence')];
+
+router.get(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/responses/:questionSequence/evaluate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  ...questionSequenceValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewScenarioResponseEvaluationController.getEvaluation
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/responses/:questionSequence/evaluate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  ...questionSequenceValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewScenarioResponseEvaluationController.generateEvaluation
+);
+
+// GET .../scenarios/:scenarioId/session (28D) — employer-internal,
+// read-only scenario session progress + candidate responses.
+router.get(
+  '/:organizationId/interviews/:interviewId/scenarios/:scenarioId/session',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...scenarioIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewScenarioSessionController.getSessionDetail
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

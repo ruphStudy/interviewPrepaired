@@ -5,6 +5,8 @@ import publicEmployerInterviewInvitationApi, {
   PublicInterviewSession,
   PublicInterviewQuestionsSession,
   PublicAssessmentDetail,
+  PublicScenarioListItem,
+  PublicScenarioStepDetail,
 } from '../api/publicEmployerInterviewInvitationApi';
 import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-react';
 
@@ -52,6 +54,17 @@ const EmployerInterviewInvitePage: React.FC = () => {
 
   const [submittingAssessment, setSubmittingAssessment] = useState(false);
   const [submitAssessmentError, setSubmitAssessmentError] = useState<string | null>(null);
+
+  const [readyScenarios, setReadyScenarios] = useState<PublicScenarioListItem[]>([]);
+  const [readyScenariosLoading, setReadyScenariosLoading] = useState(false);
+  const [readyScenariosError, setReadyScenariosError] = useState<string | null>(null);
+  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
+  const [scenarioStep, setScenarioStep] = useState<PublicScenarioStepDetail | null>(null);
+  const [scenarioStepLoading, setScenarioStepLoading] = useState(false);
+  const [scenarioStepError, setScenarioStepError] = useState<string | null>(null);
+  const [scenarioAnswerDraft, setScenarioAnswerDraft] = useState('');
+  const [submittingScenarioResponse, setSubmittingScenarioResponse] = useState(false);
+  const [submitScenarioResponseError, setSubmitScenarioResponseError] = useState<string | null>(null);
 
   const fetchInvitation = useCallback(async () => {
     if (!token) return;
@@ -138,6 +151,68 @@ const EmployerInterviewInvitePage: React.FC = () => {
       fetchAssessment();
     }
   }, [questionsSession?.totalQuestions, fetchAssessment]);
+
+  const fetchReadyScenarios = useCallback(async () => {
+    if (!token) return;
+    setReadyScenariosLoading(true);
+    setReadyScenariosError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.getPublicReadyScenarios(token);
+      setReadyScenarios(response.data.scenarios);
+    } catch (err: any) {
+      setReadyScenariosError(err.message || 'Failed to load scenarios');
+    } finally {
+      setReadyScenariosLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (invitation?.status === 'accepted') {
+      fetchReadyScenarios();
+    }
+  }, [invitation?.status, fetchReadyScenarios]);
+
+  const fetchScenarioStep = useCallback(
+    async (scenarioId: string) => {
+      if (!token) return;
+      setScenarioStepLoading(true);
+      setScenarioStepError(null);
+      try {
+        const response = await publicEmployerInterviewInvitationApi.getPublicScenarioStep(token, scenarioId);
+        setScenarioStep(response.data);
+        setScenarioAnswerDraft('');
+      } catch (err: any) {
+        setScenarioStepError(err.message || 'Failed to load scenario step');
+      } finally {
+        setScenarioStepLoading(false);
+      }
+    },
+    [token]
+  );
+
+  const handleOpenScenario = (scenarioId: string) => {
+    setSelectedScenarioId(scenarioId);
+    setScenarioStep(null);
+    setSubmitScenarioResponseError(null);
+    fetchScenarioStep(scenarioId);
+  };
+
+  const handleSubmitScenarioResponse = async () => {
+    if (!token || !selectedScenarioId) return;
+    const trimmed = scenarioAnswerDraft.trim();
+    if (!trimmed) return;
+    setSubmittingScenarioResponse(true);
+    setSubmitScenarioResponseError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.submitPublicScenarioResponse(token, selectedScenarioId, trimmed);
+      setScenarioStep(response.data);
+      setScenarioAnswerDraft('');
+    } catch (err: any) {
+      setSubmitScenarioResponseError(err.message || 'Failed to submit scenario response');
+    } finally {
+      setSubmittingScenarioResponse(false);
+    }
+  };
 
   const handleAccept = async () => {
     if (!token) return;
@@ -364,6 +439,98 @@ const EmployerInterviewInvitePage: React.FC = () => {
                     </>
                   )}
                 </div>
+
+                {!readyScenariosLoading && !readyScenariosError && readyScenarios.length > 0 && (
+                  <div className="mt-6 pt-4 border-t border-mentor-border text-left">
+                    <h3 className="section-title text-base mb-3">Scenario Assessment</h3>
+
+                    {!selectedScenarioId ? (
+                      <div className="space-y-2">
+                        {readyScenarios.map((s) => (
+                          <button
+                            key={s.id}
+                            onClick={() => handleOpenScenario(s.id)}
+                            className="w-full surface-muted p-3 text-left hover:border-primary-300 border border-transparent transition-colors"
+                          >
+                            <p className="text-sm font-medium text-mentor-text">{s.title}</p>
+                            <p className="text-xs text-mentor-text-muted capitalize">
+                              {s.category.replace(/_/g, ' ')} &middot; {s.difficulty}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : scenarioStepLoading ? (
+                      <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+                    ) : scenarioStepError ? (
+                      <div>
+                        <p className="text-sm text-mentor-error mb-2">{scenarioStepError}</p>
+                        <button onClick={() => fetchScenarioStep(selectedScenarioId)} className="btn btn-secondary">
+                          Try Again
+                        </button>
+                      </div>
+                    ) : scenarioStep ? (
+                      <div className="space-y-3">
+                        <div className="surface-muted p-3">
+                          <p className="text-sm font-semibold text-mentor-text">{scenarioStep.scenario.title}</p>
+                          <p className="text-xs text-mentor-text-muted mt-1">
+                            Situation: {scenarioStep.scenario.situation}
+                          </p>
+                          <p className="text-xs text-mentor-text-muted mt-1">Your role: {scenarioStep.scenario.candidateRole}</p>
+                          {scenarioStep.scenario.constraints.length > 0 && (
+                            <p className="text-xs text-mentor-text-muted mt-1">
+                              Constraints: {scenarioStep.scenario.constraints.join('; ')}
+                            </p>
+                          )}
+                          {scenarioStep.scenario.availableInformation.length > 0 && (
+                            <p className="text-xs text-mentor-text-muted mt-1">
+                              Available information: {scenarioStep.scenario.availableInformation.join('; ')}
+                            </p>
+                          )}
+                        </div>
+
+                        {scenarioStep.completed ? (
+                          <div className="surface-muted p-4 text-center">
+                            <CheckCircle2 className="w-8 h-8 text-mentor-success mx-auto mb-2" />
+                            <p className="text-sm font-medium text-mentor-text">Scenario completed.</p>
+                          </div>
+                        ) : (
+                          scenarioStep.step && (
+                            <>
+                              <p className="text-xs text-mentor-text-muted">
+                                Step {scenarioStep.progress.current} of {scenarioStep.progress.total}
+                              </p>
+                              {scenarioStep.step.scenarioUpdate && (
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs font-semibold text-mentor-warning mb-1">New information</p>
+                                  <p className="text-sm text-mentor-text">{scenarioStep.step.scenarioUpdate}</p>
+                                </div>
+                              )}
+                              <div className="surface-muted p-3">
+                                <p className="text-sm text-mentor-text">{scenarioStep.step.questionText}</p>
+                              </div>
+                              <textarea
+                                value={scenarioAnswerDraft}
+                                onChange={(e) => setScenarioAnswerDraft(e.target.value)}
+                                rows={5}
+                                maxLength={5000}
+                                placeholder="Type your response..."
+                                className="input w-full"
+                              />
+                              {submitScenarioResponseError && <p className="text-sm text-mentor-error">{submitScenarioResponseError}</p>}
+                              <button
+                                onClick={handleSubmitScenarioResponse}
+                                disabled={submittingScenarioResponse || !scenarioAnswerDraft.trim()}
+                                className="btn btn-primary w-full justify-center"
+                              >
+                                {submittingScenarioResponse ? 'Submitting...' : 'Submit Response'}
+                              </button>
+                            </>
+                          )
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
               </>
             ) : (
               <>

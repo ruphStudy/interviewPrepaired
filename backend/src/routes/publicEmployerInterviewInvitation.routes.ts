@@ -89,4 +89,41 @@ router.post(
   publicEmployerInterviewInvitationController.completeSession
 );
 
+// (28D) Raw token, base64url — never a Mongo ID. Scenario execution is
+// isolated from the standard Interview.questions flow entirely.
+const scenarioIdValidation = [param('scenarioId').isMongoId().withMessage('Invalid scenario ID')];
+const submitScenarioResponseValidation = [
+  body('answerText').isString().trim().isLength({ min: 1, max: 5000 }).withMessage('answerText is required (max 5000 characters)'),
+];
+
+// GET /api/v1/public/employer-interview-invitations/:token/session/scenarios
+// (28D) — candidate-safe list of READY scenarios for this exact interview.
+router.get(
+  '/:token/session/scenarios',
+  ...tokenValidation,
+  validate,
+  publicEmployerInterviewInvitationController.getReadyScenarios
+);
+
+// GET /api/v1/public/employer-interview-invitations/:token/session/scenarios/:scenarioId
+// (28D) — candidate-safe current scenario step. Starts the session idempotently.
+router.get(
+  '/:token/session/scenarios/:scenarioId',
+  ...tokenValidation,
+  ...scenarioIdValidation,
+  validate,
+  publicEmployerInterviewInvitationController.getCurrentScenarioStep
+);
+
+// POST /api/v1/public/employer-interview-invitations/:token/session/scenarios/:scenarioId
+// (28D) — submits the candidate's response to the CURRENT step only. No AI runs here.
+router.post(
+  '/:token/session/scenarios/:scenarioId',
+  ...tokenValidation,
+  ...scenarioIdValidation,
+  ...submitScenarioResponseValidation,
+  validate,
+  publicEmployerInterviewInvitationController.submitScenarioResponse
+);
+
 export default router;
