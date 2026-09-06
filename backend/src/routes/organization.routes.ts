@@ -56,6 +56,8 @@ import employerCandidateSkillEvolutionController from '../controllers/EmployerCa
 import employerTalentSkillMapController from '../controllers/EmployerTalentSkillMapController';
 import employerHiringAnswerReasoningController from '../controllers/EmployerHiringAnswerReasoningController';
 import employerHiringAnswerConfidenceController from '../controllers/EmployerHiringAnswerConfidenceController';
+import employerHiringAssessmentConsistencyController from '../controllers/EmployerHiringAssessmentConsistencyController';
+import employerHiringClaimVerificationController from '../controllers/EmployerHiringClaimVerificationController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3359,6 +3361,53 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerHiringAnswerConfidenceController.generateConfidenceSignals
+);
+
+// GET/POST .../interviews/:interviewId/consistency[/generate] (26C) —
+// observable answer-to-answer consistency across ALL questions of one
+// hiring assessment. NOT deception/lie detection.
+router.get(
+  '/:organizationId/interviews/:interviewId/consistency',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringAssessmentConsistencyController.getConsistency
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/consistency/generate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringAssessmentConsistencyController.generateConsistency
+);
+
+// GET/POST .../interviews/:interviewId/claim-verification[/generate] (26D)
+// — internal claim/evidence-alignment against structured evidence ALREADY
+// available in this hiring chain. NOT external fact-checking, NOT lie/
+// deception detection.
+router.get(
+  '/:organizationId/interviews/:interviewId/claim-verification',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringClaimVerificationController.getClaimVerification
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/claim-verification/generate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringClaimVerificationController.generateClaimVerification
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

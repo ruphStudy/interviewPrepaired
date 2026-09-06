@@ -25,6 +25,8 @@ import employerApi, {
   EmployerInterviewSessionAnswers,
   EmployerHiringAnswerReasoningSignals,
   EmployerHiringAnswerConfidenceSignals,
+  EmployerHiringAssessmentConsistency,
+  EmployerHiringClaimVerification,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -794,6 +796,16 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [confidenceErrorByQuestion, setConfidenceErrorByQuestion] = useState<Record<string, string>>({});
   const [confidenceGeneratingByQuestion, setConfidenceGeneratingByQuestion] = useState<Record<string, boolean>>({});
 
+  const [assessmentConsistency, setAssessmentConsistency] = useState<EmployerHiringAssessmentConsistency | null>(null);
+  const [consistencyLoading, setConsistencyLoading] = useState(false);
+  const [consistencyError, setConsistencyError] = useState<string | null>(null);
+  const [generatingConsistency, setGeneratingConsistency] = useState(false);
+
+  const [claimVerification, setClaimVerification] = useState<EmployerHiringClaimVerification | null>(null);
+  const [claimVerificationLoading, setClaimVerificationLoading] = useState(false);
+  const [claimVerificationError, setClaimVerificationError] = useState<string | null>(null);
+  const [generatingClaimVerification, setGeneratingClaimVerification] = useState(false);
+
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
   const [assessmentResultError, setAssessmentResultError] = useState<string | null>(null);
@@ -1332,6 +1344,76 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setConfidenceErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to generate confidence intelligence' }));
     } finally {
       setConfidenceGeneratingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+    }
+  };
+
+  const fetchAssessmentConsistency = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setConsistencyLoading(true);
+    setConsistencyError(null);
+    try {
+      const response = await employerApi.getEmployerHiringAssessmentConsistency(organizationId, sessionAnswers.sessionId);
+      setAssessmentConsistency(response.data);
+    } catch (err: any) {
+      setConsistencyError(err.message || 'Failed to load consistency analysis');
+    } finally {
+      setConsistencyLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      fetchAssessmentConsistency();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus]);
+
+  const handleGenerateConsistency = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setGeneratingConsistency(true);
+    setConsistencyError(null);
+    try {
+      const response = await employerApi.generateEmployerHiringAssessmentConsistency(organizationId, sessionAnswers.sessionId);
+      setAssessmentConsistency(response.data);
+    } catch (err: any) {
+      setConsistencyError(err.message || 'Failed to generate consistency analysis');
+    } finally {
+      setGeneratingConsistency(false);
+    }
+  };
+
+  const fetchClaimVerification = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setClaimVerificationLoading(true);
+    setClaimVerificationError(null);
+    try {
+      const response = await employerApi.getEmployerHiringClaimVerification(organizationId, sessionAnswers.sessionId);
+      setClaimVerification(response.data);
+    } catch (err: any) {
+      setClaimVerificationError(err.message || 'Failed to load claim evidence alignment');
+    } finally {
+      setClaimVerificationLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      fetchClaimVerification();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus]);
+
+  const handleGenerateClaimVerification = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setGeneratingClaimVerification(true);
+    setClaimVerificationError(null);
+    try {
+      const response = await employerApi.generateEmployerHiringClaimVerification(organizationId, sessionAnswers.sessionId);
+      setClaimVerification(response.data);
+    } catch (err: any) {
+      setClaimVerificationError(err.message || 'Failed to generate claim evidence alignment');
+    } finally {
+      setGeneratingClaimVerification(false);
     }
   };
 
@@ -3219,6 +3301,211 @@ const EmployerApplicationDetailPage: React.FC = () => {
                             {generatingFollowUp ? 'Generating...' : 'Generate Follow-up Questions'}
                           </button>
                         </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isEvaluated && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Answer Consistency</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">
+                        Consistency analysis compares observable statements across this assessment. It is not lie detection or
+                        an honesty judgment.
+                      </p>
+
+                      {consistencyLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : !assessmentConsistency || !assessmentConsistency.generated ? (
+                        assessmentConsistency?.status === 'processing' ? (
+                          <p className="text-sm text-mentor-text-secondary">Analyzing answer consistency...</p>
+                        ) : (
+                          <div>
+                            {(assessmentConsistency?.status === 'failed' || consistencyError) && (
+                              <p className="text-sm text-mentor-error mb-2">
+                                {assessmentConsistency?.errorMessage || consistencyError || 'Consistency analysis failed.'}
+                              </p>
+                            )}
+                            {canManage && (
+                              <button onClick={handleGenerateConsistency} disabled={generatingConsistency} className="btn btn-primary">
+                                {generatingConsistency
+                                  ? 'Analyzing...'
+                                  : assessmentConsistency?.status === 'failed'
+                                    ? 'Retry'
+                                    : 'Analyze Answer Consistency'}
+                              </button>
+                            )}
+                          </div>
+                        )
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="badge badge-neutral">{labelizeCode(assessmentConsistency.overallConsistency)}</span>
+                            <span className="text-xs text-mentor-text-muted">
+                              {(assessmentConsistency.findings || []).length} finding
+                              {(assessmentConsistency.findings || []).length === 1 ? '' : 's'}
+                            </span>
+                          </div>
+
+                          {(assessmentConsistency.findings || []).length === 0 ? (
+                            <p className="text-xs text-mentor-text-muted">No consistency findings.</p>
+                          ) : (
+                            <ul className="space-y-2">
+                              {(assessmentConsistency.findings || []).map((f, idx) => (
+                                <li key={idx} className="surface-muted p-3">
+                                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                                    <span className="badge badge-warning">{labelizeCode(f.type)}</span>
+                                    <span className="badge badge-neutral capitalize">{f.severity}</span>
+                                    <span className="text-xs text-mentor-text-muted">
+                                      Questions: {f.questionIndexes.map((i) => i + 1).join(', ')}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-mentor-text">{f.summary}</p>
+                                  {f.evidence.length > 0 && (
+                                    <ul className="mt-1.5 space-y-0.5">
+                                      {f.evidence.map((e, eIdx) => (
+                                        <li key={eIdx} className="text-xs text-mentor-text-muted">
+                                          Q{e.questionIndex + 1}: {e.answerExcerptOrSummary}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          {(assessmentConsistency.consistentThemes || []).length > 0 && (
+                            <p className="text-xs text-mentor-success">
+                              Consistent themes: {(assessmentConsistency.consistentThemes || []).join('; ')}
+                            </p>
+                          )}
+                          {(assessmentConsistency.limitations || []).length > 0 && (
+                            <p className="text-xs text-mentor-text-muted">
+                              Limitations: {(assessmentConsistency.limitations || []).join('; ')}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isEvaluated && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Claim Evidence Alignment</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">
+                        Claim Evidence Alignment compares assessment claims with structured evidence available inside
+                        EnterSkill. Lack of supporting evidence does not mean a claim is false, and this is not external
+                        background verification.
+                      </p>
+
+                      {claimVerificationLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : !claimVerification || !claimVerification.generated ? (
+                        claimVerification?.status === 'processing' ? (
+                          <p className="text-sm text-mentor-text-secondary">Analyzing claim evidence alignment...</p>
+                        ) : (
+                          <div>
+                            {(claimVerification?.status === 'failed' || claimVerificationError) && (
+                              <p className="text-sm text-mentor-error mb-2">
+                                {claimVerification?.errorMessage || claimVerificationError || 'Claim evidence alignment failed.'}
+                              </p>
+                            )}
+                            {canManage && (
+                              <button
+                                onClick={handleGenerateClaimVerification}
+                                disabled={generatingClaimVerification}
+                                className="btn btn-primary"
+                              >
+                                {generatingClaimVerification
+                                  ? 'Analyzing...'
+                                  : claimVerification?.status === 'failed'
+                                    ? 'Retry'
+                                    : 'Analyze Claim Evidence Alignment'}
+                              </button>
+                            )}
+                          </div>
+                        )
+                      ) : (
+                        (() => {
+                          const alignmentBadge: Record<string, string> = {
+                            supported: 'badge-success',
+                            partially_supported: 'badge-success',
+                            unsupported: 'badge-warning',
+                            conflicting: 'badge-warning',
+                            unverifiable: 'badge-neutral',
+                          };
+                          const alignmentLabel: Record<string, string> = {
+                            supported: 'Supported',
+                            partially_supported: 'Partially Supported',
+                            unsupported: 'Unsupported by available evidence',
+                            conflicting: 'Conflicts with available structured evidence',
+                            unverifiable: 'Unable to verify with available evidence',
+                          };
+                          const summary = claimVerification.summary!;
+                          const claims = claimVerification.claims || [];
+
+                          return (
+                            <div className="space-y-4">
+                              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                                <div className="surface-muted p-2.5">
+                                  <p className="text-xs text-mentor-text-muted">Supported</p>
+                                  <p className="text-lg font-semibold text-mentor-success">{summary.supported}</p>
+                                </div>
+                                <div className="surface-muted p-2.5">
+                                  <p className="text-xs text-mentor-text-muted">Partially Supported</p>
+                                  <p className="text-lg font-semibold text-mentor-text">{summary.partiallySupported}</p>
+                                </div>
+                                <div className="surface-muted p-2.5">
+                                  <p className="text-xs text-mentor-text-muted">Unsupported</p>
+                                  <p className="text-lg font-semibold text-mentor-warning">{summary.unsupported}</p>
+                                </div>
+                                <div className="surface-muted p-2.5">
+                                  <p className="text-xs text-mentor-text-muted">Conflicting</p>
+                                  <p className="text-lg font-semibold text-mentor-warning">{summary.conflicting}</p>
+                                </div>
+                                <div className="surface-muted p-2.5">
+                                  <p className="text-xs text-mentor-text-muted">Unverifiable</p>
+                                  <p className="text-lg font-semibold text-mentor-text">{summary.unverifiable}</p>
+                                </div>
+                              </div>
+
+                              {claims.length === 0 ? (
+                                <p className="text-xs text-mentor-text-muted">No claims were extracted.</p>
+                              ) : (
+                                <ul className="space-y-2">
+                                  {claims.map((c) => (
+                                    <li key={c.claimId} className="surface-muted p-3">
+                                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                                        <span className={`badge ${alignmentBadge[c.alignment] || 'badge-neutral'}`}>
+                                          {alignmentLabel[c.alignment] || c.alignment}
+                                        </span>
+                                        <span className="badge badge-neutral capitalize">{c.category}</span>
+                                        <span className="text-xs text-mentor-text-muted">Q{c.questionIndex + 1}</span>
+                                      </div>
+                                      <p className="text-sm text-mentor-text">{c.claimSummary}</p>
+                                      {c.evidenceSources.length > 0 && (
+                                        <ul className="mt-1.5 space-y-0.5">
+                                          {c.evidenceSources.map((s, sIdx) => (
+                                            <li key={sIdx} className="text-xs text-mentor-text-muted">
+                                              {labelizeCode(s.type)}: {s.evidenceSummary}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                      {c.limitation && <p className="text-xs text-mentor-text-muted mt-1">{c.limitation}</p>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+
+                              {(claimVerification.limitations || []).length > 0 && (
+                                <p className="text-xs text-mentor-text-muted">
+                                  Limitations: {(claimVerification.limitations || []).join('; ')}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()
                       )}
                     </div>
                   )}

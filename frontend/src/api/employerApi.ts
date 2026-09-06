@@ -1742,6 +1742,97 @@ export type GetEmployerHiringAnswerConfidenceSignalsResponse = ApiEnvelope<Emplo
 export type GenerateEmployerHiringAnswerConfidenceSignalsResponse = ApiEnvelope<EmployerHiringAnswerConfidenceSignals>;
 
 // ============================================================================
+// Answer Consistency (Sprint 26C) — deterministic AI analysis of OBSERVABLE
+// answer-to-answer consistency across one hiring assessment. NOT deception/
+// lie detection.
+// ============================================================================
+
+export type EmployerHiringConsistencyFindingType =
+  | 'direct_contradiction'
+  | 'factual_inconsistency'
+  | 'scope_change'
+  | 'timeline_inconsistency'
+  | 'terminology_inconsistency'
+  | 'unsupported_change';
+export type EmployerHiringConsistencyFindingSeverity = 'high' | 'medium' | 'low';
+export type EmployerHiringOverallConsistency = 'consistent' | 'mostly_consistent' | 'mixed' | 'inconsistent' | 'insufficient_evidence';
+
+export interface EmployerHiringConsistencyFindingEvidence {
+  questionIndex: number;
+  answerExcerptOrSummary: string;
+}
+
+export interface EmployerHiringConsistencyFinding {
+  type: EmployerHiringConsistencyFindingType;
+  severity: EmployerHiringConsistencyFindingSeverity;
+  questionIndexes: number[];
+  summary: string;
+  evidence: EmployerHiringConsistencyFindingEvidence[];
+}
+
+export interface EmployerHiringAssessmentConsistency {
+  generated: boolean;
+  status?: 'processing' | 'failed';
+  errorMessage?: string;
+  overallConsistency?: EmployerHiringOverallConsistency;
+  findings?: EmployerHiringConsistencyFinding[];
+  consistentThemes?: string[];
+  limitations?: string[];
+  generatedAt?: string;
+}
+
+export type GetEmployerHiringAssessmentConsistencyResponse = ApiEnvelope<EmployerHiringAssessmentConsistency>;
+export type GenerateEmployerHiringAssessmentConsistencyResponse = ApiEnvelope<EmployerHiringAssessmentConsistency>;
+
+// ============================================================================
+// Claim Evidence Alignment (Sprint 26D) — internal alignment of assessment
+// claims against structured evidence already available in this hiring
+// chain. NOT external fact-checking, NOT lie/deception detection.
+// ============================================================================
+
+export type EmployerHiringClaimCategory = 'experience' | 'skill' | 'project' | 'responsibility' | 'achievement' | 'education' | 'domain' | 'other';
+export type EmployerHiringClaimAlignment = 'supported' | 'partially_supported' | 'unsupported' | 'conflicting' | 'unverifiable';
+export type EmployerHiringClaimEvidenceSourceType = 'resume' | 'screening' | 'assessment' | 'evidence_matrix' | 'consistency';
+
+export interface EmployerHiringClaimEvidenceSource {
+  type: EmployerHiringClaimEvidenceSourceType;
+  sourceArtifactId: string;
+  evidenceSummary: string;
+}
+
+export interface EmployerHiringVerifiedClaim {
+  claimId: string;
+  questionIndex: number;
+  claimSummary: string;
+  category: EmployerHiringClaimCategory;
+  alignment: EmployerHiringClaimAlignment;
+  evidenceSources: EmployerHiringClaimEvidenceSource[];
+  limitation?: string;
+}
+
+export interface EmployerHiringClaimVerificationSummary {
+  totalClaims: number;
+  supported: number;
+  partiallySupported: number;
+  unsupported: number;
+  conflicting: number;
+  unverifiable: number;
+}
+
+export interface EmployerHiringClaimVerification {
+  generated: boolean;
+  status?: 'processing' | 'failed';
+  errorMessage?: string;
+  claims?: EmployerHiringVerifiedClaim[];
+  summary?: EmployerHiringClaimVerificationSummary;
+  limitations?: string[];
+  generatedAt?: string;
+}
+
+export type GetEmployerHiringClaimVerificationResponse = ApiEnvelope<EmployerHiringClaimVerification>;
+export type GenerateEmployerHiringClaimVerificationResponse = ApiEnvelope<EmployerHiringClaimVerification>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -3722,6 +3813,61 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to generate confidence intelligence');
+    }
+  }
+
+  async getEmployerHiringAssessmentConsistency(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GetEmployerHiringAssessmentConsistencyResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringAssessmentConsistencyResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/consistency`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load consistency analysis');
+    }
+  }
+
+  /** No client artifact IDs — the server resolves all answers/evaluations itself. */
+  async generateEmployerHiringAssessmentConsistency(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GenerateEmployerHiringAssessmentConsistencyResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerHiringAssessmentConsistencyResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/consistency/generate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate consistency analysis');
+    }
+  }
+
+  async getEmployerHiringClaimVerification(organizationId: string, interviewId: string): Promise<GetEmployerHiringClaimVerificationResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringClaimVerificationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/claim-verification`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load claim evidence alignment');
+    }
+  }
+
+  /** No source artifact IDs from the client — the server resolves/pins structured evidence itself. */
+  async generateEmployerHiringClaimVerification(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GenerateEmployerHiringClaimVerificationResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerHiringClaimVerificationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/claim-verification/generate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to generate claim evidence alignment');
     }
   }
 
