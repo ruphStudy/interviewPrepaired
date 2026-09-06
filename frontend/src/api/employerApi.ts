@@ -1833,6 +1833,91 @@ export type GetEmployerHiringClaimVerificationResponse = ApiEnvelope<EmployerHir
 export type GenerateEmployerHiringClaimVerificationResponse = ApiEnvelope<EmployerHiringClaimVerification>;
 
 // ============================================================================
+// Reasoning & Confidence Aggregate (Sprint 26E) — deterministic (NO AI)
+// assessment-level aggregate over already-completed 26A-26D artifacts. Pure
+// counts/copies of existing structured values only.
+// ============================================================================
+
+export interface EmployerHiringSignalLevelCounts {
+  strong: number;
+  present: number;
+  limited: number;
+  notObserved: number;
+}
+
+export interface EmployerHiringReasoningAggregate {
+  analyzedAnswerCount: number;
+  strongAnswerCount: number;
+  sufficientAnswerCount: number;
+  limitedAnswerCount: number;
+  insufficientAnswerCount: number;
+  signalCounts: {
+    problem_decomposition: EmployerHiringSignalLevelCounts;
+    tradeoff_awareness: EmployerHiringSignalLevelCounts;
+    assumption_awareness: EmployerHiringSignalLevelCounts;
+    evidence_usage: EmployerHiringSignalLevelCounts;
+    causal_reasoning: EmployerHiringSignalLevelCounts;
+    alternative_consideration: EmployerHiringSignalLevelCounts;
+    decision_clarity: EmployerHiringSignalLevelCounts;
+  };
+}
+
+export interface EmployerHiringConfidenceAggregate {
+  analyzedAnswerCount: number;
+  expressionConfidenceCounts: { high: number; moderate: number; low: number; mixed: number };
+  uncertaintyAwarenessCounts: { strong: number; present: number; limited: number; notObserved: number };
+  calibrationCounts: {
+    wellCalibrated: number;
+    possiblyOverconfident: number;
+    possiblyUnderconfident: number;
+    insufficientEvidence: number;
+  };
+}
+
+export interface EmployerHiringConsistencyAggregate {
+  available: boolean;
+  overallConsistency?: string;
+  findingCount: number;
+  highSeverityFindingCount: number;
+  mediumSeverityFindingCount: number;
+  lowSeverityFindingCount: number;
+}
+
+export interface EmployerHiringClaimAlignmentAggregate {
+  available: boolean;
+  totalClaims: number;
+  supported: number;
+  partiallySupported: number;
+  unsupported: number;
+  conflicting: number;
+  unverifiable: number;
+}
+
+export interface EmployerHiringAggregateCoverage {
+  totalAnsweredQuestions: number;
+  reasoningAnalyzedQuestions: number;
+  confidenceAnalyzedQuestions: number;
+  reasoningCoveragePercent: number;
+  confidenceCoveragePercent: number;
+  consistencyAvailable: boolean;
+  claimVerificationAvailable: boolean;
+}
+
+export interface EmployerHiringReasoningConfidenceAggregate {
+  built: boolean;
+  calculationVersion?: string;
+  generatedAt?: string;
+  reasoning?: EmployerHiringReasoningAggregate;
+  confidence?: EmployerHiringConfidenceAggregate;
+  consistency?: EmployerHiringConsistencyAggregate;
+  claimAlignment?: EmployerHiringClaimAlignmentAggregate;
+  coverage?: EmployerHiringAggregateCoverage;
+}
+
+export type GetEmployerHiringReasoningConfidenceAggregateResponse = ApiEnvelope<EmployerHiringReasoningConfidenceAggregate>;
+export type BuildEmployerHiringReasoningConfidenceAggregateResponse = ApiEnvelope<EmployerHiringReasoningConfidenceAggregate>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -3868,6 +3953,35 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to generate claim evidence alignment');
+    }
+  }
+
+  async getEmployerHiringReasoningConfidenceAggregate(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GetEmployerHiringReasoningConfidenceAggregateResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringReasoningConfidenceAggregateResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/reasoning-confidence-aggregate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load reasoning & confidence overview');
+    }
+  }
+
+  /** Deterministic, no AI — idempotent upsert-in-place rebuild. No client artifact IDs. */
+  async buildEmployerHiringReasoningConfidenceAggregate(
+    organizationId: string,
+    interviewId: string
+  ): Promise<BuildEmployerHiringReasoningConfidenceAggregateResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerHiringReasoningConfidenceAggregateResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/reasoning-confidence-aggregate/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build reasoning & confidence overview');
     }
   }
 

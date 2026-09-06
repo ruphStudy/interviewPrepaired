@@ -27,6 +27,7 @@ import employerApi, {
   EmployerHiringAnswerConfidenceSignals,
   EmployerHiringAssessmentConsistency,
   EmployerHiringClaimVerification,
+  EmployerHiringReasoningConfidenceAggregate,
   EmployerHiringAssessmentResult,
   EmployerHiringEvidenceMatrix,
   EmployerHiringFollowUpPlan,
@@ -806,6 +807,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [claimVerificationError, setClaimVerificationError] = useState<string | null>(null);
   const [generatingClaimVerification, setGeneratingClaimVerification] = useState(false);
 
+  const [reasoningConfidenceAggregate, setReasoningConfidenceAggregate] = useState<EmployerHiringReasoningConfidenceAggregate | null>(null);
+  const [aggregateLoading, setAggregateLoading] = useState(false);
+  const [aggregateError, setAggregateError] = useState<string | null>(null);
+  const [buildingAggregate, setBuildingAggregate] = useState(false);
+  const [buildAggregateError, setBuildAggregateError] = useState<string | null>(null);
+
   const [assessmentResult, setAssessmentResult] = useState<EmployerHiringAssessmentResult | null>(null);
   const [assessmentResultLoading, setAssessmentResultLoading] = useState(false);
   const [assessmentResultError, setAssessmentResultError] = useState<string | null>(null);
@@ -1414,6 +1421,41 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setClaimVerificationError(err.message || 'Failed to generate claim evidence alignment');
     } finally {
       setGeneratingClaimVerification(false);
+    }
+  };
+
+  const fetchReasoningConfidenceAggregate = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setAggregateLoading(true);
+    setAggregateError(null);
+    try {
+      const response = await employerApi.getEmployerHiringReasoningConfidenceAggregate(organizationId, sessionAnswers.sessionId);
+      setReasoningConfidenceAggregate(response.data);
+    } catch (err: any) {
+      setAggregateError(err.message || 'Failed to load reasoning & confidence overview');
+    } finally {
+      setAggregateLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      fetchReasoningConfidenceAggregate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus]);
+
+  const handleBuildAggregate = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setBuildingAggregate(true);
+    setBuildAggregateError(null);
+    try {
+      const response = await employerApi.buildEmployerHiringReasoningConfidenceAggregate(organizationId, sessionAnswers.sessionId);
+      setReasoningConfidenceAggregate(response.data);
+    } catch (err: any) {
+      setBuildAggregateError(err.message || 'Failed to build reasoning & confidence overview');
+    } finally {
+      setBuildingAggregate(false);
     }
   };
 
@@ -3503,6 +3545,188 @@ const EmployerApplicationDetailPage: React.FC = () => {
                                   Limitations: {(claimVerification.limitations || []).join('; ')}
                                 </p>
                               )}
+                            </div>
+                          );
+                        })()
+                      )}
+                    </div>
+                  )}
+
+                  {isEvaluated && (
+                    <div className="mt-5 pt-5 border-t border-mentor-border">
+                      <h3 className="text-sm font-medium text-mentor-text mb-1">Reasoning &amp; Confidence Overview</h3>
+                      <p className="text-xs text-mentor-text-muted mb-3">
+                        This overview summarizes observable evidence from the assessment. It does not measure intelligence,
+                        personality, honesty, or private thought processes, and it is not a hiring recommendation.
+                      </p>
+
+                      {aggregateLoading ? (
+                        <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                      ) : aggregateError ? (
+                        <div>
+                          <p className="text-sm text-mentor-error mb-2">{aggregateError}</p>
+                          <button onClick={fetchReasoningConfidenceAggregate} className="btn btn-secondary">
+                            Try Again
+                          </button>
+                        </div>
+                      ) : !reasoningConfidenceAggregate || !reasoningConfidenceAggregate.built ? (
+                        <div>
+                          <p className="text-sm text-mentor-text-secondary mb-3">
+                            Overview not built yet. It deterministically aggregates whatever reasoning evidence, confidence
+                            intelligence, consistency analysis, and claim evidence alignment already exist for this
+                            assessment — no AI call is made to build it.
+                          </p>
+                          {canManage && (
+                            <>
+                              {buildAggregateError && <p className="text-sm text-mentor-error mb-2">{buildAggregateError}</p>}
+                              <button onClick={handleBuildAggregate} disabled={buildingAggregate} className="btn btn-primary">
+                                {buildingAggregate ? 'Building...' : 'Build Overview'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        (() => {
+                          const reasoning = reasoningConfidenceAggregate.reasoning!;
+                          const confidence = reasoningConfidenceAggregate.confidence!;
+                          const consistency = reasoningConfidenceAggregate.consistency!;
+                          const claimAlignment = reasoningConfidenceAggregate.claimAlignment!;
+                          const coverage = reasoningConfidenceAggregate.coverage!;
+
+                          const signalRows = Object.entries(reasoning.signalCounts) as Array<
+                            [string, { strong: number; present: number; limited: number; notObserved: number }]
+                          >;
+
+                          return (
+                            <div className="space-y-5">
+                              {canManage && (
+                                <div>
+                                  {buildAggregateError && <p className="text-sm text-mentor-error mb-2">{buildAggregateError}</p>}
+                                  <button onClick={handleBuildAggregate} disabled={buildingAggregate} className="btn btn-secondary">
+                                    {buildingAggregate ? 'Rebuilding...' : 'Rebuild Overview'}
+                                  </button>
+                                </div>
+                              )}
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Reasoning Coverage</p>
+                                  <p className="text-lg font-semibold text-mentor-text">{coverage.reasoningCoveragePercent}%</p>
+                                </div>
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Confidence Coverage</p>
+                                  <p className="text-lg font-semibold text-mentor-text">{coverage.confidenceCoveragePercent}%</p>
+                                </div>
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Consistency</p>
+                                  <p className="text-sm font-semibold text-mentor-text">
+                                    {consistency.available ? labelizeCode(consistency.overallConsistency) : 'Not available'}
+                                  </p>
+                                </div>
+                                <div className="surface-muted p-3">
+                                  <p className="text-xs text-mentor-text-muted">Claim Alignment</p>
+                                  <p className="text-sm font-semibold text-mentor-text">
+                                    {claimAlignment.available ? `${claimAlignment.totalClaims} claims` : 'Not available'}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div>
+                                <p className="label mb-2">A. Reasoning Evidence</p>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                                  <div className="surface-muted p-2.5">
+                                    <p className="text-[11px] text-mentor-text-muted">Strong</p>
+                                    <p className="text-sm font-semibold text-mentor-success">{reasoning.strongAnswerCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-2.5">
+                                    <p className="text-[11px] text-mentor-text-muted">Sufficient</p>
+                                    <p className="text-sm font-semibold text-mentor-text">{reasoning.sufficientAnswerCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-2.5">
+                                    <p className="text-[11px] text-mentor-text-muted">Limited</p>
+                                    <p className="text-sm font-semibold text-mentor-warning">{reasoning.limitedAnswerCount}</p>
+                                  </div>
+                                  <div className="surface-muted p-2.5">
+                                    <p className="text-[11px] text-mentor-text-muted">Insufficient</p>
+                                    <p className="text-sm font-semibold text-mentor-warning">{reasoning.insufficientAnswerCount}</p>
+                                  </div>
+                                </div>
+                                <ul className="space-y-1">
+                                  {signalRows.map(([type, counts]) => (
+                                    <li key={type} className="text-xs text-mentor-text-secondary">
+                                      <span className="text-mentor-text">{labelizeCode(type)}:</span> strong {counts.strong} &middot;
+                                      present {counts.present} &middot; limited {counts.limited} &middot; not observed{' '}
+                                      {counts.notObserved}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+
+                              <div>
+                                <p className="label mb-2">B. Confidence &amp; Uncertainty</p>
+                                <p className="text-xs text-mentor-text-secondary">
+                                  Expression confidence — high {confidence.expressionConfidenceCounts.high} &middot; moderate{' '}
+                                  {confidence.expressionConfidenceCounts.moderate} &middot; low{' '}
+                                  {confidence.expressionConfidenceCounts.low} &middot; mixed{' '}
+                                  {confidence.expressionConfidenceCounts.mixed}
+                                </p>
+                                <p className="text-xs text-mentor-text-secondary">
+                                  Uncertainty awareness — strong {confidence.uncertaintyAwarenessCounts.strong} &middot; present{' '}
+                                  {confidence.uncertaintyAwarenessCounts.present} &middot; limited{' '}
+                                  {confidence.uncertaintyAwarenessCounts.limited} &middot; not observed{' '}
+                                  {confidence.uncertaintyAwarenessCounts.notObserved}
+                                </p>
+                                <p className="text-xs text-mentor-text-secondary">
+                                  Calibration — well calibrated {confidence.calibrationCounts.wellCalibrated} &middot; possibly
+                                  overconfident {confidence.calibrationCounts.possiblyOverconfident} &middot; possibly
+                                  underconfident {confidence.calibrationCounts.possiblyUnderconfident} &middot; insufficient
+                                  evidence {confidence.calibrationCounts.insufficientEvidence}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="label mb-2">C. Consistency</p>
+                                {!consistency.available ? (
+                                  <p className="text-xs text-mentor-text-muted">Consistency analysis not available.</p>
+                                ) : (
+                                  <p className="text-xs text-mentor-text-secondary">
+                                    {labelizeCode(consistency.overallConsistency)} &middot; {consistency.findingCount} finding
+                                    {consistency.findingCount === 1 ? '' : 's'} (high {consistency.highSeverityFindingCount}
+                                    &middot; medium {consistency.mediumSeverityFindingCount} &middot; low{' '}
+                                    {consistency.lowSeverityFindingCount})
+                                  </p>
+                                )}
+                              </div>
+
+                              <div>
+                                <p className="label mb-2">D. Claim Evidence Alignment</p>
+                                {!claimAlignment.available ? (
+                                  <p className="text-xs text-mentor-text-muted">Claim evidence alignment not available.</p>
+                                ) : (
+                                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                    <div className="surface-muted p-2.5">
+                                      <p className="text-[11px] text-mentor-text-muted">Supported</p>
+                                      <p className="text-sm font-semibold text-mentor-success">{claimAlignment.supported}</p>
+                                    </div>
+                                    <div className="surface-muted p-2.5">
+                                      <p className="text-[11px] text-mentor-text-muted">Partially Supported</p>
+                                      <p className="text-sm font-semibold text-mentor-text">{claimAlignment.partiallySupported}</p>
+                                    </div>
+                                    <div className="surface-muted p-2.5">
+                                      <p className="text-[11px] text-mentor-text-muted">Unsupported</p>
+                                      <p className="text-sm font-semibold text-mentor-warning">{claimAlignment.unsupported}</p>
+                                    </div>
+                                    <div className="surface-muted p-2.5">
+                                      <p className="text-[11px] text-mentor-text-muted">Conflicting</p>
+                                      <p className="text-sm font-semibold text-mentor-warning">{claimAlignment.conflicting}</p>
+                                    </div>
+                                    <div className="surface-muted p-2.5">
+                                      <p className="text-[11px] text-mentor-text-muted">Unverifiable</p>
+                                      <p className="text-sm font-semibold text-mentor-text">{claimAlignment.unverifiable}</p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           );
                         })()

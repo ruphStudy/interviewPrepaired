@@ -58,6 +58,7 @@ import employerHiringAnswerReasoningController from '../controllers/EmployerHiri
 import employerHiringAnswerConfidenceController from '../controllers/EmployerHiringAnswerConfidenceController';
 import employerHiringAssessmentConsistencyController from '../controllers/EmployerHiringAssessmentConsistencyController';
 import employerHiringClaimVerificationController from '../controllers/EmployerHiringClaimVerificationController';
+import employerHiringReasoningConfidenceAggregateController from '../controllers/EmployerHiringReasoningConfidenceAggregateController';
 import {
   EMPLOYER_CANDIDATE_COMMUNICATION_DIRECTIONS,
   EMPLOYER_CANDIDATE_COMMUNICATION_CHANNELS,
@@ -3408,6 +3409,29 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerHiringClaimVerificationController.generateClaimVerification
+);
+
+// GET/POST .../interviews/:interviewId/reasoning-confidence-aggregate[/build]
+// (26E) — deterministic (NO AI) assessment-level aggregate over
+// already-completed 26A-26D artifacts. Never auto-generates 26A-26D.
+router.get(
+  '/:organizationId/interviews/:interviewId/reasoning-confidence-aggregate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringReasoningConfidenceAggregateController.getAggregate
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/reasoning-confidence-aggregate/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringReasoningConfidenceAggregateController.buildAggregate
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
