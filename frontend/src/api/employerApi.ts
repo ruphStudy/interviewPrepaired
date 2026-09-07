@@ -3772,6 +3772,79 @@ export interface EmployerCodingEvaluation {
 export type GenerateEmployerCodingEvaluationResponse = ApiEnvelope<EmployerCodingEvaluation>;
 export type GetEmployerCodingEvaluationResponse = ApiEnvelope<EmployerCodingEvaluation>;
 
+// ============================================================================
+// Coding Assessment Report (Sprint 30E) — deterministic (NO AI) aggregate
+// over 30A-30D for one hiring interview's coding assessment. Never a
+// hiring recommendation, candidate ranking, or numeric overall score.
+// ============================================================================
+
+export interface EmployerCodingReportExecutionSummary {
+  assignedQuestionCount: number;
+  attemptedQuestionCount: number;
+  executedQuestionCount: number;
+  evaluatedQuestionCount: number;
+  totalSubmissionCount: number;
+  totalExecutionCount: number;
+  totalTests: number;
+  passedTests: number;
+  failedTests: number;
+  passPercent: number;
+}
+
+export interface EmployerCodingReportQuestion {
+  codingQuestionId: string;
+  title: string;
+  difficulty: string;
+  submittedAttemptCount: number;
+  latestSubmissionId?: string;
+  executionStatus?: EmployerCodingExecutionStatus;
+  passPercent?: number;
+  evaluationStatus?: 'processing' | 'completed' | 'failed';
+  correctnessAssessment?: CorrectnessAssessment;
+}
+
+export interface EmployerCodingReportQualityLevelCounts {
+  strong: number;
+  sufficient: number;
+  limited: number;
+  insufficient: number;
+}
+
+export interface EmployerCodingReportCodeQuality {
+  readability: EmployerCodingReportQualityLevelCounts;
+  maintainability: EmployerCodingReportQualityLevelCounts;
+  structure: EmployerCodingReportQualityLevelCounts;
+}
+
+export interface EmployerCodingReportReasoning {
+  algorithmChoice: EmployerCodingReportQualityLevelCounts;
+  complexityAwareness: EmployerCodingReportQualityLevelCounts;
+  edgeCaseHandling: EmployerCodingReportQualityLevelCounts;
+}
+
+export interface EmployerCodingReportCompetencyEvidence {
+  competencyName: string;
+  evaluatedSubmissionCount: number;
+  states: { strong: number; sufficient: number; partial: number; insufficient: number; notObserved: number };
+  overallEvidenceState: CodingCompetencyEvidenceState;
+  evidence: string[];
+}
+
+export interface EmployerCodingAssessmentReport {
+  built: boolean;
+  reportVersion?: string;
+  generatedAt?: string;
+  execution?: EmployerCodingReportExecutionSummary;
+  questions?: EmployerCodingReportQuestion[];
+  codeQuality?: EmployerCodingReportCodeQuality;
+  reasoning?: EmployerCodingReportReasoning;
+  competencyEvidence?: EmployerCodingReportCompetencyEvidence[];
+  summary?: { strengths: string[]; concerns: string[]; evidenceGaps: string[] };
+}
+
+export type BuildEmployerCodingAssessmentReportResponse = ApiEnvelope<EmployerCodingAssessmentReport>;
+export type GetEmployerCodingAssessmentReportResponse = ApiEnvelope<EmployerCodingAssessmentReport>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -6329,6 +6402,30 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load coding evaluation');
+    }
+  }
+
+  // ---- Coding Assessment Report (30E) ----
+
+  async buildEmployerCodingAssessmentReport(organizationId: string, interviewId: string): Promise<BuildEmployerCodingAssessmentReportResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerCodingAssessmentReportResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/coding-report/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build coding assessment report');
+    }
+  }
+
+  async getEmployerCodingAssessmentReport(organizationId: string, interviewId: string): Promise<GetEmployerCodingAssessmentReportResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCodingAssessmentReportResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/coding-report`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load coding assessment report');
     }
   }
 }

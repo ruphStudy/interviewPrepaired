@@ -78,6 +78,7 @@ import employerCodingTestCaseController from '../controllers/EmployerCodingTestC
 import employerCodingAssessmentSessionController from '../controllers/EmployerCodingAssessmentSessionController';
 import employerCodingExecutionController from '../controllers/EmployerCodingExecutionController';
 import employerCodingEvaluationController from '../controllers/EmployerCodingEvaluationController';
+import employerCodingAssessmentReportController from '../controllers/EmployerCodingAssessmentReportController';
 import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
 import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
@@ -4215,6 +4216,28 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCodingEvaluationController.getEvaluation
+);
+
+// ---- Coding Assessment Report (30E) — deterministic (NO AI) aggregate
+// over 30A-30D. Never candidate/public-reachable. ----
+router.post(
+  '/:organizationId/interviews/:interviewId/coding-report/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingAssessmentReportController.buildReport
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/coding-report',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.REPORTS_VIEW),
+  employerCodingAssessmentReportController.getReport
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

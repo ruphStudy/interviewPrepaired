@@ -76,6 +76,8 @@ import employerApi, {
   EmployerCodingAssessmentSession,
   EmployerCodingExecution,
   EmployerCodingEvaluation,
+  EmployerCodingAssessmentReport,
+  EmployerCodingReportQualityLevelCounts,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -897,6 +899,12 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [codingEvaluationErrorBySubmission, setCodingEvaluationErrorBySubmission] = useState<Record<string, string>>({});
   const [codingEvaluationGeneratingBySubmission, setCodingEvaluationGeneratingBySubmission] = useState<Record<string, boolean>>({});
 
+  const [codingReport, setCodingReport] = useState<EmployerCodingAssessmentReport | null>(null);
+  const [codingReportLoading, setCodingReportLoading] = useState(false);
+  const [codingReportError, setCodingReportError] = useState<string | null>(null);
+  const [buildingCodingReport, setBuildingCodingReport] = useState(false);
+  const [buildCodingReportError, setBuildCodingReportError] = useState<string | null>(null);
+
   const [sessionQuestions, setSessionQuestions] = useState<EmployerInterviewSessionQuestions | null>(null);
   const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
   const [sessionQuestionsError, setSessionQuestionsError] = useState<string | null>(null);
@@ -1128,6 +1136,7 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const isSyncing = !organizationId || activeOrganizationId !== organizationId;
   const canView = hasPermission('organization:view');
   const canManage = hasPermission('interviews:manage') && activeOrganization?.status !== 'archived';
+  const canViewCodingReport = hasPermission('reports:view');
   const canEdit =
     canManage &&
     application?.status !== 'archived' &&
@@ -1570,6 +1579,41 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setCodingEvaluationErrorBySubmission((prev) => ({ ...prev, [submissionId]: err.message || 'Failed to evaluate coding submission' }));
     } finally {
       setCodingEvaluationGeneratingBySubmission((prev) => ({ ...prev, [submissionId]: false }));
+    }
+  };
+
+  const fetchCodingReport = useCallback(async () => {
+    if (!organizationId || !interviewSession) return;
+    setCodingReportLoading(true);
+    setCodingReportError(null);
+    try {
+      const response = await employerApi.getEmployerCodingAssessmentReport(organizationId, interviewSession.id);
+      setCodingReport(response.data);
+    } catch (err: any) {
+      setCodingReportError(err.message || 'Failed to load coding assessment report');
+    } finally {
+      setCodingReportLoading(false);
+    }
+  }, [organizationId, interviewSession]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canViewCodingReport && interviewSession) {
+      fetchCodingReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canViewCodingReport, interviewSession?.id]);
+
+  const handleBuildCodingReport = async () => {
+    if (!organizationId || !interviewSession) return;
+    setBuildingCodingReport(true);
+    setBuildCodingReportError(null);
+    try {
+      const response = await employerApi.buildEmployerCodingAssessmentReport(organizationId, interviewSession.id);
+      setCodingReport(response.data);
+    } catch (err: any) {
+      setBuildCodingReportError(err.message || 'Failed to build coding assessment report');
+    } finally {
+      setBuildingCodingReport(false);
     }
   };
 
@@ -6008,6 +6052,214 @@ const EmployerApplicationDetailPage: React.FC = () => {
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+            )}
+
+            {interviewSession && canViewCodingReport && (
+              <div className="card mt-6">
+                <h2 className="section-title flex items-center gap-2 mb-1">Coding Assessment Report</h2>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Deterministic (no AI) aggregate over assigned coding questions, submissions, executions, and evaluations.
+                  Not a hiring recommendation or candidate ranking.
+                </p>
+
+                {codingReportLoading ? (
+                  <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                ) : codingReportError ? (
+                  <div>
+                    <p className="text-sm text-mentor-error mb-2">{codingReportError}</p>
+                    <button onClick={fetchCodingReport} className="btn btn-secondary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : !codingReport || !codingReport.built ? (
+                  <div>
+                    <p className="text-sm text-mentor-text-secondary mb-3">Not available.</p>
+                    {canManage && (
+                      <>
+                        {buildCodingReportError && <p className="text-sm text-mentor-error mb-2">{buildCodingReportError}</p>}
+                        <button onClick={handleBuildCodingReport} disabled={buildingCodingReport} className="btn btn-primary">
+                          {buildingCodingReport ? 'Building...' : 'Build Report'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  (() => {
+                    const exec = codingReport.execution!;
+                    const cq = codingReport.codeQuality!;
+                    const rs = codingReport.reasoning!;
+                    const qualityBar = (counts: EmployerCodingReportQualityLevelCounts) => (
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="badge badge-success">Strong {counts.strong}</span>
+                        <span className="badge badge-success">Sufficient {counts.sufficient}</span>
+                        <span className="badge badge-warning">Limited {counts.limited}</span>
+                        <span className="badge badge-warning">Insufficient {counts.insufficient}</span>
+                      </div>
+                    );
+
+                    return (
+                      <div className="space-y-5">
+                        {canManage && (
+                          <div>
+                            {buildCodingReportError && <p className="text-sm text-mentor-error mb-2">{buildCodingReportError}</p>}
+                            <button onClick={handleBuildCodingReport} disabled={buildingCodingReport} className="btn btn-secondary">
+                              {buildingCodingReport ? 'Rebuilding...' : 'Rebuild Report'}
+                            </button>
+                          </div>
+                        )}
+
+                        <div>
+                          <p className="text-xs text-mentor-text-muted mb-1">
+                            {exec.attemptedQuestionCount} of {exec.assignedQuestionCount} coding questions attempted &middot;{' '}
+                            {exec.evaluatedQuestionCount} of {exec.executedQuestionCount} executed submissions evaluated
+                          </p>
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Questions Assigned</p>
+                              <p className="text-lg font-semibold text-mentor-text">{exec.assignedQuestionCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Questions Attempted</p>
+                              <p className="text-lg font-semibold text-mentor-text">{exec.attemptedQuestionCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Questions Executed</p>
+                              <p className="text-lg font-semibold text-mentor-text">{exec.executedQuestionCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Questions Evaluated</p>
+                              <p className="text-lg font-semibold text-mentor-text">{exec.evaluatedQuestionCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Tests Passed</p>
+                              <p className="text-lg font-semibold text-mentor-text">
+                                {exec.passedTests}/{exec.totalTests} ({exec.passPercent}%)
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">Question Results</p>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-left text-mentor-text-muted border-b border-mentor-border">
+                                  <th className="py-1 pr-2">Question</th>
+                                  <th className="py-1 pr-2">Difficulty</th>
+                                  <th className="py-1 pr-2">Attempts</th>
+                                  <th className="py-1 pr-2">Execution</th>
+                                  <th className="py-1 pr-2">Pass Rate</th>
+                                  <th className="py-1 pr-2">Evaluation</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(codingReport.questions ?? []).map((q) => (
+                                  <tr key={q.codingQuestionId} className="border-b border-mentor-border last:border-0">
+                                    <td className="py-1.5 pr-2 text-mentor-text">{q.title}</td>
+                                    <td className="py-1.5 pr-2 text-mentor-text-secondary capitalize">{q.difficulty}</td>
+                                    <td className="py-1.5 pr-2 text-mentor-text-secondary">
+                                      {q.submittedAttemptCount === 0 ? 'No submission' : q.submittedAttemptCount}
+                                    </td>
+                                    <td className="py-1.5 pr-2 text-mentor-text-secondary capitalize">
+                                      {q.executionStatus ? labelizeCode(q.executionStatus) : '—'}
+                                    </td>
+                                    <td className="py-1.5 pr-2 text-mentor-text-secondary">
+                                      {q.passPercent !== undefined ? `${q.passPercent}%` : '—'}
+                                    </td>
+                                    <td className="py-1.5 pr-2">
+                                      {q.correctnessAssessment ? (
+                                        <span className={`badge ${CORRECTNESS_BADGE[q.correctnessAssessment] || 'badge-neutral'}`}>
+                                          {labelizeCode(q.correctnessAssessment)}
+                                        </span>
+                                      ) : (
+                                        <span className="text-mentor-text-muted">{q.evaluationStatus ? labelizeCode(q.evaluationStatus) : '—'}</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">Code Quality</p>
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-xs text-mentor-text-muted mb-1">Readability</p>
+                              {qualityBar(cq.readability)}
+                            </div>
+                            <div>
+                              <p className="text-xs text-mentor-text-muted mb-1">Maintainability</p>
+                              {qualityBar(cq.maintainability)}
+                            </div>
+                            <div>
+                              <p className="text-xs text-mentor-text-muted mb-1">Structure</p>
+                              {qualityBar(cq.structure)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">Reasoning</p>
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-xs text-mentor-text-muted mb-1">Algorithm Choice</p>
+                              {qualityBar(rs.algorithmChoice)}
+                            </div>
+                            <div>
+                              <p className="text-xs text-mentor-text-muted mb-1">Complexity Awareness</p>
+                              {qualityBar(rs.complexityAwareness)}
+                            </div>
+                            <div>
+                              <p className="text-xs text-mentor-text-muted mb-1">Edge Case Handling</p>
+                              {qualityBar(rs.edgeCaseHandling)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {(codingReport.competencyEvidence?.length ?? 0) > 0 && (
+                          <div>
+                            <p className="label mb-2">Competency Evidence</p>
+                            <div className="space-y-2">
+                              {codingReport.competencyEvidence!.map((c) => (
+                                <div key={c.competencyName} className="surface-muted p-2 text-xs">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-medium text-mentor-text">{c.competencyName}</span>
+                                    <span className={`badge ${EVIDENCE_STATE_BADGE[c.overallEvidenceState] || 'badge-neutral'}`}>
+                                      {labelizeCode(c.overallEvidenceState)}
+                                    </span>
+                                    <span className="text-mentor-text-muted">{c.evaluatedSubmissionCount} evaluated submission(s)</span>
+                                  </div>
+                                  <p className="text-mentor-text-muted">
+                                    Strong {c.states.strong} &middot; Sufficient {c.states.sufficient} &middot; Partial {c.states.partial} &middot;
+                                    Insufficient {c.states.insufficient} &middot; Not observed {c.states.notObserved}
+                                  </p>
+                                  {c.evidence.length > 0 && <p className="text-mentor-text-secondary mt-1">{c.evidence.join('; ')}</p>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div>
+                          <p className="label mb-2">Summary</p>
+                          {(codingReport.summary?.strengths.length ?? 0) > 0 && (
+                            <p className="text-xs text-mentor-success mb-1">Strengths: {codingReport.summary!.strengths.join(' ')}</p>
+                          )}
+                          {(codingReport.summary?.concerns.length ?? 0) > 0 && (
+                            <p className="text-xs text-mentor-warning mb-1">Concerns: {codingReport.summary!.concerns.join(' ')}</p>
+                          )}
+                          {(codingReport.summary?.evidenceGaps.length ?? 0) > 0 && (
+                            <p className="text-xs text-mentor-text-muted">Evidence gaps: {codingReport.summary!.evidenceGaps.join(' ')}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()
                 )}
               </div>
             )}
