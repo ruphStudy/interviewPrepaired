@@ -42,6 +42,8 @@ import EmployerMentionsPage from './pages/employer/EmployerMentionsPage';
 import EmployerTalentSkillsPage from './pages/employer/EmployerTalentSkillsPage';
 import EmployerKnowledgeBasesPage from './pages/employer/EmployerKnowledgeBasesPage';
 import EmployerKnowledgeBaseDetailPage from './pages/employer/EmployerKnowledgeBaseDetailPage';
+import EmployerCodingQuestionsPage from './pages/employer/EmployerCodingQuestionsPage';
+import EmployerCodingQuestionDetailPage from './pages/employer/EmployerCodingQuestionDetailPage';
 import EmployerNotificationsPage from './pages/employer/EmployerNotificationsPage';
 import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
 import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
@@ -368,6 +370,23 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerKnowledgeBaseDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Coding Question Foundation (Sprint 30A) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/coding-questions"
+            element={
+              <ProtectedRoute>
+                <EmployerCodingQuestionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organizations/:organizationId/employer/coding-questions/:codingQuestionId"
+            element={
+              <ProtectedRoute>
+                <EmployerCodingQuestionDetailPage />
               </ProtectedRoute>
             }
           />

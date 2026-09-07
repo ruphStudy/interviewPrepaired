@@ -16,6 +16,10 @@ import { InterviewPurpose, InterviewStatus } from '../constants/interview';
 import EmployerInterviewScenario, { IEmployerInterviewScenario } from '../models/EmployerInterviewScenario.model';
 import EmployerInterviewScenarioQuestionSet, { IEmployerInterviewScenarioQuestionSet } from '../models/EmployerInterviewScenarioQuestionSet.model';
 import EmployerInterviewScenarioSession, { IEmployerInterviewScenarioSession } from '../models/EmployerInterviewScenarioSession.model';
+import EmployerCodingQuestion, { IEmployerCodingQuestion } from '../models/EmployerCodingQuestion.model';
+import EmployerCodingTestCase from '../models/EmployerCodingTestCase.model';
+import EmployerCodingAssessmentSession, { IEmployerCodingAssessmentSession } from '../models/EmployerCodingAssessmentSession.model';
+import EmployerCodingSubmission from '../models/EmployerCodingSubmission.model';
 import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { employerJobApplicationService } from './EmployerJobApplicationService';
@@ -26,6 +30,9 @@ import { ApiError } from '../utils/ApiError';
 const MAX_ANSWER_LENGTH = 5000; // matches the schema's own answerText cap
 const SCENARIO_SESSION_VERSION = 'scenario-session-v1';
 const MAX_ANSWER_DURATION_SECONDS = 3600; // matches the schema's own duration cap
+const CODING_SUBMISSION_VERSION = 'coding-submission-v1';
+const MAX_SOURCE_CODE_LENGTH = 50_000; // matches the schema's own sourceCode cap
+const MAX_CODING_ATTEMPTS = 3;
 
 interface ResolvedChain {
   organization: IOrganization;
@@ -603,6 +610,256 @@ export class PublicEmployerInterviewInvitationService {
     await session.save();
 
     return this.toScenarioStepDetail(scenario, questionSet, session);
+  }
+
+  /**
+   * GET /public/employer-interview-invitations/:token/session/coding
+   * (30B) — candidate-safe coding-assessment question list + progress.
+   * Initializes (starts) the session idempotently on first access. Never
+   * exposes hidden test cases/weights/employer notes/rubric. Returns
+   * `{ configured: false }` (never throws) when no coding session has been
+   * attached to this interview — mirrors the existing
+   * getSession/getAssessment "not ready" convention.
+   */
+  async getCodingSession(rawToken: string): Promise<Record<string, unknown>> {
+    const { interview } = await this.resolveAcceptedHiringInterview(rawToken);
+
+    const session = await EmployerCodingAssessmentSession.findOne({ organizationId: interview.organizationId, interviewId: interview._id });
+    if (!session) {
+      return { configured: false };
+    }
+
+    if (session.status === 'not_started') {
+      session.status = 'in_progress';
+      session.startedAt = new Date();
+      await session.save();
+    }
+
+    return this.toCandidateCodingSessionDetail(session);
+  }
+
+  /**
+   * PUT /public/employer-interview-invitations/:token/session/coding/:codingQuestionId/draft
+   * (30B) — saves/upserts the candidate's CURRENT draft attempt. NO
+   * execution, NO evaluation, NO AI. `sourceCode` is treated as opaque
+   * untrusted text throughout.
+   */
+  async saveCodingDraft(rawToken: string, codingQuestionId: string, language: string, sourceCode: string): Promise<Record<string, unknown>> {
+    const { interview, session, question } = await this.resolveCodingQuestionForSubmission(rawToken, codingQuestionId);
+    if (session.status !== 'in_progress') {
+      throw new ApiError(409, 'This coding assessment is not currently in progress.');
+    }
+    const normalized = this.validateLanguageAndSource(question, language, sourceCode);
+
+    await EmployerCodingSubmission.findOneAndUpdate(
+      { organizationId: interview.organizationId, codingSessionId: session._id, codingQuestionId: question._id, attemptNumber: 0 },
+      {
+        $set: {
+          applicationId: interview.employerApplicationId,
+          interviewId: interview._id,
+          language: normalized.language,
+          sourceCode: normalized.sourceCode,
+          submissionVersion: CODING_SUBMISSION_VERSION,
+          status: 'draft',
+          savedAt: new Date(),
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    return this.toCandidateCodingSessionDetail(session);
+  }
+
+  /**
+   * POST /public/employer-interview-invitations/:token/session/coding/:codingQuestionId/submit
+   * (30B) — persists an IMMUTABLE submitted attempt and increments
+   * `attemptNumber`. NO execution yet (30C). Bounded to
+   * `MAX_CODING_ATTEMPTS` attempts per question to prevent spam.
+   */
+  async submitCodingSubmission(rawToken: string, codingQuestionId: string, language: string, sourceCode: string): Promise<Record<string, unknown>> {
+    const { interview, session, question } = await this.resolveCodingQuestionForSubmission(rawToken, codingQuestionId);
+    if (session.status !== 'in_progress') {
+      throw new ApiError(409, 'This coding assessment is not currently in progress.');
+    }
+    const normalized = this.validateLanguageAndSource(question, language, sourceCode);
+
+    const submittedCount = await EmployerCodingSubmission.countDocuments({
+      organizationId: interview.organizationId,
+      codingSessionId: session._id,
+      codingQuestionId: question._id,
+      status: { $ne: 'draft' },
+    });
+    if (submittedCount >= MAX_CODING_ATTEMPTS) {
+      throw new ApiError(409, `Maximum of ${MAX_CODING_ATTEMPTS} submission attempts reached for this question.`);
+    }
+
+    const now = new Date();
+    await EmployerCodingSubmission.create({
+      organizationId: interview.organizationId,
+      applicationId: interview.employerApplicationId,
+      interviewId: interview._id,
+      codingSessionId: session._id,
+      codingQuestionId: question._id,
+      language: normalized.language,
+      sourceCode: normalized.sourceCode,
+      submissionVersion: CODING_SUBMISSION_VERSION,
+      status: 'submitted',
+      attemptNumber: submittedCount + 1,
+      submittedAt: now,
+    });
+
+    // Advance to the next unsubmitted question, if any, for a smoother candidate flow — never trusted for authorization.
+    const currentIndex = session.questionIds.findIndex((id) => id.toString() === question._id.toString());
+    if (currentIndex >= 0 && currentIndex < session.questionIds.length - 1) {
+      session.currentQuestionIndex = currentIndex + 1;
+    }
+
+    const submittedQuestionIds = new Set(
+      (
+        await EmployerCodingSubmission.find({
+          organizationId: interview.organizationId,
+          codingSessionId: session._id,
+          status: { $ne: 'draft' },
+        }).select('codingQuestionId')
+      ).map((s) => s.codingQuestionId.toString())
+    );
+    const allSubmitted = session.questionIds.every((id) => submittedQuestionIds.has(id.toString()));
+    if (allSubmitted) {
+      session.status = 'submitted';
+      session.submittedAt = now;
+    }
+    await session.save();
+
+    return this.toCandidateCodingSessionDetail(session);
+  }
+
+  /** Shared token -> ACCEPTED-invitation -> hiring-assessment-interview resolution for the 30B coding endpoints. Collapses every invalid/foreign/broken reference to the same generic 404. */
+  private async resolveAcceptedHiringInterview(rawToken: string): Promise<{ invitation: InstanceType<typeof EmployerInterviewInvitation>; interview: IInterview }> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+    await this.resolveChain(invitation);
+
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACCEPTED || !invitation.interviewId) {
+      throw this.notFoundError();
+    }
+    const interview = await Interview.findById(invitation.interviewId);
+    if (!interview || interview.purpose !== InterviewPurpose.HIRING_ASSESSMENT) {
+      throw this.notFoundError();
+    }
+    return { invitation, interview };
+  }
+
+  /** Re-derives + validates the exact tenant/interview-scoped coding session + question — never trusts any id beyond `codingQuestionId` itself. */
+  private async resolveCodingQuestionForSubmission(
+    rawToken: string,
+    codingQuestionId: string
+  ): Promise<{ interview: IInterview; session: IEmployerCodingAssessmentSession; question: IEmployerCodingQuestion }> {
+    const { interview } = await this.resolveAcceptedHiringInterview(rawToken);
+
+    const session = await EmployerCodingAssessmentSession.findOne({ organizationId: interview.organizationId, interviewId: interview._id });
+    if (!session) {
+      throw this.notFoundError();
+    }
+    const belongs = session.questionIds.some((id) => id.toString() === codingQuestionId);
+    if (!belongs) {
+      throw this.notFoundError();
+    }
+    const question = await EmployerCodingQuestion.findOne({ _id: codingQuestionId, organizationId: interview.organizationId, status: 'ready' });
+    if (!question) {
+      throw this.notFoundError();
+    }
+    return { interview, session, question };
+  }
+
+  private validateLanguageAndSource(question: IEmployerCodingQuestion, language: string, sourceCode: string): { language: string; sourceCode: string } {
+    if (typeof language !== 'string' || !question.supportedLanguages.includes(language)) {
+      throw new ApiError(400, 'This language is not supported for this question.');
+    }
+    if (typeof sourceCode !== 'string' || sourceCode.trim().length === 0) {
+      throw new ApiError(400, 'sourceCode is required');
+    }
+    if (sourceCode.length > MAX_SOURCE_CODE_LENGTH) {
+      throw new ApiError(400, `sourceCode cannot exceed ${MAX_SOURCE_CODE_LENGTH} characters`);
+    }
+    return { language, sourceCode };
+  }
+
+  /**
+   * Candidate-safe coding session detail — question content + candidate's
+   * own draft/submission history ONLY. NEVER hidden test cases, expected
+   * outputs, weights, rubric, or employer notes.
+   */
+  private async toCandidateCodingSessionDetail(session: IEmployerCodingAssessmentSession): Promise<Record<string, unknown>> {
+    const questions = await EmployerCodingQuestion.find({ _id: { $in: session.questionIds } });
+    const questionById = new Map(questions.map((q) => [q._id.toString(), q]));
+
+    const sampleTestCases = await EmployerCodingTestCase.find({
+      organizationId: session.organizationId,
+      codingQuestionId: { $in: session.questionIds },
+      type: 'sample',
+      status: 'active',
+    }).sort({ order: 1 });
+    const sampleByQuestion = new Map<string, typeof sampleTestCases>();
+    for (const tc of sampleTestCases) {
+      const key = tc.codingQuestionId.toString();
+      const list = sampleByQuestion.get(key) ?? [];
+      list.push(tc);
+      sampleByQuestion.set(key, list);
+    }
+
+    const submissions = await EmployerCodingSubmission.find({ organizationId: session.organizationId, codingSessionId: session._id }).sort({
+      attemptNumber: 1,
+    });
+    const submissionsByQuestion = new Map<string, typeof submissions>();
+    for (const s of submissions) {
+      const key = s.codingQuestionId.toString();
+      const list = submissionsByQuestion.get(key) ?? [];
+      list.push(s);
+      submissionsByQuestion.set(key, list);
+    }
+
+    const questions_ = session.questionIds.map((id, index) => {
+      const key = id.toString();
+      const question = questionById.get(key);
+      const questionSubmissions = submissionsByQuestion.get(key) ?? [];
+      const draft = questionSubmissions.find((s) => s.status === 'draft');
+      const submittedAttempts = questionSubmissions.filter((s) => s.status !== 'draft');
+
+      return {
+        id: key,
+        title: question?.title ?? 'Unknown question',
+        description: question?.description ?? '',
+        difficulty: question?.difficulty,
+        supportedLanguages: question?.supportedLanguages ?? [],
+        constraints: question?.constraints ?? [],
+        examples: (sampleByQuestion.get(key) ?? []).map((tc) => ({ input: tc.input, output: tc.expectedOutput, explanation: tc.explanation })),
+        starterCode: question?.starterCode,
+        functionSignature: question?.functionSignature,
+        timeLimitMs: question?.timeLimitMs,
+        progress: {
+          index,
+          submittedAttemptCount: submittedAttempts.length,
+          maxAttempts: MAX_CODING_ATTEMPTS,
+        },
+        draft: draft ? { language: draft.language, sourceCode: draft.sourceCode, savedAt: draft.savedAt } : null,
+        submissions: submittedAttempts.map((s) => ({ attemptNumber: s.attemptNumber, language: s.language, submittedAt: s.submittedAt })),
+      };
+    });
+
+    return {
+      status: session.status,
+      totalQuestions: session.questionIds.length,
+      currentQuestionIndex: session.currentQuestionIndex,
+      startedAt: session.startedAt,
+      submittedAt: session.submittedAt,
+      completedAt: session.completedAt,
+      questions: questions_,
+    };
   }
 
   /** Re-derives + validates the exact tenant/interview-scoped READY scenario + its completed 28B question set — never trusts any id beyond `scenarioId` itself, and a foreign/missing/not-ready scenario is indistinguishable from "does not exist". */

@@ -3528,6 +3528,170 @@ export interface EmployerTalentSearchResults {
 
 export type EmployerTalentSearchResponse = ApiEnvelope<EmployerTalentSearchResults>;
 
+// ============================================================================
+// Coding Question Foundation (Sprint 30A) — structured employer coding
+// problems + test cases. NO execution, NO AI. Hidden test cases are
+// employer-internal only, never exposed to a candidate/public surface.
+// ============================================================================
+
+export const CODING_SUPPORTED_LANGUAGES = ['javascript', 'typescript', 'python'] as const;
+export type CodingSupportedLanguage = (typeof CODING_SUPPORTED_LANGUAGES)[number];
+export type EmployerCodingQuestionDifficulty = 'easy' | 'medium' | 'hard';
+export type EmployerCodingQuestionStatus = 'draft' | 'ready' | 'archived';
+
+export interface EmployerCodingExample {
+  input: string;
+  output: string;
+  explanation?: string;
+}
+
+export interface EmployerCodingFunctionParameter {
+  name: string;
+  type?: string;
+}
+
+export interface EmployerCodingFunctionSignature {
+  name: string;
+  parameters: EmployerCodingFunctionParameter[];
+  returnType?: string;
+}
+
+export interface EmployerCodingStarterCode {
+  javascript?: string;
+  typescript?: string;
+  python?: string;
+}
+
+export interface EmployerCodingQuestionSummary {
+  id: string;
+  title: string;
+  difficulty: EmployerCodingQuestionDifficulty;
+  supportedLanguages: string[];
+  status: EmployerCodingQuestionStatus;
+  jobId: string;
+  applicationId?: string;
+  interviewId?: string;
+  testCaseCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployerCodingQuestion {
+  id: string;
+  organizationId: string;
+  jobId: string;
+  applicationId?: string;
+  interviewId?: string;
+  questionVersion: string;
+  title: string;
+  description: string;
+  difficulty: EmployerCodingQuestionDifficulty;
+  supportedLanguages: string[];
+  competencyNames: string[];
+  skills: string[];
+  constraints: string[];
+  examples: EmployerCodingExample[];
+  starterCode?: EmployerCodingStarterCode;
+  functionSignature?: EmployerCodingFunctionSignature;
+  timeLimitMs: number;
+  memoryLimitMb: number;
+  status: EmployerCodingQuestionStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployerCodingQuestionInput {
+  jobId: string;
+  applicationId?: string;
+  interviewId?: string;
+  title: string;
+  description: string;
+  difficulty: EmployerCodingQuestionDifficulty;
+  supportedLanguages: string[];
+  competencyNames?: string[];
+  skills?: string[];
+  constraints?: string[];
+  examples?: EmployerCodingExample[];
+  starterCode?: EmployerCodingStarterCode;
+  functionSignature?: EmployerCodingFunctionSignature;
+  timeLimitMs: number;
+  memoryLimitMb: number;
+}
+
+export type ListEmployerCodingQuestionsResponse = ApiEnvelope<{ questions: EmployerCodingQuestionSummary[] }>;
+export type GetEmployerCodingQuestionResponse = ApiEnvelope<EmployerCodingQuestion>;
+export type CreateEmployerCodingQuestionResponse = ApiEnvelope<EmployerCodingQuestion>;
+export type UpdateEmployerCodingQuestionResponse = ApiEnvelope<EmployerCodingQuestion>;
+export type MarkEmployerCodingQuestionReadyResponse = ApiEnvelope<EmployerCodingQuestion>;
+export type ArchiveEmployerCodingQuestionResponse = ApiEnvelope<EmployerCodingQuestion>;
+
+export type EmployerCodingTestCaseType = 'sample' | 'hidden';
+
+export interface EmployerCodingTestCase {
+  id: string;
+  codingQuestionId: string;
+  type: EmployerCodingTestCaseType;
+  input: string;
+  expectedOutput: string;
+  weight: number;
+  explanation?: string;
+  order: number;
+  status: 'active' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployerCodingTestCaseInput {
+  type: EmployerCodingTestCaseType;
+  input: string;
+  expectedOutput: string;
+  weight?: number;
+  explanation?: string;
+}
+
+export type ListEmployerCodingTestCasesResponse = ApiEnvelope<{ testCases: EmployerCodingTestCase[] }>;
+export type AddEmployerCodingTestCaseResponse = ApiEnvelope<EmployerCodingTestCase>;
+export type UpdateEmployerCodingTestCaseResponse = ApiEnvelope<EmployerCodingTestCase>;
+export type ArchiveEmployerCodingTestCaseResponse = ApiEnvelope<EmployerCodingTestCase>;
+
+// ============================================================================
+// Coding Assessment Session (Sprint 30B, employer/internal side) — attaches
+// READY coding questions to one exact hiring interview. NO execution.
+// ============================================================================
+
+export type EmployerCodingAssessmentSessionStatus = 'not_started' | 'in_progress' | 'submitted' | 'completed';
+
+export interface EmployerCodingSessionSubmissionDetail {
+  attemptNumber: number;
+  language: string;
+  sourceCode: string;
+  status: string;
+  submittedAt?: string;
+}
+
+export interface EmployerCodingSessionQuestionDetail {
+  codingQuestionId: string;
+  title: string;
+  difficulty?: EmployerCodingQuestionDifficulty;
+  supportedLanguages: string[];
+  submissions: EmployerCodingSessionSubmissionDetail[];
+}
+
+export interface EmployerCodingAssessmentSession {
+  configured: boolean;
+  sessionVersion?: string;
+  status?: EmployerCodingAssessmentSessionStatus;
+  totalQuestions?: number;
+  currentQuestionIndex?: number;
+  startedAt?: string;
+  submittedAt?: string;
+  completedAt?: string;
+  questions?: EmployerCodingSessionQuestionDetail[];
+}
+
+export type GetEmployerCodingAssessmentSessionResponse = ApiEnvelope<EmployerCodingAssessmentSession>;
+export type CreateOrUpdateEmployerCodingAssessmentSessionResponse = ApiEnvelope<EmployerCodingAssessmentSession>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -5884,6 +6048,166 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to search talent skills');
+    }
+  }
+
+  // ---- Coding Question Foundation (30A) ----
+
+  async createEmployerCodingQuestion(organizationId: string, input: EmployerCodingQuestionInput): Promise<CreateEmployerCodingQuestionResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerCodingQuestionResponse>(`/organizations/${organizationId}/coding-questions`, input);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create coding question');
+    }
+  }
+
+  async listEmployerCodingQuestions(
+    organizationId: string,
+    filters?: { jobId?: string; interviewId?: string; status?: string }
+  ): Promise<ListEmployerCodingQuestionsResponse> {
+    try {
+      const response = await this.api.get<ListEmployerCodingQuestionsResponse>(`/organizations/${organizationId}/coding-questions`, {
+        params: filters,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load coding questions');
+    }
+  }
+
+  async getEmployerCodingQuestion(organizationId: string, codingQuestionId: string): Promise<GetEmployerCodingQuestionResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCodingQuestionResponse>(`/organizations/${organizationId}/coding-questions/${codingQuestionId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load coding question');
+    }
+  }
+
+  async updateEmployerCodingQuestion(
+    organizationId: string,
+    codingQuestionId: string,
+    input: Partial<EmployerCodingQuestionInput>
+  ): Promise<UpdateEmployerCodingQuestionResponse> {
+    try {
+      const response = await this.api.patch<UpdateEmployerCodingQuestionResponse>(
+        `/organizations/${organizationId}/coding-questions/${codingQuestionId}`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update coding question');
+    }
+  }
+
+  async markEmployerCodingQuestionReady(organizationId: string, codingQuestionId: string): Promise<MarkEmployerCodingQuestionReadyResponse> {
+    try {
+      const response = await this.api.post<MarkEmployerCodingQuestionReadyResponse>(
+        `/organizations/${organizationId}/coding-questions/${codingQuestionId}/ready`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to mark coding question ready');
+    }
+  }
+
+  async archiveEmployerCodingQuestion(organizationId: string, codingQuestionId: string): Promise<ArchiveEmployerCodingQuestionResponse> {
+    try {
+      const response = await this.api.post<ArchiveEmployerCodingQuestionResponse>(
+        `/organizations/${organizationId}/coding-questions/${codingQuestionId}/archive`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to archive coding question');
+    }
+  }
+
+  async listEmployerCodingTestCases(organizationId: string, codingQuestionId: string): Promise<ListEmployerCodingTestCasesResponse> {
+    try {
+      const response = await this.api.get<ListEmployerCodingTestCasesResponse>(
+        `/organizations/${organizationId}/coding-questions/${codingQuestionId}/test-cases`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load test cases');
+    }
+  }
+
+  async addEmployerCodingTestCase(
+    organizationId: string,
+    codingQuestionId: string,
+    input: EmployerCodingTestCaseInput
+  ): Promise<AddEmployerCodingTestCaseResponse> {
+    try {
+      const response = await this.api.post<AddEmployerCodingTestCaseResponse>(
+        `/organizations/${organizationId}/coding-questions/${codingQuestionId}/test-cases`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to add test case');
+    }
+  }
+
+  async updateEmployerCodingTestCase(
+    organizationId: string,
+    codingQuestionId: string,
+    testCaseId: string,
+    input: Partial<EmployerCodingTestCaseInput>
+  ): Promise<UpdateEmployerCodingTestCaseResponse> {
+    try {
+      const response = await this.api.patch<UpdateEmployerCodingTestCaseResponse>(
+        `/organizations/${organizationId}/coding-questions/${codingQuestionId}/test-cases/${testCaseId}`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update test case');
+    }
+  }
+
+  async archiveEmployerCodingTestCase(
+    organizationId: string,
+    codingQuestionId: string,
+    testCaseId: string
+  ): Promise<ArchiveEmployerCodingTestCaseResponse> {
+    try {
+      const response = await this.api.delete<ArchiveEmployerCodingTestCaseResponse>(
+        `/organizations/${organizationId}/coding-questions/${codingQuestionId}/test-cases/${testCaseId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to archive test case');
+    }
+  }
+
+  // ---- Coding Assessment Session (30B, employer/internal side) ----
+
+  async createOrUpdateEmployerCodingAssessmentSession(
+    organizationId: string,
+    interviewId: string,
+    codingQuestionIds: string[]
+  ): Promise<CreateOrUpdateEmployerCodingAssessmentSessionResponse> {
+    try {
+      const response = await this.api.post<CreateOrUpdateEmployerCodingAssessmentSessionResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/coding-session`,
+        { codingQuestionIds }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save coding assessment session');
+    }
+  }
+
+  async getEmployerCodingAssessmentSession(organizationId: string, interviewId: string): Promise<GetEmployerCodingAssessmentSessionResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCodingAssessmentSessionResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/coding-session`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load coding assessment session');
     }
   }
 }

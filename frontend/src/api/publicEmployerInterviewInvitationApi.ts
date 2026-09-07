@@ -203,6 +203,84 @@ export interface PublicScenarioStepDetail {
 export type GetPublicScenarioStepResponse = ApiEnvelope<PublicScenarioStepDetail>;
 export type SubmitPublicScenarioResponseResponse = ApiEnvelope<PublicScenarioStepDetail>;
 
+// ============================================================================
+// Coding Assessment Session (Sprint 30B) — candidate-safe access derived
+// exclusively from the authorized invitation token. NO execution yet (30C).
+// NEVER exposes hidden test cases/expected outputs/weights/rubric.
+// ============================================================================
+
+export interface PublicCodingExample {
+  input: string;
+  output: string;
+  explanation?: string;
+}
+
+export interface PublicCodingFunctionParameter {
+  name: string;
+  type?: string;
+}
+
+export interface PublicCodingFunctionSignature {
+  name: string;
+  parameters: PublicCodingFunctionParameter[];
+  returnType?: string;
+}
+
+export interface PublicCodingStarterCode {
+  javascript?: string;
+  typescript?: string;
+  python?: string;
+}
+
+export interface PublicCodingQuestionProgress {
+  index: number;
+  submittedAttemptCount: number;
+  maxAttempts: number;
+}
+
+export interface PublicCodingDraft {
+  language: string;
+  sourceCode: string;
+  savedAt?: string;
+}
+
+export interface PublicCodingSubmissionSummary {
+  attemptNumber: number;
+  language: string;
+  submittedAt?: string;
+}
+
+export interface PublicCodingQuestion {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: string;
+  supportedLanguages: string[];
+  constraints: string[];
+  examples: PublicCodingExample[];
+  starterCode?: PublicCodingStarterCode;
+  functionSignature?: PublicCodingFunctionSignature;
+  timeLimitMs?: number;
+  progress: PublicCodingQuestionProgress;
+  draft: PublicCodingDraft | null;
+  submissions: PublicCodingSubmissionSummary[];
+}
+
+export interface PublicCodingSessionDetail {
+  configured?: boolean;
+  status?: 'not_started' | 'in_progress' | 'submitted' | 'completed';
+  totalQuestions?: number;
+  currentQuestionIndex?: number;
+  startedAt?: string;
+  submittedAt?: string;
+  completedAt?: string;
+  questions?: PublicCodingQuestion[];
+}
+
+export type GetPublicCodingSessionResponse = ApiEnvelope<PublicCodingSessionDetail>;
+export type SaveCodingDraftResponse = ApiEnvelope<PublicCodingSessionDetail>;
+export type SubmitCodingSubmissionResponse = ApiEnvelope<PublicCodingSessionDetail>;
+
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
 
@@ -366,6 +444,54 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to submit scenario response');
+    }
+  }
+
+  /** Starts the coding session idempotently on first access. */
+  async getPublicCodingSession(token: string): Promise<GetPublicCodingSessionResponse> {
+    try {
+      const response = await this.api.get<GetPublicCodingSessionResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/coding`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load coding session');
+    }
+  }
+
+  /** NO execution, NO evaluation — saves the candidate's current draft only. */
+  async savePublicCodingDraft(
+    token: string,
+    codingQuestionId: string,
+    language: string,
+    sourceCode: string
+  ): Promise<SaveCodingDraftResponse> {
+    try {
+      const response = await this.api.put<SaveCodingDraftResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/coding/${codingQuestionId}/draft`,
+        { language, sourceCode }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save draft');
+    }
+  }
+
+  /** Persists an immutable submitted attempt. NO execution yet. */
+  async submitPublicCodingSubmission(
+    token: string,
+    codingQuestionId: string,
+    language: string,
+    sourceCode: string
+  ): Promise<SubmitCodingSubmissionResponse> {
+    try {
+      const response = await this.api.post<SubmitCodingSubmissionResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/coding/${codingQuestionId}/submit`,
+        { language, sourceCode }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to submit code');
     }
   }
 }

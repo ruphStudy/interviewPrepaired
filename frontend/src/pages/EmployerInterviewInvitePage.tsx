@@ -7,6 +7,7 @@ import publicEmployerInterviewInvitationApi, {
   PublicAssessmentDetail,
   PublicScenarioListItem,
   PublicScenarioStepDetail,
+  PublicCodingSessionDetail,
 } from '../api/publicEmployerInterviewInvitationApi';
 import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-react';
 
@@ -65,6 +66,17 @@ const EmployerInterviewInvitePage: React.FC = () => {
   const [scenarioAnswerDraft, setScenarioAnswerDraft] = useState('');
   const [submittingScenarioResponse, setSubmittingScenarioResponse] = useState(false);
   const [submitScenarioResponseError, setSubmitScenarioResponseError] = useState<string | null>(null);
+
+  const [codingSession, setCodingSession] = useState<PublicCodingSessionDetail | null>(null);
+  const [codingSessionLoading, setCodingSessionLoading] = useState(false);
+  const [codingSessionError, setCodingSessionError] = useState<string | null>(null);
+  const [codingViewIndex, setCodingViewIndex] = useState(0);
+  const [codingLanguage, setCodingLanguage] = useState('');
+  const [codingSourceCode, setCodingSourceCode] = useState('');
+  const [savingCodingDraft, setSavingCodingDraft] = useState(false);
+  const [saveCodingDraftError, setSaveCodingDraftError] = useState<string | null>(null);
+  const [submittingCode, setSubmittingCode] = useState(false);
+  const [submitCodeError, setSubmitCodeError] = useState<string | null>(null);
 
   const fetchInvitation = useCallback(async () => {
     if (!token) return;
@@ -211,6 +223,85 @@ const EmployerInterviewInvitePage: React.FC = () => {
       setSubmitScenarioResponseError(err.message || 'Failed to submit scenario response');
     } finally {
       setSubmittingScenarioResponse(false);
+    }
+  };
+
+  const fetchCodingSession = useCallback(async () => {
+    if (!token) return;
+    setCodingSessionLoading(true);
+    setCodingSessionError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.getPublicCodingSession(token);
+      setCodingSession(response.data);
+    } catch (err: any) {
+      setCodingSessionError(err.message || 'Failed to load coding assessment');
+    } finally {
+      setCodingSessionLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (invitation?.status === 'accepted') {
+      fetchCodingSession();
+    }
+  }, [invitation?.status, fetchCodingSession]);
+
+  const goToCodingQuestion = (index: number) => {
+    if (!codingSession?.questions) return;
+    const clamped = Math.max(0, Math.min(index, codingSession.questions.length - 1));
+    setCodingViewIndex(clamped);
+    const q = codingSession.questions[clamped];
+    setCodingLanguage(q?.draft?.language || q?.supportedLanguages[0] || '');
+    setCodingSourceCode(q?.draft?.sourceCode || (q?.starterCode as any)?.[q?.draft?.language || q?.supportedLanguages[0] || ''] || '');
+    setSaveCodingDraftError(null);
+    setSubmitCodeError(null);
+  };
+
+  useEffect(() => {
+    if (codingSession?.questions && codingSession.questions.length > 0 && !codingLanguage) {
+      goToCodingQuestion(codingSession.currentQuestionIndex ?? 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codingSession?.questions?.length]);
+
+  const currentCodingQuestion = codingSession?.questions?.[codingViewIndex];
+
+  const handleSaveCodingDraft = async () => {
+    if (!token || !currentCodingQuestion || !codingLanguage.trim() || !codingSourceCode.trim()) return;
+    setSavingCodingDraft(true);
+    setSaveCodingDraftError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.savePublicCodingDraft(
+        token,
+        currentCodingQuestion.id,
+        codingLanguage,
+        codingSourceCode
+      );
+      setCodingSession(response.data);
+    } catch (err: any) {
+      setSaveCodingDraftError(err.message || 'Failed to save draft');
+    } finally {
+      setSavingCodingDraft(false);
+    }
+  };
+
+  const handleSubmitCode = async () => {
+    if (!token || !currentCodingQuestion || !codingLanguage.trim() || !codingSourceCode.trim()) return;
+    if (!window.confirm('Submit this code? You will have a limited number of attempts.')) return;
+    setSubmittingCode(true);
+    setSubmitCodeError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.submitPublicCodingSubmission(
+        token,
+        currentCodingQuestion.id,
+        codingLanguage,
+        codingSourceCode
+      );
+      setCodingSession(response.data);
+    } catch (err: any) {
+      setSubmitCodeError(err.message || 'Failed to submit code');
+    } finally {
+      setSubmittingCode(false);
     }
   };
 
@@ -529,6 +620,112 @@ const EmployerInterviewInvitePage: React.FC = () => {
                         )}
                       </div>
                     ) : null}
+                  </div>
+                )}
+
+                {!codingSessionLoading && !codingSessionError && codingSession?.configured !== false && (codingSession?.questions?.length ?? 0) > 0 && (
+                  <div className="mt-6 pt-4 border-t border-mentor-border text-left">
+                    <h3 className="section-title text-base mb-1">Coding Assessment</h3>
+                    <p className="text-xs text-mentor-text-muted mb-3">
+                      Execution is not available yet — your code is saved for review. No fake "Run" button.
+                    </p>
+
+                    {currentCodingQuestion && (
+                      <div className="space-y-3">
+                        <p className="text-xs text-mentor-text-muted">
+                          Question {codingViewIndex + 1} of {codingSession!.questions!.length}
+                        </p>
+                        <div className="surface-muted p-3">
+                          <p className="text-sm font-semibold text-mentor-text">{currentCodingQuestion.title}</p>
+                          <p className="text-xs text-mentor-text-muted capitalize mt-1">{currentCodingQuestion.difficulty}</p>
+                          <p className="text-sm text-mentor-text mt-2 whitespace-pre-wrap">{currentCodingQuestion.description}</p>
+                          {currentCodingQuestion.constraints.length > 0 && (
+                            <p className="text-xs text-mentor-text-muted mt-2">Constraints: {currentCodingQuestion.constraints.join('; ')}</p>
+                          )}
+                          {currentCodingQuestion.examples.length > 0 && (
+                            <div className="mt-2 space-y-1.5">
+                              {currentCodingQuestion.examples.map((ex, i) => (
+                                <div key={i} className="text-xs text-mentor-text-secondary font-mono">
+                                  <p>Input: {ex.input}</p>
+                                  <p>Output: {ex.output}</p>
+                                  {ex.explanation && <p className="text-mentor-text-muted">{ex.explanation}</p>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={codingLanguage}
+                            onChange={(e) => {
+                              setCodingLanguage(e.target.value);
+                              const starter = (currentCodingQuestion.starterCode as any)?.[e.target.value];
+                              if (!codingSourceCode.trim() && starter) setCodingSourceCode(starter);
+                            }}
+                            className="input"
+                          >
+                            {currentCodingQuestion.supportedLanguages.map((lang) => (
+                              <option key={lang} value={lang}>
+                                {lang}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="text-xs text-mentor-text-muted">
+                            Attempts used: {currentCodingQuestion.progress.submittedAttemptCount} / {currentCodingQuestion.progress.maxAttempts}
+                          </span>
+                        </div>
+
+                        <textarea
+                          value={codingSourceCode}
+                          onChange={(e) => setCodingSourceCode(e.target.value)}
+                          rows={12}
+                          maxLength={50000}
+                          placeholder="Write your code here..."
+                          className="input w-full font-mono text-xs"
+                          spellCheck={false}
+                        />
+
+                        {saveCodingDraftError && <p className="text-sm text-mentor-error">{saveCodingDraftError}</p>}
+                        {submitCodeError && <p className="text-sm text-mentor-error">{submitCodeError}</p>}
+                        <div className="flex items-center gap-2">
+                          <button onClick={handleSaveCodingDraft} disabled={savingCodingDraft} className="btn btn-secondary">
+                            {savingCodingDraft ? 'Saving...' : 'Save Draft'}
+                          </button>
+                          <button
+                            onClick={handleSubmitCode}
+                            disabled={submittingCode || currentCodingQuestion.progress.submittedAttemptCount >= currentCodingQuestion.progress.maxAttempts}
+                            className="btn btn-primary"
+                          >
+                            {submittingCode ? 'Submitting...' : 'Submit Code'}
+                          </button>
+                        </div>
+
+                        {currentCodingQuestion.submissions.length > 0 && (
+                          <div className="pt-2 border-t border-mentor-border">
+                            <p className="text-xs font-medium text-mentor-text mb-1">Submission History</p>
+                            {currentCodingQuestion.submissions.map((s) => (
+                              <p key={s.attemptNumber} className="text-xs text-mentor-text-secondary">
+                                Attempt {s.attemptNumber} &middot; {s.language} &middot; {s.submittedAt ? new Date(s.submittedAt).toLocaleString() : ''}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-2">
+                          <button onClick={() => goToCodingQuestion(codingViewIndex - 1)} disabled={codingViewIndex === 0} className="btn btn-secondary">
+                            Previous
+                          </button>
+                          <button
+                            onClick={() => goToCodingQuestion(codingViewIndex + 1)}
+                            disabled={codingViewIndex >= (codingSession!.questions!.length - 1)}
+                            className="btn btn-secondary"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

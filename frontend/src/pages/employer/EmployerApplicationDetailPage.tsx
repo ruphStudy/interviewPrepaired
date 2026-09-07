@@ -72,6 +72,8 @@ import employerApi, {
   OrganizationKnowledgeBase,
   EmployerHiringKnowledgeGroundedEvaluation,
   EmployerInterviewKnowledgeAnalytics,
+  EmployerCodingQuestionSummary,
+  EmployerCodingAssessmentSession,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -850,6 +852,14 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [savingKnowledgeConfig, setSavingKnowledgeConfig] = useState(false);
   const [saveKnowledgeConfigError, setSaveKnowledgeConfigError] = useState<string | null>(null);
 
+  const [codingSession, setCodingSession] = useState<EmployerCodingAssessmentSession | null>(null);
+  const [codingSessionLoading, setCodingSessionLoading] = useState(false);
+  const [codingSessionError, setCodingSessionError] = useState<string | null>(null);
+  const [readyCodingQuestions, setReadyCodingQuestions] = useState<EmployerCodingQuestionSummary[]>([]);
+  const [selectedCodingQuestionIds, setSelectedCodingQuestionIds] = useState<string[]>([]);
+  const [savingCodingSession, setSavingCodingSession] = useState(false);
+  const [saveCodingSessionError, setSaveCodingSessionError] = useState<string | null>(null);
+
   const [sessionQuestions, setSessionQuestions] = useState<EmployerInterviewSessionQuestions | null>(null);
   const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
   const [sessionQuestionsError, setSessionQuestionsError] = useState<string | null>(null);
@@ -1433,6 +1443,50 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setSaveKnowledgeConfigError(err.message || 'Failed to save organization knowledge configuration');
     } finally {
       setSavingKnowledgeConfig(false);
+    }
+  };
+
+  const fetchCodingSession = useCallback(async () => {
+    if (!organizationId || !interviewSession) return;
+    setCodingSessionLoading(true);
+    setCodingSessionError(null);
+    try {
+      const response = await employerApi.getEmployerCodingAssessmentSession(organizationId, interviewSession.id);
+      setCodingSession(response.data);
+    } catch (err: any) {
+      setCodingSessionError(err.message || 'Failed to load coding assessment session');
+    } finally {
+      setCodingSessionLoading(false);
+    }
+  }, [organizationId, interviewSession]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && interviewSession) {
+      fetchCodingSession();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canView, interviewSession?.id]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canManage && interviewSession) {
+      employerApi
+        .listEmployerCodingQuestions(organizationId!, { status: 'ready' })
+        .then((res) => setReadyCodingQuestions(res.data.questions))
+        .catch(() => {});
+    }
+  }, [isSyncing, activeOrganization, canManage, interviewSession?.id, organizationId]);
+
+  const handleSaveCodingSession = async () => {
+    if (!organizationId || !interviewSession) return;
+    setSavingCodingSession(true);
+    setSaveCodingSessionError(null);
+    try {
+      const response = await employerApi.createOrUpdateEmployerCodingAssessmentSession(organizationId, interviewSession.id, selectedCodingQuestionIds);
+      setCodingSession(response.data);
+    } catch (err: any) {
+      setSaveCodingSessionError(err.message || 'Failed to save coding assessment');
+    } finally {
+      setSavingCodingSession(false);
     }
   };
 
@@ -5631,6 +5685,106 @@ const EmployerApplicationDetailPage: React.FC = () => {
                       </div>
                     );
                   })()
+                )}
+              </div>
+            )}
+
+            {interviewSession && (
+              <div className="card mt-6">
+                <h2 className="section-title flex items-center gap-2 mb-1">Coding Assessment</h2>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Optional coding problems for this hiring interview. No execution yet — candidate code is saved for later review.
+                </p>
+
+                {codingSessionLoading ? (
+                  <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                ) : codingSessionError ? (
+                  <div>
+                    <p className="text-sm text-mentor-error mb-2">{codingSessionError}</p>
+                    <button onClick={fetchCodingSession} className="btn btn-secondary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : !codingSession || !codingSession.configured ? (
+                  <div>
+                    {canManage ? (
+                      <>
+                        <p className="text-sm text-mentor-text-secondary mb-3">No coding assessment configured yet.</p>
+                        {readyCodingQuestions.length === 0 ? (
+                          <p className="text-xs text-mentor-text-muted">
+                            No READY coding questions available.{' '}
+                            <Link to={`/organizations/${organizationId}/employer/coding-questions`} className="underline">
+                              Create one
+                            </Link>
+                            .
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {readyCodingQuestions.map((q) => (
+                              <label key={q.id} className="flex items-center gap-2 text-sm text-mentor-text">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCodingQuestionIds.includes(q.id)}
+                                  onChange={(e) =>
+                                    setSelectedCodingQuestionIds((prev) =>
+                                      e.target.checked ? [...prev, q.id] : prev.filter((id) => id !== q.id)
+                                    )
+                                  }
+                                />
+                                {q.title}
+                                <span className="text-xs text-mentor-text-muted capitalize">({q.difficulty})</span>
+                              </label>
+                            ))}
+                            {saveCodingSessionError && <p className="text-sm text-mentor-error">{saveCodingSessionError}</p>}
+                            <div>
+                              <button
+                                onClick={handleSaveCodingSession}
+                                disabled={savingCodingSession || selectedCodingQuestionIds.length === 0}
+                                className="btn btn-primary px-3 py-1.5 text-xs"
+                              >
+                                {savingCodingSession ? 'Creating...' : 'Create Coding Assessment'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm text-mentor-text-secondary">No coding assessment configured for this interview.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 flex-wrap text-sm">
+                      <span className="badge badge-neutral capitalize">{codingSession.status?.replace(/_/g, ' ')}</span>
+                      <span className="text-mentor-text-secondary">
+                        {codingSession.totalQuestions} question{codingSession.totalQuestions === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    {(codingSession.questions ?? []).map((q) => (
+                      <div key={q.codingQuestionId} className="surface-muted p-3">
+                        <p className="text-sm font-medium text-mentor-text">
+                          {q.title} <span className="text-xs text-mentor-text-muted capitalize">({q.difficulty})</span>
+                        </p>
+                        {q.submissions.length === 0 ? (
+                          <p className="text-xs text-mentor-text-muted mt-1">No submissions yet.</p>
+                        ) : (
+                          <div className="mt-2 space-y-2">
+                            {q.submissions.map((s) => (
+                              <div key={s.attemptNumber} className="text-xs">
+                                <p className="text-mentor-text-secondary">
+                                  Attempt {s.attemptNumber} &middot; {s.language} &middot;{' '}
+                                  {s.submittedAt ? new Date(s.submittedAt).toLocaleString() : ''}
+                                </p>
+                                <pre className="surface-muted p-2 mt-1 font-mono whitespace-pre-wrap text-[11px] text-mentor-text max-h-48 overflow-y-auto">
+                                  {s.sourceCode}
+                                </pre>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             )}

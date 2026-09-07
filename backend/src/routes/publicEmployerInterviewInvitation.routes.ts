@@ -126,4 +126,39 @@ router.post(
   publicEmployerInterviewInvitationController.submitScenarioResponse
 );
 
+// (30B) Coding assessment session — NO execution. `codingQuestionId` is a
+// Mongo ID; source code is opaque untrusted text bounded server-side.
+const codingQuestionIdValidation = [param('codingQuestionId').isMongoId().withMessage('Invalid coding question ID')];
+const codingSourceValidation = [
+  body('language').isString().trim().isLength({ min: 1, max: 30 }).withMessage('language is required'),
+  body('sourceCode').isString().isLength({ min: 1, max: 50_000 }).withMessage('sourceCode is required (max 50000 characters)'),
+];
+
+// GET /api/v1/public/employer-interview-invitations/:token/session/coding
+// (30B) — candidate-safe coding question list + progress. Starts the
+// session idempotently on first access. Fully public.
+router.get('/:token/session/coding', ...tokenValidation, validate, publicEmployerInterviewInvitationController.getCodingSession);
+
+// PUT /api/v1/public/employer-interview-invitations/:token/session/coding/:codingQuestionId/draft
+// (30B) — saves/upserts the candidate's current draft. NO execution.
+router.put(
+  '/:token/session/coding/:codingQuestionId/draft',
+  ...tokenValidation,
+  ...codingQuestionIdValidation,
+  ...codingSourceValidation,
+  validate,
+  publicEmployerInterviewInvitationController.saveCodingDraft
+);
+
+// POST /api/v1/public/employer-interview-invitations/:token/session/coding/:codingQuestionId/submit
+// (30B) — persists an immutable submitted attempt. NO execution yet (30C).
+router.post(
+  '/:token/session/coding/:codingQuestionId/submit',
+  ...tokenValidation,
+  ...codingQuestionIdValidation,
+  ...codingSourceValidation,
+  validate,
+  publicEmployerInterviewInvitationController.submitCodingSubmission
+);
+
 export default router;

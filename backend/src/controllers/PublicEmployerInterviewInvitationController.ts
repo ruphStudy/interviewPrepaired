@@ -94,6 +94,29 @@ export class PublicEmployerInterviewInvitationController {
     const step = await publicEmployerInterviewInvitationService.submitScenarioResponse(token, scenarioId, answerText);
     res.status(200).json(successResponse('Scenario response submitted successfully', step));
   });
+
+  /** GET /api/v1/public/employer-interview-invitations/:token/session/coding (30B) */
+  public getCodingSession = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token } = req.params;
+    const session = await publicEmployerInterviewInvitationService.getCodingSession(token);
+    res.status(200).json(successResponse('Coding session retrieved successfully', session));
+  });
+
+  /** PUT /api/v1/public/employer-interview-invitations/:token/session/coding/:codingQuestionId/draft (30B) */
+  public saveCodingDraft = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token, codingQuestionId } = req.params;
+    const { language, sourceCode } = req.body;
+    const session = await publicEmployerInterviewInvitationService.saveCodingDraft(token, codingQuestionId, language, sourceCode);
+    res.status(200).json(successResponse('Draft saved successfully', session));
+  });
+
+  /** POST /api/v1/public/employer-interview-invitations/:token/session/coding/:codingQuestionId/submit (30B) */
+  public submitCodingSubmission = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token, codingQuestionId } = req.params;
+    const { language, sourceCode } = req.body;
+    const session = await publicEmployerInterviewInvitationService.submitCodingSubmission(token, codingQuestionId, language, sourceCode);
+    res.status(200).json(successResponse('Code submitted successfully', session));
+  });
 }
 
 export default new PublicEmployerInterviewInvitationController();

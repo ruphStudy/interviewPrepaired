@@ -73,6 +73,9 @@ import organizationKnowledgeBaseController from '../controllers/OrganizationKnow
 import organizationKnowledgeDocumentController from '../controllers/OrganizationKnowledgeDocumentController';
 import organizationKnowledgeIndexController from '../controllers/OrganizationKnowledgeIndexController';
 import employerInterviewKnowledgeConfigController from '../controllers/EmployerInterviewKnowledgeConfigController';
+import employerCodingQuestionController from '../controllers/EmployerCodingQuestionController';
+import employerCodingTestCaseController from '../controllers/EmployerCodingTestCaseController';
+import employerCodingAssessmentSessionController from '../controllers/EmployerCodingAssessmentSessionController';
 import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
 import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
@@ -4004,6 +4007,171 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
   organizationKnowledgeIndexController.search
+);
+
+// ---- Coding Question Foundation (30A) — job-level/interview-linked coding
+// problem definitions. NO execution, NO AI. Hidden test cases are
+// employer-internal only, never candidate/public-reachable. ----
+const codingQuestionIdValidation = [param('codingQuestionId').isMongoId().withMessage('Invalid coding question ID')];
+const codingTestCaseIdValidation = [param('testCaseId').isMongoId().withMessage('Invalid test case ID')];
+
+const codingQuestionCreateValidation = [
+  body('jobId').isMongoId().withMessage('Invalid job ID'),
+  body('applicationId').optional().isMongoId().withMessage('Invalid application ID'),
+  body('interviewId').optional().isMongoId().withMessage('Invalid interview ID'),
+  body('title').isString().trim().isLength({ min: 1, max: 200 }).withMessage('title is required (max 200 characters)'),
+  body('description').isString().trim().isLength({ min: 1, max: 8000 }).withMessage('description is required (max 8000 characters)'),
+  body('difficulty').isIn(['easy', 'medium', 'hard']).withMessage('Invalid difficulty'),
+  body('supportedLanguages').isArray({ min: 1 }).withMessage('At least one supported language is required'),
+  body('timeLimitMs').isInt({ min: 500, max: 10_000 }).withMessage('timeLimitMs must be between 500 and 10000'),
+  body('memoryLimitMb').isInt({ min: 16, max: 1024 }).withMessage('memoryLimitMb must be between 16 and 1024'),
+];
+
+const codingQuestionUpdateValidation = [
+  body('title').optional().isString().trim().isLength({ min: 1, max: 200 }).withMessage('title must be 1-200 characters'),
+  body('description').optional().isString().trim().isLength({ min: 1, max: 8000 }).withMessage('description must be 1-8000 characters'),
+  body('difficulty').optional().isIn(['easy', 'medium', 'hard']).withMessage('Invalid difficulty'),
+  body('supportedLanguages').optional().isArray({ min: 1 }).withMessage('At least one supported language is required'),
+  body('timeLimitMs').optional().isInt({ min: 500, max: 10_000 }).withMessage('timeLimitMs must be between 500 and 10000'),
+  body('memoryLimitMb').optional().isInt({ min: 16, max: 1024 }).withMessage('memoryLimitMb must be between 16 and 1024'),
+];
+
+const codingTestCaseValidation = [
+  body('type').isIn(['sample', 'hidden']).withMessage('type must be "sample" or "hidden"'),
+  body('input').isString().isLength({ min: 1, max: 4000 }).withMessage('input is required (max 4000 characters)'),
+  body('expectedOutput').isString().isLength({ min: 1, max: 4000 }).withMessage('expectedOutput is required (max 4000 characters)'),
+  body('weight').optional().isFloat({ min: 0, max: 100 }).withMessage('weight must be between 0 and 100'),
+];
+
+router.post(
+  '/:organizationId/coding-questions',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionCreateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingQuestionController.createQuestion
+);
+
+router.get(
+  '/:organizationId/coding-questions',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCodingQuestionController.listQuestions
+);
+
+router.get(
+  '/:organizationId/coding-questions/:codingQuestionId',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCodingQuestionController.getQuestion
+);
+
+router.patch(
+  '/:organizationId/coding-questions/:codingQuestionId',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  ...codingQuestionUpdateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingQuestionController.updateQuestion
+);
+
+router.post(
+  '/:organizationId/coding-questions/:codingQuestionId/ready',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingQuestionController.markReady
+);
+
+router.post(
+  '/:organizationId/coding-questions/:codingQuestionId/archive',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingQuestionController.archiveQuestion
+);
+
+router.get(
+  '/:organizationId/coding-questions/:codingQuestionId/test-cases',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCodingTestCaseController.listTestCases
+);
+
+router.post(
+  '/:organizationId/coding-questions/:codingQuestionId/test-cases',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  ...codingTestCaseValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingTestCaseController.addTestCase
+);
+
+router.patch(
+  '/:organizationId/coding-questions/:codingQuestionId/test-cases/:testCaseId',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  ...codingTestCaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingTestCaseController.updateTestCase
+);
+
+router.delete(
+  '/:organizationId/coding-questions/:codingQuestionId/test-cases/:testCaseId',
+  protect,
+  ...organizationIdValidation,
+  ...codingQuestionIdValidation,
+  ...codingTestCaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingTestCaseController.archiveTestCase
+);
+
+// ---- Coding Assessment Session (30B, internal/employer side) — attaches
+// READY coding questions to one exact hiring interview. NO execution. ----
+const codingSessionCreateValidation = [
+  body('codingQuestionIds').isArray({ min: 1, max: 5 }).withMessage('codingQuestionIds must contain 1-5 entries'),
+  body('codingQuestionIds.*').isMongoId().withMessage('Invalid coding question ID'),
+];
+
+router.post(
+  '/:organizationId/interviews/:interviewId/coding-session',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...codingSessionCreateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingAssessmentSessionController.createOrUpdateSession
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/coding-session',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCodingAssessmentSessionController.getSession
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----
