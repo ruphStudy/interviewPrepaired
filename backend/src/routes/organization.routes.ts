@@ -84,6 +84,8 @@ import employerAssessmentProctoringEventController from '../controllers/Employer
 import employerAssessmentIntegrityController from '../controllers/EmployerAssessmentIntegrityController';
 import employerHiringWorkflowRuleController from '../controllers/EmployerHiringWorkflowRuleController';
 import employerHiringWorkflowController from '../controllers/EmployerHiringWorkflowController';
+import employerIntegrationConnectionController from '../controllers/EmployerIntegrationConnectionController';
+import employerInterviewCalendarEventController from '../controllers/EmployerInterviewCalendarEventController';
 import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
 import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
@@ -4402,6 +4404,174 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringWorkflowController.listExecutions
+);
+
+// ---- External Integration Foundation (31D) + Webhooks/ATS/Calendar (31E)
+// — provider-neutral. NO hardcoded vendor credentials, NO fake connectivity.
+// Only `webhook`/`generic` (and `ats`/`custom`) genuinely deliver today. ----
+const connectionIdValidation = [param('connectionId').isMongoId().withMessage('Invalid connection ID')];
+const deliveryIdValidation = [param('deliveryId').isMongoId().withMessage('Invalid delivery ID')];
+const integrationConnectionValidation = [
+  body('type').isIn(['webhook', 'ats', 'calendar']).withMessage('Invalid integration type'),
+  body('provider')
+    .isIn(['generic', 'greenhouse', 'lever', 'workday', 'google_calendar', 'microsoft_calendar', 'custom'])
+    .withMessage('Invalid integration provider'),
+  body('name').isString().trim().isLength({ min: 1, max: 200 }).withMessage('name is required (max 200 characters)'),
+  body('config').optional().isObject().withMessage('config must be an object'),
+];
+const integrationConnectionUpdateValidation = [
+  body('name').optional().isString().trim().isLength({ min: 1, max: 200 }).withMessage('name must be 1-200 characters'),
+  body('config').optional().isObject().withMessage('config must be an object'),
+  body('regenerateSecret').optional().isBoolean().withMessage('regenerateSecret must be a boolean'),
+];
+
+router.post(
+  '/:organizationId/integrations',
+  protect,
+  ...organizationIdValidation,
+  ...integrationConnectionValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  employerIntegrationConnectionController.createConnection
+);
+
+router.get(
+  '/:organizationId/integrations',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerIntegrationConnectionController.listConnections
+);
+
+router.get(
+  '/:organizationId/integrations/:connectionId',
+  protect,
+  ...organizationIdValidation,
+  ...connectionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerIntegrationConnectionController.getConnection
+);
+
+router.patch(
+  '/:organizationId/integrations/:connectionId',
+  protect,
+  ...organizationIdValidation,
+  ...connectionIdValidation,
+  ...integrationConnectionUpdateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  employerIntegrationConnectionController.updateConnection
+);
+
+router.post(
+  '/:organizationId/integrations/:connectionId/disable',
+  protect,
+  ...organizationIdValidation,
+  ...connectionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  employerIntegrationConnectionController.disableConnection
+);
+
+router.post(
+  '/:organizationId/integrations/:connectionId/validate',
+  protect,
+  ...organizationIdValidation,
+  ...connectionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  employerIntegrationConnectionController.validateConnection
+);
+
+router.post(
+  '/:organizationId/integrations/:connectionId/test',
+  protect,
+  ...organizationIdValidation,
+  ...connectionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  employerIntegrationConnectionController.testConnection
+);
+
+router.get(
+  '/:organizationId/integrations/:connectionId/deliveries',
+  protect,
+  ...organizationIdValidation,
+  ...connectionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerIntegrationConnectionController.listDeliveries
+);
+
+router.post(
+  '/:organizationId/integrations/:connectionId/deliveries/:deliveryId/retry',
+  protect,
+  ...organizationIdValidation,
+  ...connectionIdValidation,
+  ...deliveryIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  employerIntegrationConnectionController.retryDelivery
+);
+
+router.post(
+  '/:organizationId/integrations/process-deliveries',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  employerIntegrationConnectionController.processPendingDeliveries
+);
+
+// ---- Interview Calendar Scheduling (31E) — local record always useful;
+// never claims a provider sync unless it genuinely happened. ----
+const calendarEventValidation = [
+  body('startsAt').isISO8601().withMessage('startsAt must be a valid date'),
+  body('endsAt').isISO8601().withMessage('endsAt must be a valid date'),
+  body('timezone').isString().trim().isLength({ min: 1, max: 100 }).withMessage('timezone is required'),
+];
+
+router.post(
+  '/:organizationId/interviews/:interviewId/calendar-event',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...calendarEventValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewCalendarEventController.scheduleEvent
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/calendar-event',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewCalendarEventController.getEvent
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/calendar-event/cancel',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewCalendarEventController.cancelEvent
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/calendar-event/ics',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewCalendarEventController.getIcs
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

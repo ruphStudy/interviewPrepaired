@@ -18,6 +18,7 @@ import { OrganizationType, OrganizationStatus } from '../constants/organization'
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
+import { employerIntegrationEventService } from './EmployerIntegrationEventService';
 import { ApiError } from '../utils/ApiError';
 
 const CALCULATION_VERSION = 'hiring-assessment-finalization-v1';
@@ -213,6 +214,17 @@ export class EmployerHiringAssessmentFinalizationService {
     } catch (workflowError) {
       console.error('[EmployerHiringAssessmentFinalizationService] Workflow trigger evaluation failed (non-fatal)', workflowError);
     }
+
+    // Best-effort (31D) — emitEvent never throws.
+    await employerIntegrationEventService.emitEvent({
+      organizationId: organization._id,
+      eventType: 'interview_finalized',
+      applicationId: application._id,
+      jobId: artifacts.interview.employerJobId,
+      interviewId: artifacts.interview._id,
+      sourceArtifactType: 'EmployerHiringAssessmentFinalization',
+      sourceArtifactId: doc._id.toString(),
+    });
 
     return this.toDetail(doc);
   }

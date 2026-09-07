@@ -24,6 +24,7 @@ import { employerCodingExecutionService } from './EmployerCodingExecutionService
 import { employerAssessmentProctoringEventService, RecordProctoringEventInput } from './EmployerAssessmentProctoringEventService';
 import { employerAssessmentProctoringConfigService } from './EmployerAssessmentProctoringConfigService';
 import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
+import { employerIntegrationEventService } from './EmployerIntegrationEventService';
 import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { employerJobApplicationService } from './EmployerJobApplicationService';
@@ -190,6 +191,17 @@ export class PublicEmployerInterviewInvitationService {
         { $set: { interviewId: interview._id } }
       );
     }
+
+    // Best-effort (31D) — emitEvent never throws; de-duplicated by (eventType, sourceArtifact) for a retried/concurrent create.
+    await employerIntegrationEventService.emitEvent({
+      organizationId: chain.organization._id,
+      eventType: 'interview_started',
+      applicationId: invitation.applicationId,
+      jobId: invitation.jobId,
+      interviewId: interview._id,
+      sourceArtifactType: 'Interview',
+      sourceArtifactId: interview._id.toString(),
+    });
 
     return this.toSessionDetail(interview, chain);
   }
@@ -459,6 +471,17 @@ export class PublicEmployerInterviewInvitationService {
       console.error('[PublicEmployerInterviewInvitationService] Best-effort application status sync to "interview" failed', error);
     }
 
+    // Best-effort (31D) — emitEvent never throws.
+    await employerIntegrationEventService.emitEvent({
+      organizationId: chain.organization._id,
+      eventType: 'interview_completed',
+      applicationId: invitation.applicationId,
+      jobId: invitation.jobId,
+      interviewId: completed._id,
+      sourceArtifactType: 'Interview',
+      sourceArtifactId: `${completed._id.toString()}:completed`,
+    });
+
     return this.toCompletionDetail(completed);
   }
 
@@ -627,6 +650,16 @@ export class PublicEmployerInterviewInvitationService {
       } catch (workflowError) {
         console.error('[PublicEmployerInterviewInvitationService] Workflow trigger evaluation failed (non-fatal)', workflowError);
       }
+
+      // Best-effort (31D) — emitEvent never throws.
+      await employerIntegrationEventService.emitEvent({
+        organizationId: session.organizationId,
+        eventType: 'scenario_completed',
+        applicationId: session.applicationId,
+        interviewId: session.interviewId,
+        sourceArtifactType: 'EmployerInterviewScenarioSession',
+        sourceArtifactId: session._id.toString(),
+      });
     }
 
     return this.toScenarioStepDetail(scenario, questionSet, session);
@@ -762,6 +795,16 @@ export class PublicEmployerInterviewInvitationService {
       } catch (workflowError) {
         console.error('[PublicEmployerInterviewInvitationService] Workflow trigger evaluation failed (non-fatal)', workflowError);
       }
+
+      // Best-effort (31D) — emitEvent never throws.
+      await employerIntegrationEventService.emitEvent({
+        organizationId: session.organizationId,
+        eventType: 'coding_completed',
+        applicationId: session.applicationId,
+        interviewId: session.interviewId,
+        sourceArtifactType: 'EmployerCodingAssessmentSession',
+        sourceArtifactId: session._id.toString(),
+      });
     }
 
     return this.toCandidateCodingSessionDetail(session);

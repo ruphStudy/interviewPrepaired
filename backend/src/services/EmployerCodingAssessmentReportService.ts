@@ -17,6 +17,7 @@ import { OrganizationType, OrganizationStatus } from '../constants/organization'
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
+import { employerIntegrationEventService } from './EmployerIntegrationEventService';
 import { ApiError } from '../utils/ApiError';
 
 const REPORT_VERSION = 'coding-assessment-report-v1';
@@ -166,6 +167,17 @@ export class EmployerCodingAssessmentReportService {
     } catch (workflowError) {
       console.error('[EmployerCodingAssessmentReportService] Workflow trigger evaluation failed (non-fatal)', workflowError);
     }
+
+    // Best-effort (31D) — emitEvent never throws.
+    await employerIntegrationEventService.emitEvent({
+      organizationId: organization._id,
+      eventType: 'report_ready',
+      applicationId: interview.employerApplicationId,
+      interviewId: interview._id,
+      sourceArtifactType: 'EmployerCodingAssessmentReport',
+      sourceArtifactId: doc!._id.toString(),
+      data: { reportType: 'coding' },
+    });
 
     return this.toDetail(doc!);
   }

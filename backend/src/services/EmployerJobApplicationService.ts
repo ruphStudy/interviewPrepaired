@@ -18,6 +18,7 @@ import {
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
+import { employerIntegrationEventService } from './EmployerIntegrationEventService';
 import { ApiError } from '../utils/ApiError';
 
 const MAX_SEARCH_MATCH_IDS = 500;
@@ -215,6 +216,16 @@ export class EmployerJobApplicationService {
         occurredAt: application.appliedAt,
       });
 
+      // Best-effort (31D) — emitEvent never throws; a failure here never affects the primary application-creation result.
+      await employerIntegrationEventService.emitEvent({
+        organizationId: organization._id,
+        eventType: 'application_created',
+        applicationId: application._id as Types.ObjectId,
+        jobId: application.jobId,
+        sourceArtifactType: 'EmployerJobApplication',
+        sourceArtifactId: application._id.toString(),
+      });
+
       return this.toDetail(application.toObject(), job.toObject(), candidate.toObject());
     } catch (error: any) {
       if (error?.code === 11000) {
@@ -356,6 +367,17 @@ export class EmployerJobApplicationService {
       toStatus: targetStatus,
       actor,
       occurredAt: new Date(),
+    });
+
+    // Best-effort (31D) — emitEvent never throws; a failure here never affects the primary status-transition result.
+    await employerIntegrationEventService.emitEvent({
+      organizationId: organization._id,
+      eventType: 'application_status_changed',
+      applicationId: application._id as Types.ObjectId,
+      jobId: application.jobId,
+      sourceArtifactType: 'EmployerJobApplication',
+      sourceArtifactId: `${application._id.toString()}:${targetStatus}`,
+      data: { status: targetStatus },
     });
 
     const [job, candidate] = await this.getReferencedJobAndCandidate(organization._id, application.jobId, application.candidateId);

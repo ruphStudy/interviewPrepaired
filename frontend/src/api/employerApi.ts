@@ -4027,6 +4027,109 @@ export interface EmployerHiringWorkflowExecution {
 export type ListEmployerHiringWorkflowExecutionsResponse = ApiEnvelope<{ executions: EmployerHiringWorkflowExecution[] }>;
 export type EvaluateEmployerHiringWorkflowResponse = ApiEnvelope<{ evaluated: number; results: unknown[] }>;
 
+// ============================================================================
+// External Integration Foundation (Sprint 31D) + Webhooks/ATS/Calendar
+// (Sprint 31E) — provider-neutral. NO hardcoded vendor credentials. Only
+// `webhook`/`generic` (and `ats`/`custom`) genuinely deliver today; every
+// other provider value is honestly reported as not-yet-implemented, never
+// faked. Secrets are NEVER returned except once, at creation/regeneration.
+// ============================================================================
+
+export type EmployerIntegrationType = 'webhook' | 'ats' | 'calendar';
+export type EmployerIntegrationProvider =
+  | 'generic'
+  | 'greenhouse'
+  | 'lever'
+  | 'workday'
+  | 'google_calendar'
+  | 'microsoft_calendar'
+  | 'custom';
+export type EmployerIntegrationConnectionStatus = 'active' | 'disabled' | 'error';
+
+export interface EmployerIntegrationConnectionConfig {
+  baseUrl?: string;
+  externalAccountId?: string;
+  calendarId?: string;
+  enabledEventTypes?: string[];
+}
+
+export interface EmployerIntegrationConnection {
+  id: string;
+  type: EmployerIntegrationType;
+  provider: EmployerIntegrationProvider;
+  name: string;
+  status: EmployerIntegrationConnectionStatus;
+  config: EmployerIntegrationConnectionConfig;
+  hasSigningSecret: boolean;
+  connectionVersion: string;
+  lastValidatedAt?: string;
+  lastError?: string;
+  mappingCount?: number;
+  createdAt: string;
+  updatedAt: string;
+  /** Only ever present in the exact create/regenerate response — never persisted client-side, never shown again. */
+  signingSecret?: string;
+}
+
+export interface EmployerIntegrationConnectionInput {
+  type: EmployerIntegrationType;
+  provider: EmployerIntegrationProvider;
+  name: string;
+  config?: { baseUrl?: string; externalAccountId?: string; calendarId?: string; enabledEventTypes?: string[] };
+  regenerateSecret?: boolean;
+}
+
+export type CreateEmployerIntegrationConnectionResponse = ApiEnvelope<EmployerIntegrationConnection>;
+export type ListEmployerIntegrationConnectionsResponse = ApiEnvelope<{ connections: EmployerIntegrationConnection[] }>;
+export type GetEmployerIntegrationConnectionResponse = ApiEnvelope<EmployerIntegrationConnection>;
+export type UpdateEmployerIntegrationConnectionResponse = ApiEnvelope<EmployerIntegrationConnection>;
+export type DisableEmployerIntegrationConnectionResponse = ApiEnvelope<EmployerIntegrationConnection>;
+export type ValidateEmployerIntegrationConnectionResponse = ApiEnvelope<EmployerIntegrationConnection & { available: boolean; reason?: string }>;
+export type TestEmployerIntegrationConnectionResponse = ApiEnvelope<{ success: boolean; responseStatus?: number; errorMessage?: string }>;
+
+export type EmployerIntegrationDeliveryStatus = 'pending' | 'processing' | 'delivered' | 'failed' | 'dead_letter';
+
+export interface EmployerIntegrationDelivery {
+  id: string;
+  connectionId: string;
+  eventType: string;
+  status: EmployerIntegrationDeliveryStatus;
+  attemptCount: number;
+  nextAttemptAt?: string;
+  lastAttemptAt?: string;
+  deliveredAt?: string;
+  responseStatus?: number;
+  errorMessage?: string;
+  createdAt: string;
+}
+
+export type ListEmployerIntegrationDeliveriesResponse = ApiEnvelope<{ deliveries: EmployerIntegrationDelivery[] }>;
+export type RetryEmployerIntegrationDeliveryResponse = ApiEnvelope<EmployerIntegrationDelivery>;
+
+export type EmployerInterviewCalendarEventStatus = 'scheduled' | 'cancelled' | 'sync_pending' | 'synced' | 'sync_failed';
+
+export interface EmployerInterviewCalendarEvent {
+  scheduled: boolean;
+  startsAt?: string;
+  endsAt?: string;
+  timezone?: string;
+  title?: string;
+  status?: EmployerInterviewCalendarEventStatus;
+  provider?: string;
+  lastSyncedAt?: string;
+  errorMessage?: string;
+}
+
+export interface ScheduleEmployerInterviewCalendarEventInput {
+  startsAt: string;
+  endsAt: string;
+  timezone: string;
+}
+
+export type ScheduleEmployerInterviewCalendarEventResponse = ApiEnvelope<EmployerInterviewCalendarEvent>;
+export type GetEmployerInterviewCalendarEventResponse = ApiEnvelope<EmployerInterviewCalendarEvent>;
+export type CancelEmployerInterviewCalendarEventResponse = ApiEnvelope<EmployerInterviewCalendarEvent>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -6776,6 +6879,173 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to evaluate workflow');
+    }
+  }
+
+  // ---- External Integration Foundation (31D) + Webhooks/ATS/Calendar (31E) ----
+
+  async createEmployerIntegrationConnection(
+    organizationId: string,
+    input: EmployerIntegrationConnectionInput
+  ): Promise<CreateEmployerIntegrationConnectionResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerIntegrationConnectionResponse>(`/organizations/${organizationId}/integrations`, input);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create integration');
+    }
+  }
+
+  async listEmployerIntegrationConnections(organizationId: string): Promise<ListEmployerIntegrationConnectionsResponse> {
+    try {
+      const response = await this.api.get<ListEmployerIntegrationConnectionsResponse>(`/organizations/${organizationId}/integrations`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load integrations');
+    }
+  }
+
+  async getEmployerIntegrationConnection(organizationId: string, connectionId: string): Promise<GetEmployerIntegrationConnectionResponse> {
+    try {
+      const response = await this.api.get<GetEmployerIntegrationConnectionResponse>(
+        `/organizations/${organizationId}/integrations/${connectionId}`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load integration');
+    }
+  }
+
+  async updateEmployerIntegrationConnection(
+    organizationId: string,
+    connectionId: string,
+    input: Partial<EmployerIntegrationConnectionInput>
+  ): Promise<UpdateEmployerIntegrationConnectionResponse> {
+    try {
+      const response = await this.api.patch<UpdateEmployerIntegrationConnectionResponse>(
+        `/organizations/${organizationId}/integrations/${connectionId}`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update integration');
+    }
+  }
+
+  async disableEmployerIntegrationConnection(organizationId: string, connectionId: string): Promise<DisableEmployerIntegrationConnectionResponse> {
+    try {
+      const response = await this.api.post<DisableEmployerIntegrationConnectionResponse>(
+        `/organizations/${organizationId}/integrations/${connectionId}/disable`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to disable integration');
+    }
+  }
+
+  async validateEmployerIntegrationConnection(organizationId: string, connectionId: string): Promise<ValidateEmployerIntegrationConnectionResponse> {
+    try {
+      const response = await this.api.post<ValidateEmployerIntegrationConnectionResponse>(
+        `/organizations/${organizationId}/integrations/${connectionId}/validate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to validate integration');
+    }
+  }
+
+  async testEmployerIntegrationConnection(organizationId: string, connectionId: string): Promise<TestEmployerIntegrationConnectionResponse> {
+    try {
+      const response = await this.api.post<TestEmployerIntegrationConnectionResponse>(
+        `/organizations/${organizationId}/integrations/${connectionId}/test`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to send test event');
+    }
+  }
+
+  async listEmployerIntegrationDeliveries(organizationId: string, connectionId: string): Promise<ListEmployerIntegrationDeliveriesResponse> {
+    try {
+      const response = await this.api.get<ListEmployerIntegrationDeliveriesResponse>(
+        `/organizations/${organizationId}/integrations/${connectionId}/deliveries`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load deliveries');
+    }
+  }
+
+  async retryEmployerIntegrationDelivery(
+    organizationId: string,
+    connectionId: string,
+    deliveryId: string
+  ): Promise<RetryEmployerIntegrationDeliveryResponse> {
+    try {
+      const response = await this.api.post<RetryEmployerIntegrationDeliveryResponse>(
+        `/organizations/${organizationId}/integrations/${connectionId}/deliveries/${deliveryId}/retry`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to retry delivery');
+    }
+  }
+
+  async scheduleEmployerInterviewCalendarEvent(
+    organizationId: string,
+    interviewId: string,
+    input: ScheduleEmployerInterviewCalendarEventInput
+  ): Promise<ScheduleEmployerInterviewCalendarEventResponse> {
+    try {
+      const response = await this.api.post<ScheduleEmployerInterviewCalendarEventResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/calendar-event`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to schedule interview');
+    }
+  }
+
+  async getEmployerInterviewCalendarEvent(organizationId: string, interviewId: string): Promise<GetEmployerInterviewCalendarEventResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewCalendarEventResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/calendar-event`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load interview schedule');
+    }
+  }
+
+  async cancelEmployerInterviewCalendarEvent(organizationId: string, interviewId: string): Promise<CancelEmployerInterviewCalendarEventResponse> {
+    try {
+      const response = await this.api.post<CancelEmployerInterviewCalendarEventResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/calendar-event/cancel`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to cancel interview schedule');
+    }
+  }
+
+  /** Fetches the `.ics` text WITH the usual authenticated request (a plain `<a href>` to this endpoint would not carry the auth header) and triggers a client-side file download. */
+  async downloadEmployerInterviewCalendarEventIcs(organizationId: string, interviewId: string): Promise<void> {
+    try {
+      const response = await this.api.get<string>(`/organizations/${organizationId}/interviews/${interviewId}/calendar-event/ics`, {
+        responseType: 'text',
+      });
+      const blob = new Blob([response.data], { type: 'text/calendar' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'interview.ics';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to download calendar file');
     }
   }
 }

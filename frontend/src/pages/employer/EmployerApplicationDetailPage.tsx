@@ -82,6 +82,7 @@ import employerApi, {
   EmployerAssessmentProctoringEventSummary,
   EmployerAssessmentIntegritySummary,
   EmployerHiringWorkflowExecution,
+  EmployerInterviewCalendarEvent,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -936,6 +937,18 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [workflowExecutionsLoading, setWorkflowExecutionsLoading] = useState(false);
   const [workflowExecutionsError, setWorkflowExecutionsError] = useState<string | null>(null);
 
+  const [calendarEvent, setCalendarEvent] = useState<EmployerInterviewCalendarEvent | null>(null);
+  const [calendarEventLoading, setCalendarEventLoading] = useState(false);
+  const [calendarEventError, setCalendarEventError] = useState<string | null>(null);
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [scheduleStartsAt, setScheduleStartsAt] = useState('');
+  const [scheduleEndsAt, setScheduleEndsAt] = useState('');
+  const [scheduleTimezone, setScheduleTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [saveScheduleError, setSaveScheduleError] = useState<string | null>(null);
+  const [cancellingSchedule, setCancellingSchedule] = useState(false);
+  const [downloadingIcs, setDownloadingIcs] = useState(false);
+
   const [sessionQuestions, setSessionQuestions] = useState<EmployerInterviewSessionQuestions | null>(null);
   const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
   const [sessionQuestionsError, setSessionQuestionsError] = useState<string | null>(null);
@@ -1764,6 +1777,83 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchWorkflowExecutions();
     }
   }, [isSyncing, activeOrganization, canView, fetchWorkflowExecutions]);
+
+  const fetchCalendarEvent = useCallback(async () => {
+    if (!organizationId || !interviewSession) return;
+    setCalendarEventLoading(true);
+    setCalendarEventError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewCalendarEvent(organizationId, interviewSession.id);
+      setCalendarEvent(response.data);
+    } catch (err: any) {
+      setCalendarEventError(err.message || 'Failed to load interview schedule');
+    } finally {
+      setCalendarEventLoading(false);
+    }
+  }, [organizationId, interviewSession]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && interviewSession) {
+      fetchCalendarEvent();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canView, interviewSession?.id]);
+
+  const handleOpenScheduleForm = () => {
+    if (calendarEvent?.scheduled && calendarEvent.startsAt && calendarEvent.endsAt) {
+      setScheduleStartsAt(calendarEvent.startsAt.slice(0, 16));
+      setScheduleEndsAt(calendarEvent.endsAt.slice(0, 16));
+      setScheduleTimezone(calendarEvent.timezone || scheduleTimezone);
+    }
+    setSaveScheduleError(null);
+    setShowScheduleForm(true);
+  };
+
+  const handleSaveSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !interviewSession) return;
+    setSavingSchedule(true);
+    setSaveScheduleError(null);
+    try {
+      const response = await employerApi.scheduleEmployerInterviewCalendarEvent(organizationId, interviewSession.id, {
+        startsAt: new Date(scheduleStartsAt).toISOString(),
+        endsAt: new Date(scheduleEndsAt).toISOString(),
+        timezone: scheduleTimezone,
+      });
+      setCalendarEvent(response.data);
+      setShowScheduleForm(false);
+    } catch (err: any) {
+      setSaveScheduleError(err.message || 'Failed to schedule interview');
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  const handleCancelSchedule = async () => {
+    if (!organizationId || !interviewSession) return;
+    if (!window.confirm('Cancel this interview schedule?')) return;
+    setCancellingSchedule(true);
+    try {
+      const response = await employerApi.cancelEmployerInterviewCalendarEvent(organizationId, interviewSession.id);
+      setCalendarEvent(response.data);
+    } catch (err: any) {
+      setCalendarEventError(err.message || 'Failed to cancel interview schedule');
+    } finally {
+      setCancellingSchedule(false);
+    }
+  };
+
+  const handleDownloadIcs = async () => {
+    if (!organizationId || !interviewSession) return;
+    setDownloadingIcs(true);
+    try {
+      await employerApi.downloadEmployerInterviewCalendarEventIcs(organizationId, interviewSession.id);
+    } catch (err: any) {
+      setCalendarEventError(err.message || 'Failed to download calendar file');
+    } finally {
+      setDownloadingIcs(false);
+    }
+  };
 
   const handleSaveCodingSession = async () => {
     if (!organizationId || !interviewSession) return;
@@ -5974,6 +6064,91 @@ const EmployerApplicationDetailPage: React.FC = () => {
                       </div>
                     );
                   })()
+                )}
+              </div>
+            )}
+
+            {interviewSession && (
+              <div className="card mt-6">
+                <h2 className="section-title mb-1">Interview Schedule</h2>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Local scheduling record. Provider sync (Google/Microsoft Calendar) is not yet configured — only a
+                  downloadable .ics file is available.
+                </p>
+
+                {calendarEventLoading ? (
+                  <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                ) : calendarEventError ? (
+                  <p className="text-sm text-mentor-error">{calendarEventError}</p>
+                ) : showScheduleForm ? (
+                  <form onSubmit={handleSaveSchedule} className="space-y-2 max-w-md">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="label">Start</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleStartsAt}
+                          onChange={(e) => setScheduleStartsAt(e.target.value)}
+                          className="input"
+                        />
+                      </div>
+                      <div>
+                        <label className="label">End</label>
+                        <input type="datetime-local" value={scheduleEndsAt} onChange={(e) => setScheduleEndsAt(e.target.value)} className="input" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="label">Timezone</label>
+                      <input value={scheduleTimezone} onChange={(e) => setScheduleTimezone(e.target.value)} className="input" maxLength={100} />
+                    </div>
+                    {saveScheduleError && <p className="text-sm text-mentor-error">{saveScheduleError}</p>}
+                    <div className="flex items-center gap-2">
+                      <button type="submit" disabled={savingSchedule || !scheduleStartsAt || !scheduleEndsAt} className="btn btn-primary px-3 py-1.5 text-xs">
+                        {savingSchedule ? 'Saving...' : 'Save'}
+                      </button>
+                      <button type="button" onClick={() => setShowScheduleForm(false)} className="btn btn-secondary px-3 py-1.5 text-xs">
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : !calendarEvent?.scheduled || calendarEvent.status === 'cancelled' ? (
+                  <div>
+                    <p className="text-sm text-mentor-text-secondary mb-3">
+                      {calendarEvent?.status === 'cancelled' ? 'Schedule was cancelled.' : 'Not scheduled yet.'}
+                    </p>
+                    {canManage && (
+                      <button onClick={handleOpenScheduleForm} className="btn btn-primary px-3 py-1.5 text-xs">
+                        Schedule
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="badge badge-success">{calendarEvent.status}</span>
+                      <span className="text-sm text-mentor-text">{calendarEvent.title}</span>
+                    </div>
+                    <p className="text-xs text-mentor-text-secondary">
+                      {calendarEvent.startsAt && new Date(calendarEvent.startsAt).toLocaleString()} &ndash;{' '}
+                      {calendarEvent.endsAt && new Date(calendarEvent.endsAt).toLocaleString()} ({calendarEvent.timezone})
+                    </p>
+                    <p className="text-xs text-mentor-text-muted">Sync provider: {calendarEvent.provider || 'local'}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {canManage && (
+                        <>
+                          <button onClick={handleOpenScheduleForm} className="btn btn-secondary px-3 py-1.5 text-xs">
+                            Reschedule
+                          </button>
+                          <button onClick={handleCancelSchedule} disabled={cancellingSchedule} className="btn btn-secondary px-3 py-1.5 text-xs">
+                            {cancellingSchedule ? 'Cancelling...' : 'Cancel'}
+                          </button>
+                        </>
+                      )}
+                      <button onClick={handleDownloadIcs} disabled={downloadingIcs} className="btn btn-secondary px-3 py-1.5 text-xs">
+                        {downloadingIcs ? 'Downloading...' : 'Download .ics'}
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             )}

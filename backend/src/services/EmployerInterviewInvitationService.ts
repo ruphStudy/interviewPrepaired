@@ -21,6 +21,7 @@ import {
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
+import { employerIntegrationEventService } from './EmployerIntegrationEventService';
 import { ApiError } from '../utils/ApiError';
 
 interface CreateInvitationFields {
@@ -158,6 +159,17 @@ export class EmployerInterviewInvitationService {
         message: this.cleanMessage(fields.message),
         createdByMembershipId: new Types.ObjectId(actorMembershipId),
       });
+
+      // Best-effort (31D) — emitEvent never throws.
+      await employerIntegrationEventService.emitEvent({
+        organizationId: organization._id,
+        eventType: 'interview_invited',
+        applicationId: application._id,
+        jobId: application.jobId,
+        sourceArtifactType: 'EmployerInterviewInvitation',
+        sourceArtifactId: created._id.toString(),
+      });
+
       return { invitation: this.toDetail(created.toObject()), token };
     } catch (error: any) {
       if (error?.code !== 11000) {

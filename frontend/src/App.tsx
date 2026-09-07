@@ -44,6 +44,7 @@ import EmployerKnowledgeBasesPage from './pages/employer/EmployerKnowledgeBasesP
 import EmployerKnowledgeBaseDetailPage from './pages/employer/EmployerKnowledgeBaseDetailPage';
 import EmployerCodingQuestionsPage from './pages/employer/EmployerCodingQuestionsPage';
 import EmployerCodingQuestionDetailPage from './pages/employer/EmployerCodingQuestionDetailPage';
+import EmployerIntegrationsPage from './pages/employer/EmployerIntegrationsPage';
 import EmployerNotificationsPage from './pages/employer/EmployerNotificationsPage';
 import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
 import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
@@ -387,6 +388,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerCodingQuestionDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* External Integration Foundation + Webhooks/ATS/Calendar (Sprint 31D/31E) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/integrations"
+            element={
+              <ProtectedRoute>
+                <EmployerIntegrationsPage />
               </ProtectedRoute>
             }
           />

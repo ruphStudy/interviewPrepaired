@@ -17,6 +17,7 @@ import {
   MapPin,
   BookOpen,
   Code2,
+  Plug,
   Layers,
   Contact2,
   ClipboardList,
@@ -172,6 +173,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
                 { to: `/organizations/${activeOrganizationId}/employer/talent-skills`, label: 'Talent Skills', icon: Network },
                 { to: `/organizations/${activeOrganizationId}/employer/knowledge-base`, label: 'Knowledge Base', icon: BookOpen },
                 { to: `/organizations/${activeOrganizationId}/employer/coding-questions`, label: 'Coding Assessments', icon: Code2 },
+                { to: `/organizations/${activeOrganizationId}/employer/integrations`, label: 'Integrations', icon: Plug },
                 { to: `/organizations/${activeOrganizationId}/employer/mentions`, label: 'Mentions', icon: AtSign },
                 {
                   to: `/organizations/${activeOrganizationId}/employer/notifications`,

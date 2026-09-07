@@ -24,6 +24,7 @@ import { employerCollaborationNotificationService } from './EmployerCollaboratio
 import { employerAssessmentIntegrityService } from './EmployerAssessmentIntegrityService';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
+import { employerIntegrationEventService } from './EmployerIntegrationEventService';
 import { ApiError } from '../utils/ApiError';
 
 export interface EvaluateTriggerParams {
@@ -207,21 +208,36 @@ export class EmployerHiringWorkflowService {
     execution: IEmployerHiringWorkflowExecution,
     action: IEmployerHiringWorkflowAction
   ): Promise<IEmployerHiringWorkflowExecutionAction> {
+    let result: IEmployerHiringWorkflowExecutionAction;
     try {
       if (action.type === 'add_internal_note') {
-        return await this.executeAddInternalNote(organization, application, rule, action);
+        result = await this.executeAddInternalNote(organization, application, rule, action);
+      } else if (action.type === 'notify_hiring_team') {
+        result = await this.executeNotifyHiringTeam(organization, application, rule, execution);
+      } else if (action.type === 'move_pipeline_stage') {
+        result = await this.executeMovePipelineStage(organization, application, action);
+      } else {
+        result = { type: action.type, status: 'skipped', message: 'Unknown action type.' };
       }
-      if (action.type === 'notify_hiring_team') {
-        return await this.executeNotifyHiringTeam(organization, application, rule, execution);
-      }
-      if (action.type === 'move_pipeline_stage') {
-        return await this.executeMovePipelineStage(organization, application, action);
-      }
-      return { type: action.type, status: 'skipped', message: 'Unknown action type.' };
     } catch (error) {
       console.error('[EmployerHiringWorkflowService] Action execution failed', error);
-      return { type: action.type, status: 'failed', message: 'Action failed unexpectedly.' };
+      result = { type: action.type, status: 'failed', message: 'Action failed unexpectedly.' };
     }
+
+    if (result.status === 'completed') {
+      // Best-effort (31D) — emitEvent never throws.
+      await employerIntegrationEventService.emitEvent({
+        organizationId: organization._id,
+        eventType: 'workflow_action_completed',
+        applicationId: application._id,
+        jobId: application.jobId,
+        interviewId: execution.interviewId,
+        sourceArtifactType: 'EmployerHiringWorkflowExecution',
+        sourceArtifactId: `${execution._id.toString()}:${action.type}`,
+        data: { actionType: action.type },
+      });
+    }
+    return result;
   }
 
   /** Reuses the existing 24A note MODEL directly (no acting organization member/role exists for an automated system action) — clearly source-marked, never mentions AI. */
