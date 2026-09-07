@@ -12,6 +12,7 @@ import EmployerInterviewFollowUpRoute, {
 } from '../models/EmployerInterviewFollowUpRoute.model';
 import { getAIService } from '../ai';
 import type { AIResponseMetadata } from '../ai';
+import { employerInterviewKnowledgeContextService } from './EmployerInterviewKnowledgeContextService';
 import { getModelPricing } from '../config/openaiPricing';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
@@ -230,7 +231,29 @@ export class EmployerInterviewFollowUpRouteService {
       const allowedCompetencyNames = graph.nodes.filter((n) => n.type === 'competency').map((n) => n.competencyName!).filter(Boolean);
       const coverage = buildLiveCompetencyCoverage(interview, allowedCompetencyNames);
 
-      const prompt = this.buildPrompt(sourceQuestion, sourceQuestionIndex, rubric.rubric.competencies, allowedCompetencyNames, coverage);
+      const retrievalQuery = [sourceQuestion.questionText, ...(sourceQuestion.competencyNames ?? [])].filter(Boolean).join(' | ');
+      const knowledgeContext = await employerInterviewKnowledgeContextService.buildContext(
+        organization._id.toString(),
+        interview._id.toString(),
+        retrievalQuery
+      );
+      const knowledgeContextField = {
+        enabled: knowledgeContext.enabled,
+        sources: knowledgeContext.sources.map((s) => ({
+          knowledgeBaseId: s.knowledgeBaseId,
+          documentId: s.documentId,
+          chunkId: s.chunkId,
+        })),
+      };
+
+      const prompt = this.buildPrompt(
+        sourceQuestion,
+        sourceQuestionIndex,
+        rubric.rubric.competencies,
+        allowedCompetencyNames,
+        coverage,
+        knowledgeContext.promptSection
+      );
       const result = await getAIService().generateStructured<unknown>(
         { prompt, temperature: 0.2, maxTokens: 1200 },
         { interviewId: interview._id.toString(), operation: 'hiring-dynamic-followup-routing' }
@@ -244,7 +267,7 @@ export class EmployerInterviewFollowUpRouteService {
       if (validated.decision === 'continue') {
         const updated = await EmployerInterviewFollowUpRoute.findOneAndUpdate(
           { _id: claimed._id },
-          { $set: { decision: 'continue', aiUsage }, $unset: { errorMessage: 1 } },
+          { $set: { decision: 'continue', aiUsage, knowledgeContext: knowledgeContextField }, $unset: { errorMessage: 1 } },
           { new: true }
         );
         return this.finalizeCompleted(updated!);
@@ -283,6 +306,7 @@ export class EmployerInterviewFollowUpRouteService {
             generatedQuestionIndex,
             generatedQuestionText: validated.followUpQuestion,
             aiUsage,
+            knowledgeContext: knowledgeContextField,
           },
           $unset: { errorMessage: 1 },
         },
@@ -316,7 +340,8 @@ export class EmployerInterviewFollowUpRouteService {
     sourceQuestionIndex: number,
     rubricCompetencies: Array<{ competencyName: string; evidenceSignals: string[]; scoringAnchors: unknown }>,
     allowedCompetencyNames: string[],
-    coverage: Record<string, number[]>
+    coverage: Record<string, number[]>,
+    knowledgeContextPromptSection: string
   ): string {
     const sourceCompetencyNames = new Set(sourceQuestion.competencyNames ?? []);
     const relevantRubric = rubricCompetencies
@@ -365,7 +390,7 @@ ${JSON.stringify(allowedCompetencyNames)}
 
 CURRENT INTERVIEW COMPETENCY COVERAGE (question indexes already targeting each competency, for context — a competency with few/no indexes may need more evidence):
 ${JSON.stringify(coverage)}
-
+${knowledgeContextPromptSection ? `\n${knowledgeContextPromptSection}\n` : ''}
 Return ONLY a single JSON object with EXACTLY this shape:
 {
   "decision": "follow_up" | "continue",

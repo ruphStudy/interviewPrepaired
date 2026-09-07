@@ -10,6 +10,7 @@ import {
 import EmployerInterviewCompetencyRubric, { IInterviewCompetencyRubric } from '../models/EmployerInterviewCompetencyRubric.model';
 import { EmployerJobCompetencyImportance } from '../constants/employerJobDescriptionCompetencies';
 import { getAIService } from '../ai';
+import { employerInterviewKnowledgeContextService, EmployerInterviewKnowledgeContext } from './EmployerInterviewKnowledgeContextService';
 import { ApiError } from '../utils/ApiError';
 
 const MAX_QUESTION_TEXT_LENGTH = 800; // headroom below the schema's 1000-char cap
@@ -95,7 +96,9 @@ export class HiringQuestionMaterializationService {
         throw new ApiError(502, 'Interview blueprint has no usable question plan');
       }
 
-      const prompt = this.buildPrompt(blueprint, rubric, plannedIntents);
+      const knowledgeContext = await this.loadKnowledgeContext(organizationId, claimed._id.toString(), blueprint, plannedIntents);
+
+      const prompt = this.buildPrompt(blueprint, rubric, plannedIntents, knowledgeContext);
       const result = await getAIService().generateStructured<unknown>(
         { prompt, temperature: 0.2, maxTokens: 4000 },
         { interviewId: claimed._id.toString(), operation: 'hiring-question-materialization' }
@@ -105,6 +108,14 @@ export class HiringQuestionMaterializationService {
 
       claimed.questions = questions;
       claimed.questionMaterializationStatus = 'completed';
+      claimed.knowledgeContext = {
+        enabled: knowledgeContext.enabled,
+        sources: knowledgeContext.sources.map((s) => ({
+          knowledgeBaseId: new Types.ObjectId(s.knowledgeBaseId),
+          documentId: new Types.ObjectId(s.documentId),
+          chunkId: new Types.ObjectId(s.chunkId),
+        })),
+      };
       await claimed.save();
 
       return claimed;
@@ -154,6 +165,37 @@ export class HiringQuestionMaterializationService {
     return rubric;
   }
 
+  /**
+   * Opt-in RAG grounding (29D) — no-op (zero embedding/search calls) unless
+   * the interview has RAG explicitly enabled. Built from safe structured
+   * signals only (blueprint title + planned competencies/skills/intents),
+   * never from candidate/organization-identifying content. One retrieval
+   * for the whole materialization pass, not one per question.
+   */
+  private async loadKnowledgeContext(
+    organizationId: string,
+    interviewId: string,
+    blueprint: IInterviewBlueprint,
+    slots: PlannedIntentSlot[]
+  ): Promise<EmployerInterviewKnowledgeContext> {
+    const competencies = new Set<string>();
+    const skills = new Set<string>();
+    const intents: string[] = [];
+    for (const slot of slots.slice(0, 20)) {
+      slot.sectionCompetencies.forEach((c) => competencies.add(c));
+      slot.sectionSkills.forEach((s) => skills.add(s));
+      intents.push(slot.intent);
+    }
+    const queryParts = [
+      blueprint.title,
+      ...Array.from(competencies).slice(0, 10),
+      ...Array.from(skills).slice(0, 10),
+      ...intents.slice(0, 10),
+    ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+
+    return employerInterviewKnowledgeContextService.buildContext(organizationId, interviewId, queryParts.join(' | '));
+  }
+
   /** Flattens the blueprint's sections into one planned slot per question-plan intent, in section order, capped to the interview's own `totalQuestions`. */
   private buildPlannedIntents(blueprint: IInterviewBlueprint, totalQuestionsCap: number): PlannedIntentSlot[] {
     const slots: PlannedIntentSlot[] = [];
@@ -180,7 +222,12 @@ export class HiringQuestionMaterializationService {
    * ("index"), so the model only supplies question text and evaluation
    * metadata for a slot the server already knows the identity of.
    */
-  private buildPrompt(blueprint: IInterviewBlueprint, rubric: IInterviewCompetencyRubric, slots: PlannedIntentSlot[]): string {
+  private buildPrompt(
+    blueprint: IInterviewBlueprint,
+    rubric: IInterviewCompetencyRubric,
+    slots: PlannedIntentSlot[],
+    knowledgeContext: EmployerInterviewKnowledgeContext
+  ): string {
     const compactIntents = slots.map((slot, index) => ({
       index,
       sectionTitle: blueprint.sections.find((s) => s.id === slot.sectionId)?.title,
@@ -217,7 +264,7 @@ ${JSON.stringify(compactIntents)}
 
 COMPETENCY EVALUATION GUIDANCE (internal interviewer calibration only — never shown to the candidate):
 ${JSON.stringify(compactRubric)}
-
+${knowledgeContext.promptSection ? `\n${knowledgeContext.promptSection}\n` : ''}
 Return ONLY a single JSON object with EXACTLY this shape:
 {
   "questions": [

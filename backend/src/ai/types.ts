@@ -103,3 +103,20 @@ export interface GenerateStructuredRequest {
 }
 
 export type GenerateStructuredResponse<T = unknown> = T;
+
+/**
+ * Embeddings primitive (29C) — a genuinely different model family/API
+ * shape than chat completions, so it is NOT routed through
+ * `resolveModelRoute`/the chat-model routing table; the embedding model is
+ * resolved independently (its own env override, defaulting to a real
+ * OpenAI embedding model). `inputs` is chunk/query text ONLY — never
+ * candidate/organization-identifying content beyond the text itself.
+ */
+export interface EmbeddingRequest {
+  inputs: string[];
+}
+
+export interface EmbeddingResponse {
+  embeddings: number[][];
+  dimensions: number;
+}

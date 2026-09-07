@@ -68,6 +68,8 @@ import employerApi, {
   EMPLOYER_CANDIDATE_COMMUNICATION_TYPES,
   EmployerApplicationSkillGraph,
   EmployerApplicationSkillIntelligence,
+  EmployerInterviewKnowledgeConfig,
+  OrganizationKnowledgeBase,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -791,6 +793,17 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [interviewSessionLoading, setInterviewSessionLoading] = useState(true);
   const [interviewSessionError, setInterviewSessionError] = useState<string | null>(null);
 
+  const [knowledgeConfig, setKnowledgeConfig] = useState<EmployerInterviewKnowledgeConfig | null>(null);
+  const [knowledgeConfigLoading, setKnowledgeConfigLoading] = useState(false);
+  const [knowledgeConfigError, setKnowledgeConfigError] = useState<string | null>(null);
+  const [availableKnowledgeBases, setAvailableKnowledgeBases] = useState<OrganizationKnowledgeBase[]>([]);
+  const [availableKnowledgeBasesLoading, setAvailableKnowledgeBasesLoading] = useState(false);
+  const [kcEnabled, setKcEnabled] = useState(false);
+  const [kcSelectedKbIds, setKcSelectedKbIds] = useState<string[]>([]);
+  const [kcMaxChunks, setKcMaxChunks] = useState(5);
+  const [savingKnowledgeConfig, setSavingKnowledgeConfig] = useState(false);
+  const [saveKnowledgeConfigError, setSaveKnowledgeConfigError] = useState<string | null>(null);
+
   const [sessionQuestions, setSessionQuestions] = useState<EmployerInterviewSessionQuestions | null>(null);
   const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
   const [sessionQuestionsError, setSessionQuestionsError] = useState<string | null>(null);
@@ -1303,6 +1316,68 @@ const EmployerApplicationDetailPage: React.FC = () => {
       fetchInterviewSession();
     }
   }, [isSyncing, activeOrganization, canView, fetchInterviewSession]);
+
+  const fetchKnowledgeConfig = useCallback(async () => {
+    if (!organizationId || !interviewSession) return;
+    setKnowledgeConfigLoading(true);
+    setKnowledgeConfigError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewKnowledgeConfig(organizationId, interviewSession.id);
+      setKnowledgeConfig(response.data);
+      setKcEnabled(response.data.enabled);
+      setKcSelectedKbIds(response.data.knowledgeBaseIds);
+      setKcMaxChunks(response.data.maxRetrievedChunks);
+    } catch (err: any) {
+      setKnowledgeConfigError(err.message || 'Failed to load organization knowledge configuration');
+    } finally {
+      setKnowledgeConfigLoading(false);
+    }
+  }, [organizationId, interviewSession]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && interviewSession) {
+      fetchKnowledgeConfig();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canView, interviewSession?.id]);
+
+  const fetchAvailableKnowledgeBases = useCallback(async () => {
+    if (!organizationId) return;
+    setAvailableKnowledgeBasesLoading(true);
+    try {
+      const response = await employerApi.listOrganizationKnowledgeBases(organizationId);
+      setAvailableKnowledgeBases(response.data.knowledgeBases.filter((kb) => kb.status === 'active'));
+    } catch {
+      // Non-critical — the config section still works with an empty picker; surfaced via saveKnowledgeConfigError on save if it matters.
+    } finally {
+      setAvailableKnowledgeBasesLoading(false);
+    }
+  }, [organizationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canManage && interviewSession) {
+      fetchAvailableKnowledgeBases();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canManage, interviewSession?.id]);
+
+  const handleSaveKnowledgeConfig = async () => {
+    if (!organizationId || !interviewSession) return;
+    setSavingKnowledgeConfig(true);
+    setSaveKnowledgeConfigError(null);
+    try {
+      const response = await employerApi.updateEmployerInterviewKnowledgeConfig(organizationId, interviewSession.id, {
+        enabled: kcEnabled,
+        knowledgeBaseIds: kcSelectedKbIds,
+        maxRetrievedChunks: kcMaxChunks,
+      });
+      setKnowledgeConfig(response.data);
+    } catch (err: any) {
+      setSaveKnowledgeConfigError(err.message || 'Failed to save organization knowledge configuration');
+    } finally {
+      setSavingKnowledgeConfig(false);
+    }
+  };
 
   const fetchSessionQuestions = useCallback(async () => {
     if (!organizationId || !applicationId) return;
@@ -3395,6 +3470,102 @@ const EmployerApplicationDetailPage: React.FC = () => {
                       </div>
                     )}
                   </dl>
+
+                  <div className="mt-5 pt-5 border-t border-mentor-border">
+                    <h3 className="text-sm font-medium text-mentor-text mb-1">Organization Knowledge</h3>
+                    <p className="text-xs text-mentor-text-muted mb-3">
+                      Optionally ground question/follow-up generation in your organization's indexed knowledge base
+                      content. Disabled by default — the candidate never sees which (or whether) knowledge bases were
+                      used.
+                    </p>
+                    {knowledgeConfigLoading ? (
+                      <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                    ) : knowledgeConfigError ? (
+                      <div>
+                        <p className="text-sm text-mentor-error mb-2">{knowledgeConfigError}</p>
+                        <button onClick={fetchKnowledgeConfig} className="btn btn-secondary">
+                          Try Again
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <label className="flex items-center gap-2 text-sm text-mentor-text">
+                          <input
+                            type="checkbox"
+                            checked={kcEnabled}
+                            disabled={!canManage}
+                            onChange={(e) => setKcEnabled(e.target.checked)}
+                          />
+                          Use organization knowledge in this interview
+                        </label>
+
+                        {kcEnabled && (
+                          <>
+                            <div>
+                              <p className="label mb-1.5">Knowledge Bases</p>
+                              {availableKnowledgeBasesLoading ? (
+                                <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                              ) : availableKnowledgeBases.length === 0 ? (
+                                <p className="text-xs text-mentor-text-muted">No active knowledge bases in this organization yet.</p>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  {availableKnowledgeBases.map((kb) => {
+                                    const summary = knowledgeConfig?.knowledgeBases.find((s) => s.knowledgeBaseId === kb.id);
+                                    const checked = kcSelectedKbIds.includes(kb.id);
+                                    return (
+                                      <div key={kb.id}>
+                                        <label className="flex items-center gap-2 text-sm text-mentor-text">
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            disabled={!canManage}
+                                            onChange={(e) =>
+                                              setKcSelectedKbIds((prev) =>
+                                                e.target.checked ? [...prev, kb.id] : prev.filter((id) => id !== kb.id)
+                                              )
+                                            }
+                                          />
+                                          {kb.name}
+                                          <span className="text-xs text-mentor-text-muted">({kb.documentCount} doc{kb.documentCount === 1 ? '' : 's'})</span>
+                                        </label>
+                                        {checked && summary && !summary.hasIndexedContent && (
+                                          <p className="text-xs text-mentor-warning ml-6">
+                                            This knowledge base has no indexed content available for interview grounding.
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="max-w-[220px]">
+                              <label className="label mb-1 block">Max retrieved chunks per generation</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={10}
+                                value={kcMaxChunks}
+                                disabled={!canManage}
+                                onChange={(e) => setKcMaxChunks(Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+                                className="input"
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        {canManage && (
+                          <div>
+                            {saveKnowledgeConfigError && <p className="text-sm text-mentor-error mb-2">{saveKnowledgeConfigError}</p>}
+                            <button onClick={handleSaveKnowledgeConfig} disabled={savingKnowledgeConfig} className="btn btn-primary px-3 py-1.5 text-xs">
+                              {savingKnowledgeConfig ? 'Saving...' : 'Save Knowledge Configuration'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   <div className="mt-5 pt-5 border-t border-mentor-border">
                     <h3 className="text-sm font-medium text-mentor-text mb-3">Assessment Questions</h3>

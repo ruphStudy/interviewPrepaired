@@ -8,10 +8,15 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
  * from an explicit, authenticated, employer-only detail/content read).
  * `storedFileName` is server-internal only (relative path under the local
  * knowledge-document storage root) — never returned by any API response.
- * NO embeddings/vector data live on this model; that is 29C.
+ * NO embeddings/vector data live on this model — those live on
+ * `OrganizationKnowledgeChunk` (29C). `indexStatus` here is a rollup
+ * summary of that document's chunk set, deliberately SEPARATE from the
+ * parsing `status` above (a document can be `ready` for parsing while
+ * `not_indexed`, or `ready`/`failed`/`partial` for indexing).
  */
 export type OrganizationKnowledgeDocumentSourceType = 'file' | 'text';
 export type OrganizationKnowledgeDocumentStatus = 'draft' | 'processing' | 'ready' | 'failed' | 'archived';
+export type OrganizationKnowledgeDocumentIndexStatus = 'not_indexed' | 'processing' | 'ready' | 'partial' | 'failed';
 
 export interface IOrganizationKnowledgeDocument extends Document {
   organizationId: Types.ObjectId;
@@ -31,6 +36,11 @@ export interface IOrganizationKnowledgeDocument extends Document {
   rawText?: string;
   /** Short, safe, user-facing message only — never a raw provider/library error dump. */
   parseError?: string;
+  indexingVersion?: string;
+  indexStatus: OrganizationKnowledgeDocumentIndexStatus;
+  chunkCount?: number;
+  indexedChunkCount?: number;
+  indexedAt?: Date;
   createdByMembershipId: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -61,6 +71,19 @@ const organizationKnowledgeDocumentSchema = new Schema<IOrganizationKnowledgeDoc
     wordCount: { type: Number, min: 0 },
     rawText: { type: String },
     parseError: { type: String, trim: true, maxlength: [500, 'parseError cannot exceed 500 characters'] },
+    indexingVersion: { type: String },
+    indexStatus: {
+      type: String,
+      enum: {
+        values: ['not_indexed', 'processing', 'ready', 'partial', 'failed'],
+        message: '{VALUE} is not a valid index status',
+      },
+      required: true,
+      default: 'not_indexed',
+    },
+    chunkCount: { type: Number, min: 0 },
+    indexedChunkCount: { type: Number, min: 0 },
+    indexedAt: { type: Date },
     createdByMembershipId: { type: Schema.Types.ObjectId, ref: 'OrganizationMember', required: true },
   },
   {

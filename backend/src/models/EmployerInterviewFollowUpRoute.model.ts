@@ -47,10 +47,23 @@ export interface IEmployerInterviewFollowUpRoute extends Document {
   generatedQuestionText?: string;
   status: EmployerInterviewFollowUpRouteStatus;
   aiUsage?: IEmployerInterviewFollowUpRouteAIUsage;
+  /** Lightweight RAG retrieval provenance (29D) — IDs only, never raw chunk text. Absent/`{enabled:false}` when RAG was not configured/opted-in. */
+  knowledgeContext?: IEmployerInterviewFollowUpRouteKnowledgeContext;
   /** Short, safe, user-facing message only — never a raw provider error dump. */
   errorMessage?: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IEmployerInterviewFollowUpRouteKnowledgeSource {
+  knowledgeBaseId: Types.ObjectId;
+  documentId: Types.ObjectId;
+  chunkId: Types.ObjectId;
+}
+
+export interface IEmployerInterviewFollowUpRouteKnowledgeContext {
+  enabled: boolean;
+  sources: IEmployerInterviewFollowUpRouteKnowledgeSource[];
 }
 
 const aiUsageSchema = new Schema<IEmployerInterviewFollowUpRouteAIUsage>(
@@ -66,6 +79,23 @@ const aiUsageSchema = new Schema<IEmployerInterviewFollowUpRouteAIUsage>(
     outputCostUsd: { type: Number, required: true },
     totalCostUsd: { type: Number, required: true },
     pricingStatus: { type: String, enum: ['calculated', 'unknown'], required: true },
+  },
+  { _id: false }
+);
+
+const knowledgeContextSourceSchema = new Schema<IEmployerInterviewFollowUpRouteKnowledgeSource>(
+  {
+    knowledgeBaseId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeBase', required: true },
+    documentId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeDocument', required: true },
+    chunkId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeChunk', required: true },
+  },
+  { _id: false }
+);
+
+const knowledgeContextSchema = new Schema<IEmployerInterviewFollowUpRouteKnowledgeContext>(
+  {
+    enabled: { type: Boolean, required: true, default: false },
+    sources: { type: [knowledgeContextSourceSchema], default: [] },
   },
   { _id: false }
 );
@@ -95,6 +125,7 @@ const employerInterviewFollowUpRouteSchema = new Schema<IEmployerInterviewFollow
       required: true,
     },
     aiUsage: { type: aiUsageSchema },
+    knowledgeContext: { type: knowledgeContextSchema },
     errorMessage: { type: String, trim: true, maxlength: [500, 'errorMessage cannot exceed 500 characters'] },
   },
   {

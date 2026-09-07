@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import AuthenticatedLayout from '../../components/AuthenticatedLayout';
 import { useOrganization } from '../../contexts/OrganizationContext';
-import employerApi, { OrganizationKnowledgeBase, OrganizationKnowledgeDocument } from '../../api/employerApi';
-import { AlertCircle, Loader2, ChevronLeft, Upload, FileText, X } from 'lucide-react';
+import employerApi, { OrganizationKnowledgeBase, OrganizationKnowledgeDocument, OrganizationKnowledgeRetrievalResultItem } from '../../api/employerApi';
+import { AlertCircle, Loader2, ChevronLeft, Upload, FileText, X, Search } from 'lucide-react';
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString();
 const formatSize = (bytes?: number) => {
@@ -29,6 +29,21 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 const ACCEPTED_EXTENSIONS = '.pdf,.docx,.txt';
+
+const INDEX_STATUS_LABEL: Record<string, string> = {
+  not_indexed: 'Not indexed',
+  processing: 'Processing',
+  ready: 'Ready',
+  partial: 'Partial',
+  failed: 'Failed',
+};
+const INDEX_STATUS_BADGE: Record<string, string> = {
+  not_indexed: 'badge-neutral',
+  processing: 'badge-warning',
+  ready: 'badge-success',
+  partial: 'badge-warning',
+  failed: 'badge-warning',
+};
 
 /**
  * Organization Knowledge Base detail (29A) + document upload/parsing
@@ -74,6 +89,13 @@ const EmployerKnowledgeBaseDetailPage: React.FC = () => {
   const [viewingContent, setViewingContent] = useState<string | null>(null);
   const [viewingLoading, setViewingLoading] = useState(false);
   const [viewingError, setViewingError] = useState<string | null>(null);
+
+  const [indexingId, setIndexingId] = useState<string | null>(null);
+
+  const [testQuery, setTestQuery] = useState('');
+  const [testResults, setTestResults] = useState<OrganizationKnowledgeRetrievalResultItem[] | null>(null);
+  const [testSearching, setTestSearching] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -193,6 +215,39 @@ const EmployerKnowledgeBaseDetailPage: React.FC = () => {
       setActionErrorById((prev) => ({ ...prev, [documentId]: err.message || 'Failed to archive document' }));
     } finally {
       setActionPendingId(null);
+    }
+  };
+
+  const handleIndexDocument = async (documentId: string) => {
+    if (!organizationId || !knowledgeBaseId) return;
+    setIndexingId(documentId);
+    setActionErrorById((prev) => ({ ...prev, [documentId]: '' }));
+    try {
+      await employerApi.indexOrganizationKnowledgeDocument(organizationId, knowledgeBaseId, documentId);
+      fetchDocuments();
+    } catch (err: any) {
+      setActionErrorById((prev) => ({ ...prev, [documentId]: err.message || 'Failed to index document' }));
+    } finally {
+      setIndexingId(null);
+    }
+  };
+
+  const handleTestRetrieval = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !testQuery.trim()) return;
+    setTestSearching(true);
+    setTestError(null);
+    try {
+      const response = await employerApi.searchOrganizationKnowledge(organizationId, {
+        query: testQuery.trim(),
+        knowledgeBaseIds: knowledgeBaseId ? [knowledgeBaseId] : undefined,
+      });
+      setTestResults(response.data.results);
+    } catch (err: any) {
+      setTestError(err.message || 'Search failed');
+      setTestResults(null);
+    } finally {
+      setTestSearching(false);
     }
   };
 
@@ -388,6 +443,7 @@ const EmployerKnowledgeBaseDetailPage: React.FC = () => {
                         <th className="py-2 pr-3">Title</th>
                         <th className="py-2 pr-3">Type</th>
                         <th className="py-2 pr-3">Status</th>
+                        <th className="py-2 pr-3">Indexing</th>
                         <th className="py-2 pr-3">Size</th>
                         <th className="py-2 pr-3">Words</th>
                         <th className="py-2 pr-3">Created</th>
@@ -408,6 +464,16 @@ const EmployerKnowledgeBaseDetailPage: React.FC = () => {
                               <p className="text-xs text-mentor-error mt-1 max-w-[200px]">{d.parseError}</p>
                             )}
                           </td>
+                          <td className="py-2 pr-3">
+                            <span className={`badge ${INDEX_STATUS_BADGE[d.indexStatus] || 'badge-neutral'}`}>
+                              {INDEX_STATUS_LABEL[d.indexStatus] || d.indexStatus}
+                            </span>
+                            {typeof d.chunkCount === 'number' && (
+                              <p className="text-xs text-mentor-text-muted mt-1">
+                                {d.indexedChunkCount ?? 0}/{d.chunkCount} chunks indexed
+                              </p>
+                            )}
+                          </td>
                           <td className="py-2 pr-3 text-mentor-text-secondary">{formatSize(d.fileSizeBytes)}</td>
                           <td className="py-2 pr-3 text-mentor-text-secondary">{d.wordCount ?? '—'}</td>
                           <td className="py-2 pr-3 text-mentor-text-secondary whitespace-nowrap">{formatDate(d.createdAt)}</td>
@@ -417,6 +483,15 @@ const EmployerKnowledgeBaseDetailPage: React.FC = () => {
                               {d.status === 'ready' && (
                                 <button onClick={() => handleViewParsedText(d.id)} className="btn btn-secondary px-2 py-1 text-xs">
                                   View Parsed Text
+                                </button>
+                              )}
+                              {canManage && kbActive && d.status === 'ready' && (
+                                <button
+                                  onClick={() => handleIndexDocument(d.id)}
+                                  disabled={indexingId === d.id}
+                                  className="btn btn-secondary px-2 py-1 text-xs"
+                                >
+                                  {indexingId === d.id ? 'Indexing...' : d.indexStatus === 'not_indexed' ? 'Index Document' : 'Re-index'}
                                 </button>
                               )}
                               {canManage && kbActive && d.status === 'failed' && d.sourceType === 'file' && (
@@ -443,6 +518,45 @@ const EmployerKnowledgeBaseDetailPage: React.FC = () => {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title mb-1">Test Retrieval</h2>
+              <p className="text-xs text-mentor-text-muted mb-3">
+                Employer-internal only — verifies what indexed content would be retrieved for a query. Never seen by candidates.
+              </p>
+              <form onSubmit={handleTestRetrieval} className="flex items-center gap-2 mb-4">
+                <input
+                  value={testQuery}
+                  onChange={(e) => setTestQuery(e.target.value)}
+                  placeholder="Search this knowledge base..."
+                  className="input flex-1"
+                  maxLength={500}
+                />
+                <button type="submit" disabled={testSearching || !testQuery.trim()} className="btn btn-primary px-3 py-1.5 text-xs">
+                  <Search size={14} />
+                  {testSearching ? 'Searching...' : 'Search'}
+                </button>
+              </form>
+              {testError && <p className="text-xs text-mentor-error mb-3">{testError}</p>}
+              {testResults && testResults.length === 0 && (
+                <p className="text-sm text-mentor-text-secondary text-center py-4">No matching indexed content found.</p>
+              )}
+              {testResults && testResults.length > 0 && (
+                <div className="space-y-3">
+                  {testResults.map((r) => (
+                    <div key={r.chunkId} className="surface-muted p-3">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="text-sm font-medium text-mentor-text">
+                          {r.documentTitle} <span className="text-mentor-text-muted font-normal">· chunk {r.chunkIndex}</span>
+                        </p>
+                        <span className="text-xs text-mentor-text-muted">score {r.score.toFixed(3)}</span>
+                      </div>
+                      <p className="text-xs text-mentor-text-secondary whitespace-pre-wrap line-clamp-4">{r.text}</p>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

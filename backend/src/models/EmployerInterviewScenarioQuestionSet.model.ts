@@ -55,11 +55,24 @@ export interface IEmployerInterviewScenarioQuestionSet extends Document {
   questions?: IScenarioQuestion[];
   summary?: IScenarioQuestionSetSummary;
   aiUsage?: IEmployerScenarioQuestionSetAIUsage;
+  /** Lightweight RAG retrieval provenance (29D) — IDs only, never raw chunk text. Absent/`{enabled:false}` when RAG was not configured/opted-in. */
+  knowledgeContext?: IEmployerScenarioQuestionSetKnowledgeContext;
   generatedAt?: Date;
   /** Short, safe, user-facing message only — never a raw provider error dump. */
   errorMessage?: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IEmployerScenarioQuestionSetKnowledgeSource {
+  knowledgeBaseId: Types.ObjectId;
+  documentId: Types.ObjectId;
+  chunkId: Types.ObjectId;
+}
+
+export interface IEmployerScenarioQuestionSetKnowledgeContext {
+  enabled: boolean;
+  sources: IEmployerScenarioQuestionSetKnowledgeSource[];
 }
 
 const scenarioQuestionSchema = new Schema<IScenarioQuestion>(
@@ -111,6 +124,23 @@ const aiUsageSchema = new Schema<IEmployerScenarioQuestionSetAIUsage>(
   { _id: false }
 );
 
+const knowledgeContextSourceSchema = new Schema<IEmployerScenarioQuestionSetKnowledgeSource>(
+  {
+    knowledgeBaseId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeBase', required: true },
+    documentId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeDocument', required: true },
+    chunkId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeChunk', required: true },
+  },
+  { _id: false }
+);
+
+const knowledgeContextSchema = new Schema<IEmployerScenarioQuestionSetKnowledgeContext>(
+  {
+    enabled: { type: Boolean, required: true, default: false },
+    sources: { type: [knowledgeContextSourceSchema], default: [] },
+  },
+  { _id: false }
+);
+
 const employerInterviewScenarioQuestionSetSchema = new Schema<IEmployerInterviewScenarioQuestionSet>(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', required: true },
@@ -127,6 +157,7 @@ const employerInterviewScenarioQuestionSetSchema = new Schema<IEmployerInterview
     questions: { type: [scenarioQuestionSchema], default: undefined },
     summary: { type: summarySchema },
     aiUsage: { type: aiUsageSchema },
+    knowledgeContext: { type: knowledgeContextSchema },
     generatedAt: { type: Date },
     errorMessage: { type: String, trim: true, maxlength: [500, 'errorMessage cannot exceed 500 characters'] },
   },

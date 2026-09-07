@@ -138,6 +138,20 @@ export interface IAIUsage {
   totals: IAIUsageTotals;
 }
 
+// Lightweight RAG retrieval provenance (29D) — IDs only, NEVER raw chunk
+// text/similarity scores/embeddings. `enabled: false` means RAG was not
+// configured/opted-in for this operation (no retrieval attempted).
+export interface IKnowledgeContextSource {
+  knowledgeBaseId: Types.ObjectId;
+  documentId: Types.ObjectId;
+  chunkId: Types.ObjectId;
+}
+
+export interface IKnowledgeContextProvenance {
+  enabled: boolean;
+  sources: IKnowledgeContextSource[];
+}
+
 export interface IFinalReport {
   overallScore: number;
   averageTechnicalScore: number;
@@ -189,6 +203,10 @@ export interface IInterview extends Document {
   // pattern/purpose as `questionMaterializationStatus` above, independent
   // of it. No schema default; absent for every non-hiring interview.
   hiringEvaluationStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  // Lightweight RAG provenance (29D) for the hiring question materialization
+  // AI call ONLY — IDs only, never duplicates retrieved chunk text. Absent
+  // when RAG was disabled/not configured for this interview.
+  knowledgeContext?: IKnowledgeContextProvenance;
   topic: string;
   difficulty: 'beginner' | 'intermediate' | 'advanced' | 'expert';
   experienceYears: number;
@@ -512,6 +530,23 @@ const aiUsageSchema = new Schema<IAIUsage>(
   { _id: false }
 );
 
+const knowledgeContextSourceSchema = new Schema<IKnowledgeContextSource>(
+  {
+    knowledgeBaseId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeBase', required: true },
+    documentId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeDocument', required: true },
+    chunkId: { type: Schema.Types.ObjectId, ref: 'OrganizationKnowledgeChunk', required: true },
+  },
+  { _id: false }
+);
+
+const knowledgeContextProvenanceSchema = new Schema<IKnowledgeContextProvenance>(
+  {
+    enabled: { type: Boolean, required: true, default: false },
+    sources: { type: [knowledgeContextSourceSchema], default: [] },
+  },
+  { _id: false }
+);
+
 const finalReportSchema = new Schema<IFinalReport>(
   {
     overallScore: {
@@ -647,6 +682,7 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       type: String,
       enum: ['pending', 'processing', 'completed', 'failed'],
     },
+    knowledgeContext: { type: knowledgeContextProvenanceSchema },
     topic: {
       type: String,
       required: [true, 'Topic is required'],

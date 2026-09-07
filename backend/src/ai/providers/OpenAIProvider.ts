@@ -20,6 +20,8 @@ import type {
   GenerateTextResponse,
   GenerateStructuredRequest,
   GenerateStructuredResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
 } from '../types';
 
 function toMetadata(sink: AICallMetadataSink): AIResponseMetadata {
@@ -143,5 +145,14 @@ export class OpenAIProvider implements AIProvider {
       context?.model
     )) as T;
     return { data, metadata: toMetadata(sink) };
+  }
+
+  async generateEmbeddings(request: EmbeddingRequest, context?: AIRequestContext): Promise<AIResult<EmbeddingResponse>> {
+    const sink: AICallMetadataSink = {};
+    const usageContext: AIUsageContext | undefined = context
+      ? { interviewId: context.interviewId, operation: context.operation ?? 'provider-generate-embeddings' }
+      : undefined;
+    const result = await this.service.createEmbeddings(request.inputs, usageContext, sink);
+    return { data: { embeddings: result.embeddings, dimensions: result.dimensions }, metadata: toMetadata(sink) };
   }
 }

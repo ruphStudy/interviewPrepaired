@@ -1,5 +1,6 @@
 import { resolveProvider } from './providerRegistry';
 import { resolveModelRoute } from './modelRouting';
+import { aiConfig } from './config';
 import type { AIOperation } from './modelRouting';
 import type { AIProvider } from './AIProvider';
 import type {
@@ -20,6 +21,8 @@ import type {
   GenerateTextResponse,
   GenerateStructuredRequest,
   GenerateStructuredResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
 } from './types';
 
 /**
@@ -96,6 +99,16 @@ export class AIService {
   ): Promise<AIResult<GenerateStructuredResponse<T>>> {
     const { provider, model } = this.route('generic-structured', providerName);
     return provider.generateStructured<T>(request, { ...context, model: context?.model ?? model });
+  }
+
+  /** Embeddings (29C) — deliberately bypasses `route()`/the chat-model routing table entirely (a different model family); the provider resolves its own embedding model independently. Only `providerName` selects the provider here. */
+  generateEmbeddings(
+    request: EmbeddingRequest,
+    context?: AIRequestContext,
+    providerName?: AIProviderName
+  ): Promise<AIResult<EmbeddingResponse>> {
+    const provider = resolveProvider(providerName ?? aiConfig.defaultProvider);
+    return provider.generateEmbeddings(request, context);
   }
 }
 

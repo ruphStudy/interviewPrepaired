@@ -12,6 +12,7 @@ import EmployerInterviewScenarioQuestionSet, {
 } from '../models/EmployerInterviewScenarioQuestionSet.model';
 import { getAIService } from '../ai';
 import type { AIResponseMetadata } from '../ai';
+import { employerInterviewKnowledgeContextService } from './EmployerInterviewKnowledgeContextService';
 import { getModelPricing } from '../config/openaiPricing';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
@@ -179,7 +180,22 @@ export class EmployerInterviewScenarioQuestionGenerationService {
         .filter((c) => allowedCompetencyNames.has(c.competencyName))
         .map((c) => ({ competencyName: c.competencyName, evidenceSignals: c.evidenceSignals, scoringAnchors: c.scoringAnchors }));
 
-      const prompt = this.buildPrompt(scenario, relevantRubric);
+      const retrievalQuery = [scenario.title, scenario.category, ...scenario.objectives].filter(Boolean).join(' | ');
+      const knowledgeContext = await employerInterviewKnowledgeContextService.buildContext(
+        organization._id.toString(),
+        scenario.interviewId.toString(),
+        retrievalQuery
+      );
+      const knowledgeContextField = {
+        enabled: knowledgeContext.enabled,
+        sources: knowledgeContext.sources.map((s) => ({
+          knowledgeBaseId: s.knowledgeBaseId,
+          documentId: s.documentId,
+          chunkId: s.chunkId,
+        })),
+      };
+
+      const prompt = this.buildPrompt(scenario, relevantRubric, knowledgeContext.promptSection);
       const result = await getAIService().generateStructured<unknown>(
         { prompt, temperature: 0.3, maxTokens: 2500 },
         { organizationId: organization._id.toString(), operation: 'hiring-scenario-question-generation' }
@@ -190,7 +206,10 @@ export class EmployerInterviewScenarioQuestionGenerationService {
 
       const updated = await EmployerInterviewScenarioQuestionSet.findOneAndUpdate(
         { _id: claimed._id },
-        { $set: { status: 'completed', questions, summary, aiUsage, generatedAt: new Date() }, $unset: { errorMessage: 1 } },
+        {
+          $set: { status: 'completed', questions, summary, aiUsage, knowledgeContext: knowledgeContextField, generatedAt: new Date() },
+          $unset: { errorMessage: 1 },
+        },
         { new: true }
       );
       return this.toDetail(updated!);
@@ -212,7 +231,8 @@ export class EmployerInterviewScenarioQuestionGenerationService {
    */
   private buildPrompt(
     scenario: IEmployerInterviewScenario,
-    relevantRubric: Array<{ competencyName: string; evidenceSignals: string[]; scoringAnchors: unknown }>
+    relevantRubric: Array<{ competencyName: string; evidenceSignals: string[]; scoringAnchors: unknown }>,
+    knowledgeContextPromptSection: string
   ): string {
     return `You are creating a professional multi-step workplace assessment SCENARIO question plan for a hiring interview. This is production hiring infrastructure, NOT coaching — questions must collect evidence, never coach the candidate, never reveal ideal answers, never praise/criticize, never personalize based on candidate history (there is no candidate history here).
 
@@ -232,7 +252,7 @@ ${JSON.stringify(scenario.targetCompetencies)}
 
 RELEVANT RUBRIC EXPECTATIONS:
 ${JSON.stringify(relevantRubric)}
-
+${knowledgeContextPromptSection ? `\n${knowledgeContextPromptSection}\n` : ''}
 STRICT RULES:
 - Generate roughly 3-6 questions, sequenced 1..N.
 - Recommended pattern (do not force every type every time): 1 opening, then probe(s), an optional complication, a decision, and an optional reflection.

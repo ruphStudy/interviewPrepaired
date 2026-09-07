@@ -2467,6 +2467,8 @@ export type ListOrganizationKnowledgeBasesResponse = ApiEnvelope<{ knowledgeBase
 export type OrganizationKnowledgeDocumentSourceType = 'file' | 'text';
 export type OrganizationKnowledgeDocumentStatus = 'draft' | 'processing' | 'ready' | 'failed' | 'archived';
 
+export type OrganizationKnowledgeDocumentIndexStatus = 'not_indexed' | 'processing' | 'ready' | 'partial' | 'failed';
+
 export interface OrganizationKnowledgeDocument {
   id: string;
   title: string;
@@ -2483,6 +2485,10 @@ export interface OrganizationKnowledgeDocument {
   createdAt: string;
   updatedAt: string;
   parsedTextPreview?: string;
+  indexStatus: OrganizationKnowledgeDocumentIndexStatus;
+  chunkCount?: number;
+  indexedChunkCount?: number;
+  indexedAt?: string;
 }
 
 export type ListOrganizationKnowledgeDocumentsResponse = ApiEnvelope<{ documents: OrganizationKnowledgeDocument[] }>;
@@ -2492,6 +2498,75 @@ export type UploadOrganizationKnowledgeDocumentResponse = ApiEnvelope<Organizati
 export type CreateOrganizationKnowledgeTextDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
 export type ReprocessOrganizationKnowledgeDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
 export type ArchiveOrganizationKnowledgeDocumentResponse = ApiEnvelope<OrganizationKnowledgeDocument>;
+
+// ============================================================================
+// Organization Knowledge Chunking / Indexing / Retrieval (Sprint 29C) —
+// deterministic chunking + embedding-based indexing/retrieval, employer-
+// internal only. Never exposed to any candidate-facing surface.
+// ============================================================================
+
+export interface IndexOrganizationKnowledgeDocumentResult {
+  documentId: string;
+  indexStatus: OrganizationKnowledgeDocumentIndexStatus;
+  totalChunks: number;
+  indexed: number;
+  failed: number;
+}
+
+export type IndexOrganizationKnowledgeDocumentResponse = ApiEnvelope<IndexOrganizationKnowledgeDocumentResult>;
+export type IndexOrganizationKnowledgeBaseResponse = ApiEnvelope<{
+  documentCount: number;
+  results: Array<IndexOrganizationKnowledgeDocumentResult | { documentId: string; error: string }>;
+}>;
+
+export interface OrganizationKnowledgeRetrievalResultItem {
+  knowledgeBaseId: string;
+  documentId: string;
+  documentTitle: string;
+  chunkId: string;
+  chunkIndex: number;
+  text: string;
+  score: number;
+}
+
+export interface OrganizationKnowledgeRetrievalResult {
+  query: string;
+  results: OrganizationKnowledgeRetrievalResultItem[];
+}
+
+export type SearchOrganizationKnowledgeResponse = ApiEnvelope<OrganizationKnowledgeRetrievalResult>;
+
+// ============================================================================
+// Employer Interview Knowledge Config (Sprint 29D) — per-interview opt-in
+// RAG grounding configuration. Disabled by default.
+// ============================================================================
+
+export interface EmployerInterviewKnowledgeBaseSummary {
+  knowledgeBaseId: string;
+  name: string;
+  status: OrganizationKnowledgeBaseStatus;
+  documentCount: number;
+  indexedChunkCount: number;
+  hasIndexedContent: boolean;
+}
+
+export interface EmployerInterviewKnowledgeConfig {
+  interviewId: string;
+  enabled: boolean;
+  knowledgeBaseIds: string[];
+  maxRetrievedChunks: number;
+  knowledgeBases: EmployerInterviewKnowledgeBaseSummary[];
+  updatedAt?: string;
+}
+
+export interface UpdateEmployerInterviewKnowledgeConfigInput {
+  enabled: boolean;
+  knowledgeBaseIds: string[];
+  maxRetrievedChunks?: number;
+}
+
+export type GetEmployerInterviewKnowledgeConfigResponse = ApiEnvelope<EmployerInterviewKnowledgeConfig>;
+export type UpdateEmployerInterviewKnowledgeConfigResponse = ApiEnvelope<EmployerInterviewKnowledgeConfig>;
 
 // ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
@@ -5053,6 +5128,72 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to archive document');
+    }
+  }
+
+  async indexOrganizationKnowledgeDocument(
+    organizationId: string,
+    knowledgeBaseId: string,
+    documentId: string
+  ): Promise<IndexOrganizationKnowledgeDocumentResponse> {
+    try {
+      const response = await this.api.post<IndexOrganizationKnowledgeDocumentResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/documents/${documentId}/index`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to index document');
+    }
+  }
+
+  async indexOrganizationKnowledgeBase(organizationId: string, knowledgeBaseId: string): Promise<IndexOrganizationKnowledgeBaseResponse> {
+    try {
+      const response = await this.api.post<IndexOrganizationKnowledgeBaseResponse>(
+        `/organizations/${organizationId}/knowledge-bases/${knowledgeBaseId}/index`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to index knowledge base');
+    }
+  }
+
+  /** Employer-internal testing endpoint only — never exposed to candidates. */
+  async searchOrganizationKnowledge(
+    organizationId: string,
+    input: { query: string; knowledgeBaseIds?: string[]; limit?: number }
+  ): Promise<SearchOrganizationKnowledgeResponse> {
+    try {
+      const response = await this.api.post<SearchOrganizationKnowledgeResponse>(`/organizations/${organizationId}/knowledge-retrieval/search`, input);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to search organization knowledge');
+    }
+  }
+
+  async getEmployerInterviewKnowledgeConfig(organizationId: string, interviewId: string): Promise<GetEmployerInterviewKnowledgeConfigResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewKnowledgeConfigResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/knowledge-config`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load knowledge configuration');
+    }
+  }
+
+  async updateEmployerInterviewKnowledgeConfig(
+    organizationId: string,
+    interviewId: string,
+    input: UpdateEmployerInterviewKnowledgeConfigInput
+  ): Promise<UpdateEmployerInterviewKnowledgeConfigResponse> {
+    try {
+      const response = await this.api.put<UpdateEmployerInterviewKnowledgeConfigResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/knowledge-config`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save knowledge configuration');
     }
   }
 

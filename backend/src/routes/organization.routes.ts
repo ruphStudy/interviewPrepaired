@@ -71,6 +71,8 @@ import employerInterviewScenarioSessionController from '../controllers/EmployerI
 import employerInterviewScenarioReportController from '../controllers/EmployerInterviewScenarioReportController';
 import organizationKnowledgeBaseController from '../controllers/OrganizationKnowledgeBaseController';
 import organizationKnowledgeDocumentController from '../controllers/OrganizationKnowledgeDocumentController';
+import organizationKnowledgeIndexController from '../controllers/OrganizationKnowledgeIndexController';
+import employerInterviewKnowledgeConfigController from '../controllers/EmployerInterviewKnowledgeConfigController';
 import {
   MAX_KNOWLEDGE_DOCUMENT_FILE_SIZE_BYTES,
   ALLOWED_KNOWLEDGE_DOCUMENT_EXTENSIONS,
@@ -3475,6 +3477,37 @@ router.post(
   employerInterviewGraphController.buildGraph
 );
 
+// GET/PUT .../interviews/:interviewId/knowledge-config (29D) — opt-in RAG
+// grounding configuration. Disabled by default; never auto-injects
+// organization knowledge without this being explicitly enabled.
+const knowledgeConfigValidation = [
+  body('enabled').optional().isBoolean().withMessage('enabled must be a boolean'),
+  body('knowledgeBaseIds').optional().isArray().withMessage('knowledgeBaseIds must be an array'),
+  body('knowledgeBaseIds.*').optional().isMongoId().withMessage('Invalid knowledge base ID'),
+  body('maxRetrievedChunks').optional().isInt({ min: 1, max: 10 }).withMessage('maxRetrievedChunks must be between 1 and 10'),
+];
+
+router.get(
+  '/:organizationId/interviews/:interviewId/knowledge-config',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerInterviewKnowledgeConfigController.getConfig
+);
+
+router.put(
+  '/:organizationId/interviews/:interviewId/knowledge-config',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...knowledgeConfigValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewKnowledgeConfigController.updateConfig
+);
+
 // GET/POST .../interviews/:interviewId/questions/:questionIndex/follow-up-route
 // (27B) — targeted dynamic follow-up ROUTING, not coaching. At most one
 // generated follow-up per source question; a dynamic follow-up is never
@@ -3882,6 +3915,44 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
   organizationKnowledgeDocumentController.archiveDocument
+);
+
+const knowledgeRetrievalSearchValidation = [
+  body('query').isString().trim().isLength({ min: 1, max: 500 }).withMessage('query is required (max 500 characters)'),
+  body('knowledgeBaseIds').optional().isArray().withMessage('knowledgeBaseIds must be an array'),
+  body('knowledgeBaseIds.*').optional().isMongoId().withMessage('Invalid knowledge base ID'),
+  body('limit').optional().isInt({ min: 1, max: 10 }).withMessage('limit must be between 1 and 10'),
+];
+
+router.post(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/documents/:documentId/index',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  ...knowledgeDocumentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeIndexController.indexDocument
+);
+
+router.post(
+  '/:organizationId/knowledge-bases/:knowledgeBaseId/index',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeBaseIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_MANAGE),
+  organizationKnowledgeIndexController.indexKnowledgeBase
+);
+
+router.post(
+  '/:organizationId/knowledge-retrieval/search',
+  protect,
+  ...organizationIdValidation,
+  ...knowledgeRetrievalSearchValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.QUESTION_SETS_VIEW),
+  organizationKnowledgeIndexController.search
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

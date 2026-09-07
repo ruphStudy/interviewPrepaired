@@ -16,6 +16,8 @@ import type {
   GenerateTextResponse,
   GenerateStructuredRequest,
   GenerateStructuredResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
 } from './types';
 
 /**
@@ -47,4 +49,7 @@ export interface AIProvider {
     request: GenerateStructuredRequest,
     context?: AIRequestContext
   ): Promise<AIResult<GenerateStructuredResponse<T>>>;
+
+  /** Embeddings (29C) — a distinct model family from the chat-completion methods above; never breaks/changes any existing generation method. */
+  generateEmbeddings(request: EmbeddingRequest, context?: AIRequestContext): Promise<AIResult<EmbeddingResponse>>;
 }

@@ -1136,6 +1136,59 @@ Performance by Question:\n`;
   }
 
   /**
+   * Embeddings (29C) — a distinct OpenAI API/model family from
+   * `callOpenAI`'s chat completions; reuses the SAME singleton client/API
+   * key, own model default (`OPENAI_EMBEDDING_MODEL`, no chat-model
+   * fallback mixed in). `inputs` must be plain chunk/query text only —
+   * never candidate/organization-identifying content beyond the text
+   * itself. Usage is recorded via the SAME `recordAIUsage` convention as
+   * `callOpenAI` (only when `usageContext.interviewId` is present —
+   * organization-level indexing calls have no interview to attribute to
+   * and are simply not recorded there).
+   */
+  async createEmbeddings(
+    inputs: string[],
+    usageContext?: AIUsageContext,
+    metadataSink?: AICallMetadataSink
+  ): Promise<{ embeddings: number[][]; model: string; dimensions: number }> {
+    try {
+      const modelToUse = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+      const response = await this.client.embeddings.create({ model: modelToUse, input: inputs });
+
+      const embeddings = response.data.map((item) => item.embedding);
+      const dimensions = embeddings[0]?.length ?? 0;
+
+      if (metadataSink) {
+        metadataSink.current = {
+          model: response.model || modelToUse,
+          promptTokens: response.usage?.prompt_tokens ?? 0,
+          cachedTokens: 0,
+          completionTokens: 0,
+          totalTokens: response.usage?.total_tokens ?? 0,
+        };
+      }
+
+      if (usageContext?.interviewId && response.usage) {
+        await recordAIUsage({
+          interviewId: usageContext.interviewId,
+          operation: usageContext.operation,
+          questionIndex: usageContext.questionIndex,
+          model: response.model || modelToUse,
+          promptTokens: response.usage.prompt_tokens,
+          cachedTokens: 0,
+          completionTokens: 0,
+          totalTokens: response.usage.total_tokens,
+        });
+      }
+
+      return { embeddings, model: response.model || modelToUse, dimensions };
+    } catch (error: any) {
+      console.error('[OpenAIService] Embedding error:', error.message);
+      throw new Error(`OpenAI embedding API error: ${error.message}`);
+    }
+  }
+
+  /**
    * Safely parse JSON with fallback handling for common AI response issues
    */
   private safeParseJSON(content: string): any {
