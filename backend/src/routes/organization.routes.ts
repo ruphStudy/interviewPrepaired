@@ -76,6 +76,8 @@ import employerInterviewKnowledgeConfigController from '../controllers/EmployerI
 import employerCodingQuestionController from '../controllers/EmployerCodingQuestionController';
 import employerCodingTestCaseController from '../controllers/EmployerCodingTestCaseController';
 import employerCodingAssessmentSessionController from '../controllers/EmployerCodingAssessmentSessionController';
+import employerCodingExecutionController from '../controllers/EmployerCodingExecutionController';
+import employerCodingEvaluationController from '../controllers/EmployerCodingEvaluationController';
 import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
 import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
@@ -4172,6 +4174,47 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerCodingAssessmentSessionController.getSession
+);
+
+// ---- Code Execution (30C, employer-internal read) — full detail including
+// hidden test results. Read-only; the candidate token flow is the only
+// place a run is ever triggered. ----
+const submissionIdValidation = [param('submissionId').isMongoId().withMessage('Invalid submission ID')];
+
+router.get(
+  '/:organizationId/interviews/:interviewId/coding-submissions/:submissionId/execution',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...submissionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCodingExecutionController.getExecution
+);
+
+// ---- Coding Evaluation Intelligence (30D) — employer-internal AI
+// evaluation of a submitted attempt using its 30C execution results. Never
+// candidate/public-reachable. ----
+router.post(
+  '/:organizationId/interviews/:interviewId/coding-submissions/:submissionId/evaluate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...submissionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCodingEvaluationController.generateEvaluation
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/coding-submissions/:submissionId/evaluate',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...submissionIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerCodingEvaluationController.getEvaluation
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

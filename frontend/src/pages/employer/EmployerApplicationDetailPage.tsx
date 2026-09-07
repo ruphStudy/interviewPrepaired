@@ -74,6 +74,8 @@ import employerApi, {
   EmployerInterviewKnowledgeAnalytics,
   EmployerCodingQuestionSummary,
   EmployerCodingAssessmentSession,
+  EmployerCodingExecution,
+  EmployerCodingEvaluation,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -747,6 +749,32 @@ const KNOWLEDGE_CLAIM_NOTE: Record<string, string> = {
   unverifiable: 'Cannot be verified from the retrieved organization knowledge.',
 };
 
+const CORRECTNESS_BADGE: Record<string, string> = {
+  strong: 'badge-success',
+  sufficient: 'badge-success',
+  partial: 'badge-warning',
+  insufficient: 'badge-warning',
+};
+const QUALITY_BADGE: Record<string, string> = {
+  strong: 'badge-success',
+  sufficient: 'badge-success',
+  limited: 'badge-warning',
+  insufficient: 'badge-warning',
+};
+const EVIDENCE_STATE_BADGE: Record<string, string> = {
+  strong: 'badge-success',
+  sufficient: 'badge-success',
+  partial: 'badge-warning',
+  insufficient: 'badge-warning',
+  not_observed: 'badge-neutral',
+};
+const EXECUTION_RESULT_BADGE: Record<string, string> = {
+  passed: 'badge-success',
+  failed: 'badge-warning',
+  runtime_error: 'badge-warning',
+  timeout: 'badge-warning',
+};
+
 /**
  * Application detail (18D). Readable with only ORGANIZATION_VIEW — editing
  * (notes/source) and status actions require INTERVIEWS_MANAGE on a
@@ -859,6 +887,15 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [selectedCodingQuestionIds, setSelectedCodingQuestionIds] = useState<string[]>([]);
   const [savingCodingSession, setSavingCodingSession] = useState(false);
   const [saveCodingSessionError, setSaveCodingSessionError] = useState<string | null>(null);
+
+  const [codingExecutionBySubmission, setCodingExecutionBySubmission] = useState<Record<string, EmployerCodingExecution>>({});
+  const [codingExecutionLoadingBySubmission, setCodingExecutionLoadingBySubmission] = useState<Record<string, boolean>>({});
+  const [codingExecutionErrorBySubmission, setCodingExecutionErrorBySubmission] = useState<Record<string, string>>({});
+
+  const [codingEvaluationBySubmission, setCodingEvaluationBySubmission] = useState<Record<string, EmployerCodingEvaluation>>({});
+  const [codingEvaluationLoadingBySubmission, setCodingEvaluationLoadingBySubmission] = useState<Record<string, boolean>>({});
+  const [codingEvaluationErrorBySubmission, setCodingEvaluationErrorBySubmission] = useState<Record<string, string>>({});
+  const [codingEvaluationGeneratingBySubmission, setCodingEvaluationGeneratingBySubmission] = useState<Record<string, boolean>>({});
 
   const [sessionQuestions, setSessionQuestions] = useState<EmployerInterviewSessionQuestions | null>(null);
   const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
@@ -1475,6 +1512,66 @@ const EmployerApplicationDetailPage: React.FC = () => {
         .catch(() => {});
     }
   }, [isSyncing, activeOrganization, canManage, interviewSession?.id, organizationId]);
+
+  const fetchCodingExecution = useCallback(
+    async (submissionId: string) => {
+      if (!organizationId || !interviewSession) return;
+      setCodingExecutionLoadingBySubmission((prev) => ({ ...prev, [submissionId]: true }));
+      setCodingExecutionErrorBySubmission((prev) => ({ ...prev, [submissionId]: '' }));
+      try {
+        const response = await employerApi.getEmployerCodingExecution(organizationId, interviewSession.id, submissionId);
+        setCodingExecutionBySubmission((prev) => ({ ...prev, [submissionId]: response.data }));
+      } catch (err: any) {
+        setCodingExecutionErrorBySubmission((prev) => ({ ...prev, [submissionId]: err.message || 'Failed to load execution results' }));
+      } finally {
+        setCodingExecutionLoadingBySubmission((prev) => ({ ...prev, [submissionId]: false }));
+      }
+    },
+    [organizationId, interviewSession]
+  );
+
+  const fetchCodingEvaluation = useCallback(
+    async (submissionId: string) => {
+      if (!organizationId || !interviewSession) return;
+      setCodingEvaluationLoadingBySubmission((prev) => ({ ...prev, [submissionId]: true }));
+      setCodingEvaluationErrorBySubmission((prev) => ({ ...prev, [submissionId]: '' }));
+      try {
+        const response = await employerApi.getEmployerCodingEvaluation(organizationId, interviewSession.id, submissionId);
+        setCodingEvaluationBySubmission((prev) => ({ ...prev, [submissionId]: response.data }));
+      } catch (err: any) {
+        setCodingEvaluationErrorBySubmission((prev) => ({ ...prev, [submissionId]: err.message || 'Failed to load coding evaluation' }));
+      } finally {
+        setCodingEvaluationLoadingBySubmission((prev) => ({ ...prev, [submissionId]: false }));
+      }
+    },
+    [organizationId, interviewSession]
+  );
+
+  useEffect(() => {
+    if (codingSession?.configured) {
+      for (const q of codingSession.questions ?? []) {
+        for (const s of q.submissions) {
+          fetchCodingExecution(s.id);
+          fetchCodingEvaluation(s.id);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codingSession?.configured, codingSession?.questions?.length]);
+
+  const handleGenerateCodingEvaluation = async (submissionId: string) => {
+    if (!organizationId || !interviewSession) return;
+    setCodingEvaluationGeneratingBySubmission((prev) => ({ ...prev, [submissionId]: true }));
+    setCodingEvaluationErrorBySubmission((prev) => ({ ...prev, [submissionId]: '' }));
+    try {
+      const response = await employerApi.generateEmployerCodingEvaluation(organizationId, interviewSession.id, submissionId);
+      setCodingEvaluationBySubmission((prev) => ({ ...prev, [submissionId]: response.data }));
+    } catch (err: any) {
+      setCodingEvaluationErrorBySubmission((prev) => ({ ...prev, [submissionId]: err.message || 'Failed to evaluate coding submission' }));
+    } finally {
+      setCodingEvaluationGeneratingBySubmission((prev) => ({ ...prev, [submissionId]: false }));
+    }
+  };
 
   const handleSaveCodingSession = async () => {
     if (!organizationId || !interviewSession) return;
@@ -5769,17 +5866,143 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           <p className="text-xs text-mentor-text-muted mt-1">No submissions yet.</p>
                         ) : (
                           <div className="mt-2 space-y-2">
-                            {q.submissions.map((s) => (
-                              <div key={s.attemptNumber} className="text-xs">
-                                <p className="text-mentor-text-secondary">
-                                  Attempt {s.attemptNumber} &middot; {s.language} &middot;{' '}
-                                  {s.submittedAt ? new Date(s.submittedAt).toLocaleString() : ''}
-                                </p>
-                                <pre className="surface-muted p-2 mt-1 font-mono whitespace-pre-wrap text-[11px] text-mentor-text max-h-48 overflow-y-auto">
-                                  {s.sourceCode}
-                                </pre>
-                              </div>
-                            ))}
+                            {q.submissions.map((s) => {
+                              const execution = codingExecutionBySubmission[s.id];
+                              const evaluation = codingEvaluationBySubmission[s.id];
+                              return (
+                                <div key={s.id} className="text-xs border border-mentor-border rounded-lg p-2">
+                                  <p className="text-mentor-text-secondary">
+                                    Attempt {s.attemptNumber} &middot; {s.language} &middot;{' '}
+                                    {s.submittedAt ? new Date(s.submittedAt).toLocaleString() : ''}
+                                  </p>
+                                  <pre className="surface-muted p-2 mt-1 font-mono whitespace-pre-wrap text-[11px] text-mentor-text max-h-48 overflow-y-auto">
+                                    {s.sourceCode}
+                                  </pre>
+
+                                  <div className="mt-2 pt-2 border-t border-mentor-border">
+                                    <p className="font-medium text-mentor-text mb-1">Execution Results</p>
+                                    {codingExecutionLoadingBySubmission[s.id] ? (
+                                      <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                    ) : codingExecutionErrorBySubmission[s.id] ? (
+                                      <p className="text-mentor-error">{codingExecutionErrorBySubmission[s.id]}</p>
+                                    ) : !execution || !execution.executed ? (
+                                      <p className="text-mentor-text-muted">Not executed.</p>
+                                    ) : execution.status === 'executor_unavailable' ? (
+                                      <p className="text-mentor-warning">Execution unavailable — no secure code runner is configured.</p>
+                                    ) : execution.status === 'running' || execution.status === 'pending' ? (
+                                      <p className="text-mentor-text-secondary">Running...</p>
+                                    ) : execution.status === 'failed' ? (
+                                      <p className="text-mentor-error">{execution.errorMessage || 'Execution failed.'}</p>
+                                    ) : execution.status === 'timeout' ? (
+                                      <p className="text-mentor-warning">Execution timed out.</p>
+                                    ) : (
+                                      <div className="space-y-1.5">
+                                        <p className="text-mentor-text">
+                                          {execution.summary?.passedTests}/{execution.summary?.totalTests} tests passed (
+                                          {execution.summary?.passPercent}%) &middot; sample {execution.summary?.samplePassed}/
+                                          {execution.summary?.sampleTests} &middot; hidden {execution.summary?.hiddenPassed}/
+                                          {execution.summary?.hiddenTests}
+                                        </p>
+                                        {(execution.results ?? []).map((r, i) => (
+                                          <div key={i} className="flex items-center gap-2">
+                                            <span className={`badge ${EXECUTION_RESULT_BADGE[r.status] || 'badge-neutral'}`}>
+                                              {r.type === 'hidden' ? `Hidden test — ${labelizeCode(r.status)}` : labelizeCode(r.status)}
+                                            </span>
+                                            {r.type === 'sample' && r.actualOutput && (
+                                              <span className="text-mentor-text-muted font-mono truncate max-w-[200px]">{r.actualOutput}</span>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-2 pt-2 border-t border-mentor-border">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <p className="font-medium text-mentor-text">Coding Evaluation</p>
+                                      {canManage && (
+                                        <button
+                                          onClick={() => handleGenerateCodingEvaluation(s.id)}
+                                          disabled={codingEvaluationGeneratingBySubmission[s.id]}
+                                          className="btn btn-secondary px-2 py-1 text-[11px]"
+                                        >
+                                          {codingEvaluationGeneratingBySubmission[s.id] ? 'Evaluating...' : 'Evaluate Coding Submission'}
+                                        </button>
+                                      )}
+                                    </div>
+                                    {codingEvaluationLoadingBySubmission[s.id] ? (
+                                      <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                                    ) : codingEvaluationErrorBySubmission[s.id] ? (
+                                      <p className="text-mentor-error">{codingEvaluationErrorBySubmission[s.id]}</p>
+                                    ) : !evaluation || !evaluation.evaluated ? (
+                                      <p className="text-mentor-text-muted">Not evaluated.</p>
+                                    ) : evaluation.status === 'processing' ? (
+                                      <p className="text-mentor-text-secondary">Evaluating...</p>
+                                    ) : evaluation.status === 'failed' ? (
+                                      <p className="text-mentor-error">{evaluation.errorMessage || 'Coding evaluation failed.'}</p>
+                                    ) : (
+                                      <div className="space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-mentor-text-muted">Correctness:</span>
+                                          <span className={`badge ${CORRECTNESS_BADGE[evaluation.correctness?.assessment || ''] || 'badge-neutral'}`}>
+                                            {labelizeCode(evaluation.correctness?.assessment)} ({evaluation.correctness?.executionPassPercent}%)
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <p className="text-mentor-text-muted mb-1">Code Quality</p>
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {evaluation.codeQuality &&
+                                              Object.entries(evaluation.codeQuality).map(([k, v]) => (
+                                                <span key={k} className={`badge ${QUALITY_BADGE[v] || 'badge-neutral'}`}>
+                                                  {labelizeCode(k)}: {labelizeCode(v)}
+                                                </span>
+                                              ))}
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <p className="text-mentor-text-muted mb-1">Reasoning</p>
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {evaluation.reasoning &&
+                                              Object.entries(evaluation.reasoning).map(([k, v]) => (
+                                                <span key={k} className={`badge ${QUALITY_BADGE[v] || 'badge-neutral'}`}>
+                                                  {labelizeCode(k)}: {labelizeCode(v)}
+                                                </span>
+                                              ))}
+                                          </div>
+                                        </div>
+                                        {(evaluation.competencyEvidence?.length ?? 0) > 0 && (
+                                          <div>
+                                            <p className="text-mentor-text-muted mb-1">Competency Evidence</p>
+                                            <div className="space-y-1">
+                                              {evaluation.competencyEvidence!.map((c) => (
+                                                <div key={c.competencyName}>
+                                                  <span className={`badge ${EVIDENCE_STATE_BADGE[c.evidenceState] || 'badge-neutral'}`}>
+                                                    {c.competencyName}: {labelizeCode(c.evidenceState)}
+                                                  </span>
+                                                  {c.evidence.length > 0 && (
+                                                    <span className="text-mentor-text-muted ml-1">— {c.evidence.join('; ')}</span>
+                                                  )}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {(evaluation.strengths?.length ?? 0) > 0 && (
+                                          <p className="text-mentor-success">Strengths: {evaluation.strengths!.join('; ')}</p>
+                                        )}
+                                        {(evaluation.concerns?.length ?? 0) > 0 && (
+                                          <p className="text-mentor-warning">Concerns: {evaluation.concerns!.join('; ')}</p>
+                                        )}
+                                        {(evaluation.evidence?.length ?? 0) > 0 && (
+                                          <p className="text-mentor-text-muted">Evidence: {evaluation.evidence!.join('; ')}</p>
+                                        )}
+                                        {evaluation.summary && <p className="text-mentor-text">{evaluation.summary}</p>}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

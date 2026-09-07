@@ -8,6 +8,7 @@ import publicEmployerInterviewInvitationApi, {
   PublicScenarioListItem,
   PublicScenarioStepDetail,
   PublicCodingSessionDetail,
+  PublicCodingExecutionDetail,
 } from '../api/publicEmployerInterviewInvitationApi';
 import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-react';
 
@@ -77,6 +78,9 @@ const EmployerInterviewInvitePage: React.FC = () => {
   const [saveCodingDraftError, setSaveCodingDraftError] = useState<string | null>(null);
   const [submittingCode, setSubmittingCode] = useState(false);
   const [submitCodeError, setSubmitCodeError] = useState<string | null>(null);
+  const [codingExecutionByQuestion, setCodingExecutionByQuestion] = useState<Record<string, PublicCodingExecutionDetail>>({});
+  const [runningTestsByQuestion, setRunningTestsByQuestion] = useState<Record<string, boolean>>({});
+  const [runTestsErrorByQuestion, setRunTestsErrorByQuestion] = useState<Record<string, string>>({});
 
   const fetchInvitation = useCallback(async () => {
     if (!token) return;
@@ -302,6 +306,22 @@ const EmployerInterviewInvitePage: React.FC = () => {
       setSubmitCodeError(err.message || 'Failed to submit code');
     } finally {
       setSubmittingCode(false);
+    }
+  };
+
+  const handleRunTests = async () => {
+    if (!token || !currentCodingQuestion) return;
+    const latestSubmission = currentCodingQuestion.submissions[currentCodingQuestion.submissions.length - 1];
+    if (!latestSubmission) return;
+    setRunningTestsByQuestion((prev) => ({ ...prev, [currentCodingQuestion.id]: true }));
+    setRunTestsErrorByQuestion((prev) => ({ ...prev, [currentCodingQuestion.id]: '' }));
+    try {
+      const response = await publicEmployerInterviewInvitationApi.runPublicCodingSubmission(token, currentCodingQuestion.id, latestSubmission.id);
+      setCodingExecutionByQuestion((prev) => ({ ...prev, [currentCodingQuestion.id]: response.data }));
+    } catch (err: any) {
+      setRunTestsErrorByQuestion((prev) => ({ ...prev, [currentCodingQuestion.id]: err.message || 'Failed to run tests' }));
+    } finally {
+      setRunningTestsByQuestion((prev) => ({ ...prev, [currentCodingQuestion.id]: false }));
     }
   };
 
@@ -705,10 +725,63 @@ const EmployerInterviewInvitePage: React.FC = () => {
                           <div className="pt-2 border-t border-mentor-border">
                             <p className="text-xs font-medium text-mentor-text mb-1">Submission History</p>
                             {currentCodingQuestion.submissions.map((s) => (
-                              <p key={s.attemptNumber} className="text-xs text-mentor-text-secondary">
+                              <p key={s.id} className="text-xs text-mentor-text-secondary">
                                 Attempt {s.attemptNumber} &middot; {s.language} &middot; {s.submittedAt ? new Date(s.submittedAt).toLocaleString() : ''}
                               </p>
                             ))}
+
+                            <div className="mt-2">
+                              <button
+                                onClick={handleRunTests}
+                                disabled={runningTestsByQuestion[currentCodingQuestion.id]}
+                                className="btn btn-secondary"
+                              >
+                                {runningTestsByQuestion[currentCodingQuestion.id] ? 'Running...' : 'Run Tests'}
+                              </button>
+                              {runTestsErrorByQuestion[currentCodingQuestion.id] && (
+                                <p className="text-sm text-mentor-error mt-1">{runTestsErrorByQuestion[currentCodingQuestion.id]}</p>
+                              )}
+
+                              {(() => {
+                                const execution = codingExecutionByQuestion[currentCodingQuestion.id];
+                                if (!execution || !execution.executed) return null;
+                                if (execution.status === 'executor_unavailable') {
+                                  return <p className="text-sm text-mentor-warning mt-2">Execution unavailable right now — please try again later.</p>;
+                                }
+                                if (execution.status === 'running' || execution.status === 'pending') {
+                                  return <p className="text-sm text-mentor-text-secondary mt-2">Running...</p>;
+                                }
+                                if (execution.status === 'timeout') {
+                                  return <p className="text-sm text-mentor-warning mt-2">Execution timed out.</p>;
+                                }
+                                if (execution.status === 'failed') {
+                                  return <p className="text-sm text-mentor-error mt-2">Execution could not complete. You may try again.</p>;
+                                }
+                                return (
+                                  <div className="mt-2 space-y-1.5">
+                                    <p className="text-sm font-medium text-mentor-text">
+                                      {execution.summary?.passedTests} / {execution.summary?.totalTests} tests passed
+                                    </p>
+                                    {(execution.results ?? []).map((r, i) =>
+                                      'label' in r ? (
+                                        <p key={i} className="text-xs text-mentor-text-secondary">
+                                          {r.label} — {r.status === 'passed' ? 'Passed' : r.status === 'timeout' ? 'Timed out' : r.status === 'runtime_error' ? 'Runtime Error' : 'Failed'}
+                                        </p>
+                                      ) : (
+                                        <div key={i} className="surface-muted p-2 text-xs">
+                                          <p className="font-medium text-mentor-text">
+                                            {r.status === 'passed' ? 'Passed' : r.status === 'timeout' ? 'Timed out' : r.status === 'runtime_error' ? 'Runtime Error' : 'Failed'}
+                                          </p>
+                                          {r.input !== undefined && <p className="text-mentor-text-muted">Input: {r.input}</p>}
+                                          {r.expectedOutput !== undefined && <p className="text-mentor-text-muted">Expected: {r.expectedOutput}</p>}
+                                          {r.actualOutput !== undefined && <p className="text-mentor-text-muted">Actual: {r.actualOutput}</p>}
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </div>
                           </div>
                         )}
 

@@ -20,6 +20,7 @@ import EmployerCodingQuestion, { IEmployerCodingQuestion } from '../models/Emplo
 import EmployerCodingTestCase from '../models/EmployerCodingTestCase.model';
 import EmployerCodingAssessmentSession, { IEmployerCodingAssessmentSession } from '../models/EmployerCodingAssessmentSession.model';
 import EmployerCodingSubmission from '../models/EmployerCodingSubmission.model';
+import { employerCodingExecutionService } from './EmployerCodingExecutionService';
 import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { employerJobApplicationService } from './EmployerJobApplicationService';
@@ -733,6 +734,47 @@ export class PublicEmployerInterviewInvitationService {
     return this.toCandidateCodingSessionDetail(session);
   }
 
+  /**
+   * POST /public/employer-interview-invitations/:token/session/coding/:codingQuestionId/submissions/:submissionId/run
+   * (30C) — the candidate may only run THEIR OWN already-submitted attempt;
+   * `submissionId` is re-validated against the exact org/interview/session/
+   * question chain derived from the token, never trusted alone. NO AI. The
+   * candidate-safe projection here NEVER exposes hidden test input/expected/
+   * actual output — only a bare `passed/failed/runtime_error/timeout`
+   * status per hidden test.
+   */
+  async runCodingSubmission(rawToken: string, codingQuestionId: string, submissionId: string): Promise<Record<string, unknown>> {
+    const { interview, session, question } = await this.resolveCodingQuestionForSubmission(rawToken, codingQuestionId);
+
+    const submission = await EmployerCodingSubmission.findOne({
+      _id: submissionId,
+      organizationId: interview.organizationId,
+      codingSessionId: session._id,
+      codingQuestionId: question._id,
+    });
+    if (!submission || submission.status === 'draft') {
+      throw this.notFoundError();
+    }
+
+    const execution = await employerCodingExecutionService.runExecutionForSubmission(
+      interview.organizationId!,
+      interview._id,
+      session._id,
+      question._id,
+      submission._id.toString()
+    );
+
+    const sampleTestCases = await EmployerCodingTestCase.find({
+      organizationId: interview.organizationId,
+      codingQuestionId: question._id,
+      type: 'sample',
+      status: 'active',
+    });
+    const testCasesById = new Map(sampleTestCases.map((t) => [t._id.toString(), t]));
+
+    return employerCodingExecutionService.toCandidateDetail(execution, testCasesById);
+  }
+
   /** Shared token -> ACCEPTED-invitation -> hiring-assessment-interview resolution for the 30B coding endpoints. Collapses every invalid/foreign/broken reference to the same generic 404. */
   private async resolveAcceptedHiringInterview(rawToken: string): Promise<{ invitation: InstanceType<typeof EmployerInterviewInvitation>; interview: IInterview }> {
     this.assertTokenFormat(rawToken);
@@ -847,7 +889,12 @@ export class PublicEmployerInterviewInvitationService {
           maxAttempts: MAX_CODING_ATTEMPTS,
         },
         draft: draft ? { language: draft.language, sourceCode: draft.sourceCode, savedAt: draft.savedAt } : null,
-        submissions: submittedAttempts.map((s) => ({ attemptNumber: s.attemptNumber, language: s.language, submittedAt: s.submittedAt })),
+        submissions: submittedAttempts.map((s) => ({
+          id: s._id.toString(),
+          attemptNumber: s.attemptNumber,
+          language: s.language,
+          submittedAt: s.submittedAt,
+        })),
       };
     });
 

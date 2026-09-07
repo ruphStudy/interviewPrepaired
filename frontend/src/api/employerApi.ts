@@ -3662,6 +3662,7 @@ export type ArchiveEmployerCodingTestCaseResponse = ApiEnvelope<EmployerCodingTe
 export type EmployerCodingAssessmentSessionStatus = 'not_started' | 'in_progress' | 'submitted' | 'completed';
 
 export interface EmployerCodingSessionSubmissionDetail {
+  id: string;
   attemptNumber: number;
   language: string;
   sourceCode: string;
@@ -3691,6 +3692,85 @@ export interface EmployerCodingAssessmentSession {
 
 export type GetEmployerCodingAssessmentSessionResponse = ApiEnvelope<EmployerCodingAssessmentSession>;
 export type CreateOrUpdateEmployerCodingAssessmentSessionResponse = ApiEnvelope<EmployerCodingAssessmentSession>;
+
+// ============================================================================
+// Code Execution (Sprint 30C, employer-internal read) — deterministic, NO
+// AI. Full detail including hidden test results. Read-only; the candidate
+// token flow is the only place a run is ever triggered.
+// ============================================================================
+
+export type EmployerCodingExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'timeout' | 'executor_unavailable';
+export type EmployerCodingTestResultStatus = 'passed' | 'failed' | 'runtime_error' | 'timeout';
+
+export interface EmployerCodingExecutionResult {
+  testCaseId: string;
+  type: 'sample' | 'hidden';
+  status: EmployerCodingTestResultStatus;
+  durationMs?: number;
+  memoryMb?: number;
+  actualOutput?: string;
+  errorMessage?: string;
+}
+
+export interface EmployerCodingExecutionSummary {
+  totalTests: number;
+  passedTests: number;
+  failedTests: number;
+  hiddenTests: number;
+  hiddenPassed: number;
+  sampleTests: number;
+  samplePassed: number;
+  passPercent: number;
+}
+
+export interface EmployerCodingExecution {
+  executed: boolean;
+  status?: EmployerCodingExecutionStatus;
+  language?: string;
+  results?: EmployerCodingExecutionResult[];
+  summary?: EmployerCodingExecutionSummary;
+  executionEnvironment?: { provider: string; runtime?: string; version?: string };
+  startedAt?: string;
+  completedAt?: string;
+  errorMessage?: string;
+}
+
+export type GetEmployerCodingExecutionResponse = ApiEnvelope<EmployerCodingExecution>;
+
+// ============================================================================
+// Coding Evaluation Intelligence (Sprint 30D, employer-internal) — AI
+// evaluation of a submitted attempt using its 30C execution results. Never
+// exposed to a candidate/public surface. Never a numeric overall score.
+// ============================================================================
+
+export type CorrectnessAssessment = 'strong' | 'sufficient' | 'partial' | 'insufficient';
+export type CodingQualityLevel = 'strong' | 'sufficient' | 'limited' | 'insufficient';
+export type CodingCompetencyEvidenceState = 'strong' | 'sufficient' | 'partial' | 'insufficient' | 'not_observed';
+
+export interface EmployerCodingCompetencyEvidence {
+  competencyName: string;
+  evidenceState: CodingCompetencyEvidenceState;
+  evidence: string[];
+}
+
+export interface EmployerCodingEvaluation {
+  evaluated: boolean;
+  status?: 'processing' | 'completed' | 'failed';
+  errorMessage?: string;
+  evaluationVersion?: string;
+  evaluatedAt?: string;
+  correctness?: { executionPassPercent: number; assessment: CorrectnessAssessment };
+  codeQuality?: { readability: CodingQualityLevel; maintainability: CodingQualityLevel; structure: CodingQualityLevel };
+  reasoning?: { algorithmChoice: CodingQualityLevel; complexityAwareness: CodingQualityLevel; edgeCaseHandling: CodingQualityLevel };
+  strengths?: string[];
+  concerns?: string[];
+  evidence?: string[];
+  competencyEvidence?: EmployerCodingCompetencyEvidence[];
+  summary?: string;
+}
+
+export type GenerateEmployerCodingEvaluationResponse = ApiEnvelope<EmployerCodingEvaluation>;
+export type GetEmployerCodingEvaluationResponse = ApiEnvelope<EmployerCodingEvaluation>;
 
 class EmployerApiService {
   private api: AxiosInstance;
@@ -6208,6 +6288,47 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load coding assessment session');
+    }
+  }
+
+  // ---- Code Execution (30C, employer-internal read) ----
+
+  async getEmployerCodingExecution(organizationId: string, interviewId: string, submissionId: string): Promise<GetEmployerCodingExecutionResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCodingExecutionResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/coding-submissions/${submissionId}/execution`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load execution results');
+    }
+  }
+
+  // ---- Coding Evaluation Intelligence (30D) ----
+
+  async generateEmployerCodingEvaluation(
+    organizationId: string,
+    interviewId: string,
+    submissionId: string
+  ): Promise<GenerateEmployerCodingEvaluationResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerCodingEvaluationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/coding-submissions/${submissionId}/evaluate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to evaluate coding submission');
+    }
+  }
+
+  async getEmployerCodingEvaluation(organizationId: string, interviewId: string, submissionId: string): Promise<GetEmployerCodingEvaluationResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCodingEvaluationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/coding-submissions/${submissionId}/evaluate`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load coding evaluation');
     }
   }
 }

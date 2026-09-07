@@ -117,6 +117,13 @@ export class PublicEmployerInterviewInvitationController {
     const session = await publicEmployerInterviewInvitationService.submitCodingSubmission(token, codingQuestionId, language, sourceCode);
     res.status(200).json(successResponse('Code submitted successfully', session));
   });
+
+  /** POST /api/v1/public/employer-interview-invitations/:token/session/coding/:codingQuestionId/submissions/:submissionId/run (30C) */
+  public runCodingSubmission = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token, codingQuestionId, submissionId } = req.params;
+    const result = await publicEmployerInterviewInvitationService.runCodingSubmission(token, codingQuestionId, submissionId);
+    res.status(200).json(successResponse('Execution processed', result));
+  });
 }
 
 export default new PublicEmployerInterviewInvitationController();

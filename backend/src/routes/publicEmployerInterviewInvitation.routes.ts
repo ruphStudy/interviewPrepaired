@@ -161,4 +161,17 @@ router.post(
   publicEmployerInterviewInvitationController.submitCodingSubmission
 );
 
+// (30C) Executes a submitted attempt's own test cases. NO AI, NO
+// candidate-supplied test data — everything resolves server-side.
+const submissionIdValidation = [param('submissionId').isMongoId().withMessage('Invalid submission ID')];
+
+router.post(
+  '/:token/session/coding/:codingQuestionId/submissions/:submissionId/run',
+  ...tokenValidation,
+  ...codingQuestionIdValidation,
+  ...submissionIdValidation,
+  validate,
+  publicEmployerInterviewInvitationController.runCodingSubmission
+);
+
 export default router;

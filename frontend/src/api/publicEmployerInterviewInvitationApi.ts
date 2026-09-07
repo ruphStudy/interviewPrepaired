@@ -245,6 +245,7 @@ export interface PublicCodingDraft {
 }
 
 export interface PublicCodingSubmissionSummary {
+  id: string;
   attemptNumber: number;
   language: string;
   submittedAt?: string;
@@ -280,6 +281,51 @@ export interface PublicCodingSessionDetail {
 export type GetPublicCodingSessionResponse = ApiEnvelope<PublicCodingSessionDetail>;
 export type SaveCodingDraftResponse = ApiEnvelope<PublicCodingSessionDetail>;
 export type SubmitCodingSubmissionResponse = ApiEnvelope<PublicCodingSessionDetail>;
+
+// ============================================================================
+// Code Execution (Sprint 30C) — candidate-safe deterministic test results.
+// Hidden tests are reduced to a bare label + status, never their content.
+// ============================================================================
+
+export type PublicCodingExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'timeout' | 'executor_unavailable';
+export type PublicCodingResultStatus = 'passed' | 'failed' | 'runtime_error' | 'timeout';
+
+export interface PublicCodingSampleResult {
+  input?: string;
+  expectedOutput?: string;
+  actualOutput?: string;
+  status: PublicCodingResultStatus;
+}
+
+export interface PublicCodingHiddenResult {
+  label: string;
+  status: PublicCodingResultStatus;
+}
+
+export type PublicCodingExecutionResultItem = PublicCodingSampleResult | PublicCodingHiddenResult;
+
+export interface PublicCodingExecutionSummary {
+  totalTests: number;
+  passedTests: number;
+  failedTests: number;
+  hiddenTests: number;
+  hiddenPassed: number;
+  sampleTests: number;
+  samplePassed: number;
+  passPercent: number;
+}
+
+export interface PublicCodingExecutionDetail {
+  executed: boolean;
+  status?: PublicCodingExecutionStatus;
+  language?: string;
+  results?: PublicCodingExecutionResultItem[];
+  summary?: PublicCodingExecutionSummary;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export type RunPublicCodingSubmissionResponse = ApiEnvelope<PublicCodingExecutionDetail>;
 
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
@@ -492,6 +538,18 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to submit code');
+    }
+  }
+
+  /** Executes THIS candidate's own already-submitted attempt against its question's test cases. NO AI. May report `executor_unavailable` when no secure runner is configured. */
+  async runPublicCodingSubmission(token: string, codingQuestionId: string, submissionId: string): Promise<RunPublicCodingSubmissionResponse> {
+    try {
+      const response = await this.api.post<RunPublicCodingSubmissionResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/coding/${codingQuestionId}/submissions/${submissionId}/run`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to run tests');
     }
   }
 }

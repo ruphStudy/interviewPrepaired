@@ -129,6 +129,7 @@ export class EmployerCodingAssessmentSessionService {
         difficulty: question?.difficulty,
         supportedLanguages: question?.supportedLanguages ?? [],
         submissions: questionSubmissions.map((s) => ({
+          id: s._id.toString(),
           attemptNumber: s.attemptNumber,
           language: s.language,
           sourceCode: s.sourceCode,
