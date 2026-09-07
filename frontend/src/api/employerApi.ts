@@ -3845,6 +3845,188 @@ export interface EmployerCodingAssessmentReport {
 export type BuildEmployerCodingAssessmentReportResponse = ApiEnvelope<EmployerCodingAssessmentReport>;
 export type GetEmployerCodingAssessmentReportResponse = ApiEnvelope<EmployerCodingAssessmentReport>;
 
+// ============================================================================
+// Assessment Proctoring Foundation (Sprint 31A) — observable browser/
+// session EVENT TYPES only. NO camera/mic/screen capture, NO biometrics,
+// NO clipboard content, NO cheating score.
+// ============================================================================
+
+export interface EmployerAssessmentProctoringCapture {
+  tabVisibility: boolean;
+  windowBlur: boolean;
+  fullscreenExit: boolean;
+  copyPaste: boolean;
+  navigationAttempt: boolean;
+}
+
+export type EmployerAssessmentProctoringEnforcement = 'informational' | 'warn_candidate';
+
+export interface EmployerAssessmentProctoringConfig {
+  configured: boolean;
+  enabled: boolean;
+  capture: EmployerAssessmentProctoringCapture;
+  enforcement: EmployerAssessmentProctoringEnforcement;
+  configVersion?: string;
+  updatedAt?: string;
+}
+
+export interface EmployerAssessmentProctoringConfigInput {
+  enabled: boolean;
+  capture?: Partial<EmployerAssessmentProctoringCapture>;
+  enforcement?: EmployerAssessmentProctoringEnforcement;
+}
+
+export type GetEmployerAssessmentProctoringConfigResponse = ApiEnvelope<EmployerAssessmentProctoringConfig>;
+export type UpdateEmployerAssessmentProctoringConfigResponse = ApiEnvelope<EmployerAssessmentProctoringConfig>;
+
+export type EmployerAssessmentProctoringEventType =
+  | 'session_started'
+  | 'session_resumed'
+  | 'visibility_hidden'
+  | 'visibility_visible'
+  | 'window_blur'
+  | 'window_focus'
+  | 'fullscreen_exit'
+  | 'fullscreen_enter'
+  | 'copy'
+  | 'paste'
+  | 'navigation_attempt';
+
+export interface EmployerAssessmentProctoringEventSummary {
+  eventType: EmployerAssessmentProctoringEventType;
+  assessmentArea: 'interview' | 'scenario' | 'coding';
+  occurredAt: string;
+  receivedAt: string;
+}
+
+export type ListEmployerAssessmentProctoringEventsResponse = ApiEnvelope<{ events: EmployerAssessmentProctoringEventSummary[] }>;
+
+// ============================================================================
+// Integrity Event Detection (Sprint 31B) — deterministic (NO AI) signals
+// only. NEVER a cheating score/probability/deception detector.
+// ============================================================================
+
+export type EmployerAssessmentIntegritySignalType =
+  | 'repeated_tab_switching'
+  | 'repeated_window_blur'
+  | 'repeated_fullscreen_exit'
+  | 'repeated_copy_paste'
+  | 'navigation_activity';
+export type EmployerAssessmentIntegritySignalLevel = 'low' | 'medium' | 'high';
+export type EmployerAssessmentIntegrityReviewState = 'no_signals' | 'review_suggested';
+
+export interface EmployerAssessmentIntegritySignal {
+  signalType: EmployerAssessmentIntegritySignalType;
+  level: EmployerAssessmentIntegritySignalLevel;
+  eventCount: number;
+  description: string;
+}
+
+export interface EmployerAssessmentIntegritySummary {
+  built: boolean;
+  calculationVersion?: string;
+  generatedAt?: string;
+  eventCounts?: {
+    visibilityHidden: number;
+    windowBlur: number;
+    fullscreenExit: number;
+    copy: number;
+    paste: number;
+    navigationAttempt: number;
+  };
+  signals?: EmployerAssessmentIntegritySignal[];
+  timeline?: { firstEventAt?: string; lastEventAt?: string; totalRecordedEvents: number };
+  reviewState?: EmployerAssessmentIntegrityReviewState;
+}
+
+export type BuildEmployerAssessmentIntegritySummaryResponse = ApiEnvelope<EmployerAssessmentIntegritySummary>;
+export type GetEmployerAssessmentIntegritySummaryResponse = ApiEnvelope<EmployerAssessmentIntegritySummary>;
+
+// ============================================================================
+// Hiring Workflow Automation (Sprint 31C) — deterministic (NO AI) rules
+// over fixed, closed vocabularies only. NEVER automatic hire/reject.
+// ============================================================================
+
+export type EmployerHiringWorkflowTrigger =
+  | 'assessment_completed'
+  | 'interview_finalized'
+  | 'scenario_completed'
+  | 'coding_completed'
+  | 'report_ready';
+export type EmployerHiringWorkflowConditionField =
+  | 'assessment_status'
+  | 'report_available'
+  | 'coding_report_available'
+  | 'scenario_report_available'
+  | 'integrity_review_state';
+export type EmployerHiringWorkflowConditionOperator = 'equals' | 'not_equals';
+export type EmployerHiringWorkflowActionType = 'add_internal_note' | 'notify_hiring_team' | 'move_pipeline_stage';
+
+export interface EmployerHiringWorkflowCondition {
+  field: EmployerHiringWorkflowConditionField;
+  operator: EmployerHiringWorkflowConditionOperator;
+  value: string;
+}
+
+export interface EmployerHiringWorkflowActionConfig {
+  noteText?: string;
+  pipelineStatus?: string;
+}
+
+export interface EmployerHiringWorkflowAction {
+  type: EmployerHiringWorkflowActionType;
+  config: EmployerHiringWorkflowActionConfig;
+}
+
+export interface EmployerHiringWorkflowRule {
+  id: string;
+  jobId: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  status: 'active' | 'archived';
+  trigger: EmployerHiringWorkflowTrigger;
+  conditions: EmployerHiringWorkflowCondition[];
+  actions: EmployerHiringWorkflowAction[];
+  workflowVersion: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployerHiringWorkflowRuleInput {
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  trigger: EmployerHiringWorkflowTrigger;
+  conditions?: EmployerHiringWorkflowCondition[];
+  actions: EmployerHiringWorkflowAction[];
+}
+
+export type CreateEmployerHiringWorkflowRuleResponse = ApiEnvelope<EmployerHiringWorkflowRule>;
+export type ListEmployerHiringWorkflowRulesResponse = ApiEnvelope<{ rules: EmployerHiringWorkflowRule[] }>;
+export type UpdateEmployerHiringWorkflowRuleResponse = ApiEnvelope<EmployerHiringWorkflowRule>;
+export type ArchiveEmployerHiringWorkflowRuleResponse = ApiEnvelope<EmployerHiringWorkflowRule>;
+
+export interface EmployerHiringWorkflowExecutionAction {
+  type: EmployerHiringWorkflowActionType;
+  status: 'completed' | 'skipped' | 'failed';
+  message?: string;
+}
+
+export interface EmployerHiringWorkflowExecution {
+  id: string;
+  ruleId: string;
+  ruleName: string;
+  trigger: EmployerHiringWorkflowTrigger;
+  status: 'processing' | 'completed' | 'skipped' | 'failed';
+  matched: boolean;
+  actions: EmployerHiringWorkflowExecutionAction[];
+  executedAt: string;
+}
+
+export type ListEmployerHiringWorkflowExecutionsResponse = ApiEnvelope<{ executions: EmployerHiringWorkflowExecution[] }>;
+export type EvaluateEmployerHiringWorkflowResponse = ApiEnvelope<{ evaluated: number; results: unknown[] }>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -6426,6 +6608,174 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load coding assessment report');
+    }
+  }
+
+  // ---- Assessment Proctoring Foundation (31A) ----
+
+  async getEmployerAssessmentProctoringConfig(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GetEmployerAssessmentProctoringConfigResponse> {
+    try {
+      const response = await this.api.get<GetEmployerAssessmentProctoringConfigResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/proctoring-config`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load proctoring configuration');
+    }
+  }
+
+  async updateEmployerAssessmentProctoringConfig(
+    organizationId: string,
+    interviewId: string,
+    input: EmployerAssessmentProctoringConfigInput
+  ): Promise<UpdateEmployerAssessmentProctoringConfigResponse> {
+    try {
+      const response = await this.api.put<UpdateEmployerAssessmentProctoringConfigResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/proctoring-config`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save proctoring configuration');
+    }
+  }
+
+  async listEmployerAssessmentProctoringEvents(
+    organizationId: string,
+    interviewId: string
+  ): Promise<ListEmployerAssessmentProctoringEventsResponse> {
+    try {
+      const response = await this.api.get<ListEmployerAssessmentProctoringEventsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/proctoring-events`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load proctoring events');
+    }
+  }
+
+  // ---- Integrity Event Detection (31B) ----
+
+  async buildEmployerAssessmentIntegritySummary(
+    organizationId: string,
+    interviewId: string
+  ): Promise<BuildEmployerAssessmentIntegritySummaryResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerAssessmentIntegritySummaryResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/integrity/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build integrity review');
+    }
+  }
+
+  async getEmployerAssessmentIntegritySummary(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GetEmployerAssessmentIntegritySummaryResponse> {
+    try {
+      const response = await this.api.get<GetEmployerAssessmentIntegritySummaryResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/integrity`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load integrity review');
+    }
+  }
+
+  // ---- Hiring Workflow Automation (31C) ----
+
+  async createEmployerHiringWorkflowRule(
+    organizationId: string,
+    jobId: string,
+    input: EmployerHiringWorkflowRuleInput
+  ): Promise<CreateEmployerHiringWorkflowRuleResponse> {
+    try {
+      const response = await this.api.post<CreateEmployerHiringWorkflowRuleResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/workflow-rules`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create workflow rule');
+    }
+  }
+
+  async listEmployerHiringWorkflowRules(organizationId: string, jobId: string): Promise<ListEmployerHiringWorkflowRulesResponse> {
+    try {
+      const response = await this.api.get<ListEmployerHiringWorkflowRulesResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/workflow-rules`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load workflow rules');
+    }
+  }
+
+  async updateEmployerHiringWorkflowRule(
+    organizationId: string,
+    jobId: string,
+    ruleId: string,
+    input: Partial<EmployerHiringWorkflowRuleInput>
+  ): Promise<UpdateEmployerHiringWorkflowRuleResponse> {
+    try {
+      const response = await this.api.patch<UpdateEmployerHiringWorkflowRuleResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/workflow-rules/${ruleId}`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to update workflow rule');
+    }
+  }
+
+  async archiveEmployerHiringWorkflowRule(
+    organizationId: string,
+    jobId: string,
+    ruleId: string
+  ): Promise<ArchiveEmployerHiringWorkflowRuleResponse> {
+    try {
+      const response = await this.api.post<ArchiveEmployerHiringWorkflowRuleResponse>(
+        `/organizations/${organizationId}/jobs/${jobId}/workflow-rules/${ruleId}/archive`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to archive workflow rule');
+    }
+  }
+
+  async listEmployerHiringWorkflowExecutions(
+    organizationId: string,
+    applicationId: string
+  ): Promise<ListEmployerHiringWorkflowExecutionsResponse> {
+    try {
+      const response = await this.api.get<ListEmployerHiringWorkflowExecutionsResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/workflows/executions`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load workflow activity');
+    }
+  }
+
+  async evaluateEmployerHiringWorkflow(
+    organizationId: string,
+    applicationId: string,
+    trigger: EmployerHiringWorkflowTrigger,
+    interviewId?: string
+  ): Promise<EvaluateEmployerHiringWorkflowResponse> {
+    try {
+      const response = await this.api.post<EvaluateEmployerHiringWorkflowResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/workflows/evaluate`,
+        { trigger, interviewId }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to evaluate workflow');
     }
   }
 }

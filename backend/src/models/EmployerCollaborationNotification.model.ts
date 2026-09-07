@@ -10,7 +10,7 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
  * exists). Never blocks/undoes the source note or collaborator assignment
  * write if a notification write fails.
  */
-export type EmployerCollaborationNotificationType = 'note_mention' | 'collaborator_assigned';
+export type EmployerCollaborationNotificationType = 'note_mention' | 'collaborator_assigned' | 'workflow_automation';
 
 export interface IEmployerCollaborationNotification extends Document {
   organizationId: Types.ObjectId;
@@ -19,7 +19,7 @@ export interface IEmployerCollaborationNotification extends Document {
   applicationId: Types.ObjectId;
   jobId: Types.ObjectId;
   candidateId: Types.ObjectId;
-  /** Note id for `note_mention`; collaborator assignment row id for `collaborator_assigned`. */
+  /** Note id for `note_mention`; collaborator assignment row id for `collaborator_assigned`; workflow execution row id for `workflow_automation`. */
   sourceId: Types.ObjectId;
   actorMembershipId: Types.ObjectId;
   readAt?: Date;
@@ -32,7 +32,7 @@ const employerCollaborationNotificationSchema = new Schema<IEmployerCollaboratio
     recipientMembershipId: { type: Schema.Types.ObjectId, ref: 'OrganizationMember', required: true },
     type: {
       type: String,
-      enum: { values: ['note_mention', 'collaborator_assigned'], message: '{VALUE} is not a valid notification type' },
+      enum: { values: ['note_mention', 'collaborator_assigned', 'workflow_automation'], message: '{VALUE} is not a valid notification type' },
       required: true,
     },
     applicationId: { type: Schema.Types.ObjectId, ref: 'EmployerJobApplication', required: true },

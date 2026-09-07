@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import publicEmployerInterviewInvitationApi, {
   PublicEmployerInterviewInvitation,
@@ -9,6 +9,7 @@ import publicEmployerInterviewInvitationApi, {
   PublicScenarioStepDetail,
   PublicCodingSessionDetail,
   PublicCodingExecutionDetail,
+  PublicProctoringEventType,
 } from '../api/publicEmployerInterviewInvitationApi';
 import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-react';
 
@@ -81,6 +82,13 @@ const EmployerInterviewInvitePage: React.FC = () => {
   const [codingExecutionByQuestion, setCodingExecutionByQuestion] = useState<Record<string, PublicCodingExecutionDetail>>({});
   const [runningTestsByQuestion, setRunningTestsByQuestion] = useState<Record<string, boolean>>({});
   const [runTestsErrorByQuestion, setRunTestsErrorByQuestion] = useState<Record<string, string>>({});
+
+  const [proctoringEnabled, setProctoringEnabled] = useState(false);
+  const [proctoringDisclosure, setProctoringDisclosure] = useState('');
+  const proctoringContextRef = useRef<{ assessmentArea: 'interview' | 'scenario' | 'coding'; scenarioId?: string; codingQuestionId?: string }>({
+    assessmentArea: 'interview',
+  });
+  const lastProctoringEventAtRef = useRef<Record<string, number>>({});
 
   const fetchInvitation = useCallback(async () => {
     if (!token) return;
@@ -249,6 +257,95 @@ const EmployerInterviewInvitePage: React.FC = () => {
       fetchCodingSession();
     }
   }, [invitation?.status, fetchCodingSession]);
+
+  useEffect(() => {
+    if (!token || invitation?.status !== 'accepted') return;
+    publicEmployerInterviewInvitationApi
+      .getPublicProctoringDisclosure(token)
+      .then((response) => {
+        setProctoringEnabled(response.data.enabled);
+        setProctoringDisclosure(response.data.disclosure || '');
+      })
+      .catch(() => {
+        // Non-fatal — proctoring is opt-in; a lookup failure simply leaves it off.
+      });
+  }, [token, invitation?.status]);
+
+  // Kept current every render (never re-attaches listeners) so the fire-and-forget
+  // recorder below always tags an event with the assessment area actually open.
+  useEffect(() => {
+    if (selectedScenarioId) {
+      proctoringContextRef.current = { assessmentArea: 'scenario', scenarioId: selectedScenarioId };
+    } else if (currentCodingQuestion) {
+      proctoringContextRef.current = { assessmentArea: 'coding', codingQuestionId: currentCodingQuestion.id };
+    } else {
+      proctoringContextRef.current = { assessmentArea: 'interview' };
+    }
+  });
+
+  const sendProctoringEvent = useCallback(
+    (eventType: PublicProctoringEventType) => {
+      if (!token) return;
+      // Debounce identical rapid-fire events (e.g. quick blur/focus toggling) — never blocks the browser, purely a client-side rate limit.
+      const now = Date.now();
+      const lastAt = lastProctoringEventAtRef.current[eventType] ?? 0;
+      if (now - lastAt < 500) return;
+      lastProctoringEventAtRef.current[eventType] = now;
+
+      const ctx = proctoringContextRef.current;
+      publicEmployerInterviewInvitationApi
+        .recordPublicProctoringEvent(token, {
+          eventType,
+          assessmentArea: ctx.assessmentArea,
+          metadata:
+            ctx.assessmentArea === 'scenario'
+              ? { scenarioId: ctx.scenarioId }
+              : ctx.assessmentArea === 'coding'
+                ? { codingQuestionId: ctx.codingQuestionId }
+                : undefined,
+          occurredAt: new Date().toISOString(),
+        })
+        .catch(() => {
+          // Best-effort only — never surfaces an error to the candidate for a background proctoring event.
+        });
+    },
+    [token]
+  );
+
+  // Minimal, privacy-conscious browser event listeners (31A) — event TYPE
+  // only, never clipboard content/camera/mic/screen data. Attached only
+  // when the employer has opted in.
+  useEffect(() => {
+    if (!proctoringEnabled) return;
+
+    const handleVisibilityChange = () => sendProctoringEvent(document.hidden ? 'visibility_hidden' : 'visibility_visible');
+    const handleWindowBlur = () => sendProctoringEvent('window_blur');
+    const handleWindowFocus = () => sendProctoringEvent('window_focus');
+    const handleFullscreenChange = () => sendProctoringEvent(document.fullscreenElement ? 'fullscreen_enter' : 'fullscreen_exit');
+    const handleCopy = () => sendProctoringEvent('copy');
+    const handlePaste = () => sendProctoringEvent('paste');
+    const handleBeforeUnload = () => sendProctoringEvent('navigation_attempt');
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('copy', handleCopy);
+    document.addEventListener('paste', handlePaste);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    sendProctoringEvent('session_started');
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('copy', handleCopy);
+      document.removeEventListener('paste', handlePaste);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [proctoringEnabled, sendProctoringEvent]);
 
   const goToCodingQuestion = (index: number) => {
     if (!codingSession?.questions) return;
@@ -437,6 +534,10 @@ const EmployerInterviewInvitePage: React.FC = () => {
             <CheckCircle2 className="w-12 h-12 text-mentor-success mx-auto mb-4" />
             <h2 className="section-title text-lg mb-2">Invitation accepted</h2>
             <p className="text-sm text-mentor-text-secondary mb-4">Your interview is ready for the next step.</p>
+
+            {proctoringEnabled && proctoringDisclosure && (
+              <div className="surface-muted p-3 text-left mb-4 text-xs text-mentor-text-secondary">{proctoringDisclosure}</div>
+            )}
 
             {sessionLoading ? (
               <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />

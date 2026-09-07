@@ -124,6 +124,26 @@ export class PublicEmployerInterviewInvitationController {
     const result = await publicEmployerInterviewInvitationService.runCodingSubmission(token, codingQuestionId, submissionId);
     res.status(200).json(successResponse('Execution processed', result));
   });
+
+  /** GET /api/v1/public/employer-interview-invitations/:token/session/proctoring-disclosure (31A) */
+  public getProctoringDisclosure = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token } = req.params;
+    const result = await publicEmployerInterviewInvitationService.getProctoringDisclosure(token);
+    res.status(200).json(successResponse('Proctoring disclosure retrieved successfully', result));
+  });
+
+  /** POST /api/v1/public/employer-interview-invitations/:token/session/proctoring-events (31A) */
+  public recordProctoringEvent = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token } = req.params;
+    const { eventType, assessmentArea, metadata, occurredAt } = req.body ?? {};
+    const result = await publicEmployerInterviewInvitationService.recordProctoringEvent(token, {
+      eventType,
+      assessmentArea,
+      metadata,
+      occurredAt,
+    });
+    res.status(200).json(successResponse('Proctoring event processed', result));
+  });
 }
 
 export default new PublicEmployerInterviewInvitationController();

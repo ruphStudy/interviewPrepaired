@@ -16,6 +16,7 @@ import { getAIService } from '../ai';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
+import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
 import { ApiError } from '../utils/ApiError';
 
 const GENERATION_VERSION = 'hiring-assessment-report-v1';
@@ -269,6 +270,19 @@ export class EmployerHiringAssessmentReportService {
         { $set: { status: 'completed', report }, $unset: { errorMessage: 1 } },
         { new: true }
       );
+
+      // Best-effort (31C) — a workflow-automation failure must never affect the primary report result.
+      try {
+        await employerHiringWorkflowService.evaluateTrigger({
+          organizationId: session.organization._id.toString(),
+          applicationId: session.application._id.toString(),
+          interviewId: session.interview._id.toString(),
+          trigger: 'report_ready',
+        });
+      } catch (workflowError) {
+        console.error('[EmployerHiringAssessmentReportService] Workflow trigger evaluation failed (non-fatal)', workflowError);
+      }
+
       return this.toDetail(updated!);
     } catch (error) {
       await EmployerHiringAssessmentReport.updateOne(

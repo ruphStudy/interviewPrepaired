@@ -21,6 +21,9 @@ import EmployerCodingTestCase from '../models/EmployerCodingTestCase.model';
 import EmployerCodingAssessmentSession, { IEmployerCodingAssessmentSession } from '../models/EmployerCodingAssessmentSession.model';
 import EmployerCodingSubmission from '../models/EmployerCodingSubmission.model';
 import { employerCodingExecutionService } from './EmployerCodingExecutionService';
+import { employerAssessmentProctoringEventService, RecordProctoringEventInput } from './EmployerAssessmentProctoringEventService';
+import { employerAssessmentProctoringConfigService } from './EmployerAssessmentProctoringConfigService';
+import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
 import interviewService from './InterviewService';
 import { hiringQuestionMaterializationService } from './HiringQuestionMaterializationService';
 import { employerJobApplicationService } from './EmployerJobApplicationService';
@@ -602,13 +605,29 @@ export class PublicEmployerInterviewInvitationService {
     });
 
     const totalQuestions = questionSet.questions!.length;
+    let justCompleted = false;
     if (currentSequence >= totalQuestions) {
       session.status = 'completed';
       session.completedAt = now;
+      justCompleted = true;
     } else {
       session.currentSequence = currentSequence + 1;
     }
     await session.save();
+
+    // Best-effort (31C) — a workflow-automation failure must never affect the primary scenario-response result.
+    if (justCompleted) {
+      try {
+        await employerHiringWorkflowService.evaluateTrigger({
+          organizationId: session.organizationId.toString(),
+          applicationId: session.applicationId.toString(),
+          interviewId: session.interviewId.toString(),
+          trigger: 'scenario_completed',
+        });
+      } catch (workflowError) {
+        console.error('[PublicEmployerInterviewInvitationService] Workflow trigger evaluation failed (non-fatal)', workflowError);
+      }
+    }
 
     return this.toScenarioStepDetail(scenario, questionSet, session);
   }
@@ -731,6 +750,20 @@ export class PublicEmployerInterviewInvitationService {
     }
     await session.save();
 
+    // Best-effort (31C) — a workflow-automation failure must never affect the primary submission result.
+    if (allSubmitted) {
+      try {
+        await employerHiringWorkflowService.evaluateTrigger({
+          organizationId: session.organizationId.toString(),
+          applicationId: session.applicationId.toString(),
+          interviewId: session.interviewId.toString(),
+          trigger: 'coding_completed',
+        });
+      } catch (workflowError) {
+        console.error('[PublicEmployerInterviewInvitationService] Workflow trigger evaluation failed (non-fatal)', workflowError);
+      }
+    }
+
     return this.toCandidateCodingSessionDetail(session);
   }
 
@@ -773,6 +806,37 @@ export class PublicEmployerInterviewInvitationService {
     const testCasesById = new Map(sampleTestCases.map((t) => [t._id.toString(), t]));
 
     return employerCodingExecutionService.toCandidateDetail(execution, testCasesById);
+  }
+
+  /**
+   * GET-equivalent used by the candidate UI to decide whether to show the
+   * proctoring disclosure banner (31A) — never reveals which specific
+   * event types are captured beyond the fixed public disclosure sentence,
+   * and never reveals enforcement mode.
+   */
+  async getProctoringDisclosure(rawToken: string): Promise<Record<string, unknown>> {
+    const { interview } = await this.resolveAcceptedHiringInterview(rawToken);
+    const config = await employerAssessmentProctoringConfigService.getConfigForInterview(interview.organizationId!.toString(), interview._id.toString());
+    if (!config || !config.enabled) {
+      return { enabled: false };
+    }
+    return {
+      enabled: true,
+      disclosure:
+        'This assessment may record browser events such as tab changes, focus changes, fullscreen exits, and copy/paste actions. It does not record your camera, microphone, clipboard content, or screen.',
+    };
+  }
+
+  /**
+   * POST /public/employer-interview-invitations/:token/session/proctoring-events
+   * (31A) — records ONE observable browser/session event. Organization/
+   * application/interview are always derived from the token, never
+   * trusted from the body. A disabled config or capture toggle is a
+   * controlled no-op, never an error.
+   */
+  async recordProctoringEvent(rawToken: string, input: RecordProctoringEventInput): Promise<Record<string, unknown>> {
+    const { interview } = await this.resolveAcceptedHiringInterview(rawToken);
+    return employerAssessmentProctoringEventService.recordEvent(interview.organizationId!, interview, input);
   }
 
   /** Shared token -> ACCEPTED-invitation -> hiring-assessment-interview resolution for the 30B coding endpoints. Collapses every invalid/foreign/broken reference to the same generic 404. */

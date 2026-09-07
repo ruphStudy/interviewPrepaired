@@ -106,6 +106,7 @@ export class EmployerCollaborationAnalyticsService {
     const notificationTypeCounts: Record<EmployerCollaborationNotificationType, number> = {
       note_mention: 0,
       collaborator_assigned: 0,
+      workflow_automation: 0,
     };
     for (const n of notifications) {
       notificationTypeCounts[n.type] = (notificationTypeCounts[n.type] ?? 0) + 1;

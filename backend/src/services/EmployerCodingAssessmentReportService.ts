@@ -16,6 +16,7 @@ import EmployerCodingAssessmentReport, {
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
+import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
 import { ApiError } from '../utils/ApiError';
 
 const REPORT_VERSION = 'coding-assessment-report-v1';
@@ -153,6 +154,18 @@ export class EmployerCodingAssessmentReportService {
       },
       { upsert: true, new: true }
     );
+
+    // Best-effort (31C) — a workflow-automation failure must never affect the primary report result.
+    try {
+      await employerHiringWorkflowService.evaluateTrigger({
+        organizationId: organization._id.toString(),
+        applicationId: interview.employerApplicationId.toString(),
+        interviewId: interview._id.toString(),
+        trigger: 'report_ready',
+      });
+    } catch (workflowError) {
+      console.error('[EmployerCodingAssessmentReportService] Workflow trigger evaluation failed (non-fatal)', workflowError);
+    }
 
     return this.toDetail(doc!);
   }

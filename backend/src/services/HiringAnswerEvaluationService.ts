@@ -3,6 +3,7 @@ import Interview, { IInterview, IEvaluation, IHiringCompetencyScore } from '../m
 import { InterviewPurpose, InterviewStatus } from '../constants/interview';
 import EmployerInterviewCompetencyRubric, { IInterviewCompetencyRubric } from '../models/EmployerInterviewCompetencyRubric.model';
 import { getAIService } from '../ai';
+import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
 import { ApiError } from '../utils/ApiError';
 
 const MAX_EVIDENCE_ITEMS = 6;
@@ -110,6 +111,20 @@ export class HiringAnswerEvaluationService {
       claimed.hiringEvaluationStatus = 'completed';
       claimed.status = InterviewStatus.EVALUATED;
       await claimed.save();
+
+      // Best-effort (31C) — a workflow-automation failure must never affect the primary evaluation result.
+      if (claimed.employerApplicationId) {
+        try {
+          await employerHiringWorkflowService.evaluateTrigger({
+            organizationId: organizationId,
+            applicationId: claimed.employerApplicationId.toString(),
+            interviewId: claimed._id.toString(),
+            trigger: 'assessment_completed',
+          });
+        } catch (workflowError) {
+          console.error('[HiringAnswerEvaluationService] Workflow trigger evaluation failed (non-fatal)', workflowError);
+        }
+      }
 
       return claimed;
     } catch (error) {

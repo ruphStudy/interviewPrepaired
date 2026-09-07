@@ -28,6 +28,12 @@ import employerApi, {
   EMPLOYER_JOB_STATUS_TRANSITIONS,
   EMPLOYER_JOB_APPLICATION_STATUS_TRANSITIONS,
   EMPLOYER_JOB_HIRING_TEAM_ROLES,
+  EmployerHiringWorkflowRule,
+  EmployerHiringWorkflowRuleInput,
+  EmployerHiringWorkflowTrigger,
+  EmployerHiringWorkflowConditionField,
+  EmployerHiringWorkflowConditionOperator,
+  EmployerHiringWorkflowActionType,
 } from '../../api/employerApi';
 import { EMPTY_JOB_FORM, JobFormState, jobFormToPayload, jobToFormState } from './jobFormUtils';
 import {
@@ -291,6 +297,23 @@ const EmployerJobDetailPage: React.FC = () => {
   const [jobShortlist, setJobShortlist] = useState<JobShortlistRow[]>([]);
   const [jobShortlistLoading, setJobShortlistLoading] = useState(true);
   const [jobShortlistError, setJobShortlistError] = useState<string | null>(null);
+
+  const [workflowRules, setWorkflowRules] = useState<EmployerHiringWorkflowRule[]>([]);
+  const [workflowRulesLoading, setWorkflowRulesLoading] = useState(true);
+  const [workflowRulesError, setWorkflowRulesError] = useState<string | null>(null);
+  const [showWorkflowForm, setShowWorkflowForm] = useState(false);
+  const [editingWorkflowRuleId, setEditingWorkflowRuleId] = useState<string | null>(null);
+  const [workflowName, setWorkflowName] = useState('');
+  const [workflowTrigger, setWorkflowTrigger] = useState<EmployerHiringWorkflowTrigger>('report_ready');
+  const [workflowConditions, setWorkflowConditions] = useState<
+    Array<{ field: EmployerHiringWorkflowConditionField; operator: EmployerHiringWorkflowConditionOperator; value: string }>
+  >([]);
+  const [workflowActions, setWorkflowActions] = useState<
+    Array<{ type: EmployerHiringWorkflowActionType; noteText?: string; pipelineStatus?: string }>
+  >([]);
+  const [savingWorkflowRule, setSavingWorkflowRule] = useState(false);
+  const [saveWorkflowRuleError, setSaveWorkflowRuleError] = useState<string | null>(null);
+  const [archivingWorkflowRuleId, setArchivingWorkflowRuleId] = useState<string | null>(null);
 
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateSearch, setCandidateSearch] = useState('');
@@ -617,6 +640,91 @@ const EmployerJobDetailPage: React.FC = () => {
       fetchJobShortlist();
     }
   }, [isSyncing, activeOrganization, canView, fetchJobShortlist]);
+
+  const fetchWorkflowRules = useCallback(async () => {
+    if (!organizationId || !jobId) return;
+    setWorkflowRulesLoading(true);
+    setWorkflowRulesError(null);
+    try {
+      const response = await employerApi.listEmployerHiringWorkflowRules(organizationId, jobId);
+      setWorkflowRules(response.data.rules);
+    } catch (err: any) {
+      setWorkflowRulesError(err.message || 'Failed to load workflow rules');
+    } finally {
+      setWorkflowRulesLoading(false);
+    }
+  }, [organizationId, jobId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchWorkflowRules();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchWorkflowRules]);
+
+  const resetWorkflowForm = () => {
+    setEditingWorkflowRuleId(null);
+    setWorkflowName('');
+    setWorkflowTrigger('report_ready');
+    setWorkflowConditions([]);
+    setWorkflowActions([]);
+    setSaveWorkflowRuleError(null);
+  };
+
+  const handleOpenCreateWorkflowRule = () => {
+    resetWorkflowForm();
+    setShowWorkflowForm(true);
+  };
+
+  const handleOpenEditWorkflowRule = (rule: EmployerHiringWorkflowRule) => {
+    setEditingWorkflowRuleId(rule.id);
+    setWorkflowName(rule.name);
+    setWorkflowTrigger(rule.trigger);
+    setWorkflowConditions(rule.conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value })));
+    setWorkflowActions(rule.actions.map((a) => ({ type: a.type, noteText: a.config.noteText, pipelineStatus: a.config.pipelineStatus })));
+    setSaveWorkflowRuleError(null);
+    setShowWorkflowForm(true);
+  };
+
+  const handleSaveWorkflowRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId || !jobId) return;
+    setSavingWorkflowRule(true);
+    setSaveWorkflowRuleError(null);
+    try {
+      const input: EmployerHiringWorkflowRuleInput = {
+        name: workflowName,
+        trigger: workflowTrigger,
+        conditions: workflowConditions,
+        actions: workflowActions.map((a) => ({ type: a.type, config: { noteText: a.noteText, pipelineStatus: a.pipelineStatus } })),
+      };
+      if (editingWorkflowRuleId) {
+        await employerApi.updateEmployerHiringWorkflowRule(organizationId, jobId, editingWorkflowRuleId, input);
+      } else {
+        await employerApi.createEmployerHiringWorkflowRule(organizationId, jobId, input);
+      }
+      setShowWorkflowForm(false);
+      resetWorkflowForm();
+      fetchWorkflowRules();
+    } catch (err: any) {
+      setSaveWorkflowRuleError(err.message || 'Failed to save workflow rule');
+    } finally {
+      setSavingWorkflowRule(false);
+    }
+  };
+
+  const handleArchiveWorkflowRule = async (ruleId: string) => {
+    if (!organizationId || !jobId) return;
+    if (!window.confirm('Archive this workflow rule? It will stop running and become read-only.')) return;
+    setArchivingWorkflowRuleId(ruleId);
+    try {
+      await employerApi.archiveEmployerHiringWorkflowRule(organizationId, jobId, ruleId);
+      fetchWorkflowRules();
+    } catch (err: any) {
+      setWorkflowRulesError(err.message || 'Failed to archive workflow rule');
+    } finally {
+      setArchivingWorkflowRuleId(null);
+    }
+  };
 
   const handleShortlist = async (applicationId: string, candidateName: string) => {
     if (!organizationId) return;
@@ -2574,6 +2682,249 @@ const EmployerJobDetailPage: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+                <h2 className="section-title">Workflow Automation</h2>
+                {canManage && !showWorkflowForm && (
+                  <button onClick={handleOpenCreateWorkflowRule} className="btn btn-primary px-3 py-1.5 text-xs">
+                    Create Rule
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Deterministic (no AI) internal automation only — notes, notifications, and non-terminal pipeline moves. Never an
+                automatic hire/reject decision.
+              </p>
+
+              {showWorkflowForm && (
+                <form onSubmit={handleSaveWorkflowRule} className="surface-muted p-4 space-y-3 mb-4">
+                  <p className="text-sm font-medium text-mentor-text">{editingWorkflowRuleId ? 'Edit Rule' : 'Create Rule'}</p>
+                  <div>
+                    <label className="label">Name</label>
+                    <input value={workflowName} onChange={(e) => setWorkflowName(e.target.value)} className="input" maxLength={200} />
+                  </div>
+                  <div>
+                    <label className="label">Trigger</label>
+                    <select
+                      value={workflowTrigger}
+                      onChange={(e) => setWorkflowTrigger(e.target.value as EmployerHiringWorkflowTrigger)}
+                      className="input"
+                    >
+                      <option value="assessment_completed">Assessment Completed</option>
+                      <option value="interview_finalized">Interview Finalized</option>
+                      <option value="scenario_completed">Scenario Completed</option>
+                      <option value="coding_completed">Coding Completed</option>
+                      <option value="report_ready">Report Ready</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="label mb-0">Conditions (all must match)</label>
+                      <button
+                        type="button"
+                        onClick={() => setWorkflowConditions((prev) => [...prev, { field: 'report_available', operator: 'equals', value: 'true' }])}
+                        className="btn btn-secondary px-2 py-1 text-xs"
+                      >
+                        Add Condition
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {workflowConditions.map((c, i) => (
+                        <div key={i} className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                          <select
+                            value={c.field}
+                            onChange={(e) =>
+                              setWorkflowConditions((prev) =>
+                                prev.map((p, idx) => (idx === i ? { ...p, field: e.target.value as EmployerHiringWorkflowConditionField } : p))
+                              )
+                            }
+                            className="input"
+                          >
+                            <option value="assessment_status">Assessment Status</option>
+                            <option value="report_available">Report Available</option>
+                            <option value="coding_report_available">Coding Report Available</option>
+                            <option value="scenario_report_available">Scenario Report Available</option>
+                            <option value="integrity_review_state">Integrity Review State</option>
+                          </select>
+                          <select
+                            value={c.operator}
+                            onChange={(e) =>
+                              setWorkflowConditions((prev) =>
+                                prev.map((p, idx) => (idx === i ? { ...p, operator: e.target.value as EmployerHiringWorkflowConditionOperator } : p))
+                              )
+                            }
+                            className="input"
+                          >
+                            <option value="equals">Equals</option>
+                            <option value="not_equals">Not Equals</option>
+                          </select>
+                          <input
+                            value={c.value}
+                            onChange={(e) => setWorkflowConditions((prev) => prev.map((p, idx) => (idx === i ? { ...p, value: e.target.value } : p)))}
+                            placeholder="Value (e.g. true, review_suggested, completed)"
+                            className="input"
+                            maxLength={100}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setWorkflowConditions((prev) => prev.filter((_, idx) => idx !== i))}
+                            className="btn btn-secondary px-2 py-1 text-xs"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="label mb-0">Actions</label>
+                      <button
+                        type="button"
+                        onClick={() => setWorkflowActions((prev) => [...prev, { type: 'notify_hiring_team' }])}
+                        className="btn btn-secondary px-2 py-1 text-xs"
+                      >
+                        Add Action
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {workflowActions.map((a, i) => (
+                        <div key={i} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <select
+                            value={a.type}
+                            onChange={(e) =>
+                              setWorkflowActions((prev) =>
+                                prev.map((p, idx) => (idx === i ? { type: e.target.value as EmployerHiringWorkflowActionType } : p))
+                              )
+                            }
+                            className="input"
+                          >
+                            <option value="add_internal_note">Add Internal Note</option>
+                            <option value="notify_hiring_team">Notify Hiring Team</option>
+                            <option value="move_pipeline_stage">Move Pipeline Stage</option>
+                          </select>
+                          {a.type === 'add_internal_note' && (
+                            <input
+                              value={a.noteText || ''}
+                              onChange={(e) => setWorkflowActions((prev) => prev.map((p, idx) => (idx === i ? { ...p, noteText: e.target.value } : p)))}
+                              placeholder="Note text"
+                              className="input sm:col-span-2"
+                              maxLength={1000}
+                            />
+                          )}
+                          {a.type === 'move_pipeline_stage' && (
+                            <select
+                              value={a.pipelineStatus || ''}
+                              onChange={(e) =>
+                                setWorkflowActions((prev) => prev.map((p, idx) => (idx === i ? { ...p, pipelineStatus: e.target.value } : p)))
+                              }
+                              className="input sm:col-span-2"
+                            >
+                              <option value="">Select a stage...</option>
+                              <option value="applied">Applied</option>
+                              <option value="screening">Screening</option>
+                              <option value="shortlisted">Shortlisted</option>
+                              <option value="interview">Interview</option>
+                              <option value="offer">Offer</option>
+                            </select>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setWorkflowActions((prev) => prev.filter((_, idx) => idx !== i))}
+                            className="btn btn-secondary px-2 py-1 text-xs"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {saveWorkflowRuleError && <p className="text-sm text-mentor-error">{saveWorkflowRuleError}</p>}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={savingWorkflowRule || !workflowName.trim() || workflowActions.length === 0}
+                      className="btn btn-primary px-3 py-1.5 text-xs"
+                    >
+                      {savingWorkflowRule ? 'Saving...' : editingWorkflowRuleId ? 'Save Changes' : 'Create'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowWorkflowForm(false);
+                        resetWorkflowForm();
+                      }}
+                      className="btn btn-secondary px-3 py-1.5 text-xs"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {workflowRulesLoading ? (
+                <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+              ) : workflowRulesError ? (
+                <div>
+                  <p className="text-sm text-mentor-error mb-2">{workflowRulesError}</p>
+                  <button onClick={fetchWorkflowRules} className="btn btn-secondary">
+                    Try Again
+                  </button>
+                </div>
+              ) : workflowRules.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-4">No workflow rules yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-mentor-text-muted border-b border-mentor-border">
+                        <th className="py-2 pr-3">Name</th>
+                        <th className="py-2 pr-3">Trigger</th>
+                        <th className="py-2 pr-3">Enabled</th>
+                        <th className="py-2 pr-3">Conditions</th>
+                        <th className="py-2 pr-3">Actions</th>
+                        <th className="py-2 pr-3" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {workflowRules.map((rule) => (
+                        <tr key={rule.id} className="border-b border-mentor-border last:border-0">
+                          <td className="py-2 pr-3 text-mentor-text">{rule.name}</td>
+                          <td className="py-2 pr-3 text-mentor-text-secondary">{rule.trigger.replace(/_/g, ' ')}</td>
+                          <td className="py-2 pr-3">
+                            <span className={`badge ${rule.enabled && rule.status === 'active' ? 'badge-success' : 'badge-neutral'}`}>
+                              {rule.status === 'archived' ? 'Archived' : rule.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-3 text-mentor-text-secondary">{rule.conditions.length}</td>
+                          <td className="py-2 pr-3 text-mentor-text-secondary">{rule.actions.length}</td>
+                          <td className="py-2 pr-3">
+                            {canManage && rule.status === 'active' && (
+                              <div className="flex items-center gap-1.5">
+                                <button onClick={() => handleOpenEditWorkflowRule(rule)} className="btn btn-secondary px-2 py-1 text-xs">
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => handleArchiveWorkflowRule(rule.id)}
+                                  disabled={archivingWorkflowRuleId === rule.id}
+                                  className="btn btn-secondary px-2 py-1 text-xs"
+                                >
+                                  Archive
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

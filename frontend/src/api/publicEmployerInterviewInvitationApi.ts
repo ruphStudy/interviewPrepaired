@@ -327,6 +327,41 @@ export interface PublicCodingExecutionDetail {
 
 export type RunPublicCodingSubmissionResponse = ApiEnvelope<PublicCodingExecutionDetail>;
 
+// ============================================================================
+// Assessment Proctoring Foundation (Sprint 31A) — observable browser/
+// session EVENT TYPES only. NO camera/mic/screen capture, NO biometrics,
+// NO clipboard content.
+// ============================================================================
+
+export interface PublicProctoringDisclosure {
+  enabled: boolean;
+  disclosure?: string;
+}
+
+export type GetPublicProctoringDisclosureResponse = ApiEnvelope<PublicProctoringDisclosure>;
+
+export type PublicProctoringEventType =
+  | 'session_started'
+  | 'session_resumed'
+  | 'visibility_hidden'
+  | 'visibility_visible'
+  | 'window_blur'
+  | 'window_focus'
+  | 'fullscreen_exit'
+  | 'fullscreen_enter'
+  | 'copy'
+  | 'paste'
+  | 'navigation_attempt';
+
+export interface RecordPublicProctoringEventInput {
+  eventType: PublicProctoringEventType;
+  assessmentArea: 'interview' | 'scenario' | 'coding';
+  metadata?: { questionIndex?: number; scenarioId?: string; codingQuestionId?: string };
+  occurredAt?: string;
+}
+
+export type RecordPublicProctoringEventResponse = ApiEnvelope<{ recorded: boolean; reason?: string }>;
+
 class PublicEmployerInterviewInvitationApiService {
   private api: AxiosInstance;
 
@@ -550,6 +585,31 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to run tests');
+    }
+  }
+
+  /** Only returns `enabled: true` + the fixed disclosure sentence when the employer has opted in — never reveals which specific event types are captured or the enforcement mode. */
+  async getPublicProctoringDisclosure(token: string): Promise<GetPublicProctoringDisclosureResponse> {
+    try {
+      const response = await this.api.get<GetPublicProctoringDisclosureResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/proctoring-disclosure`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load proctoring disclosure');
+    }
+  }
+
+  /** Records ONE observable browser/session event type — never clipboard content/camera/mic/screen data. A disabled config is a silent, controlled no-op server-side; failures here are deliberately non-fatal to the caller's UX (see EmployerInterviewInvitePage). */
+  async recordPublicProctoringEvent(token: string, input: RecordPublicProctoringEventInput): Promise<RecordPublicProctoringEventResponse> {
+    try {
+      const response = await this.api.post<RecordPublicProctoringEventResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/session/proctoring-events`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to record event');
     }
   }
 }

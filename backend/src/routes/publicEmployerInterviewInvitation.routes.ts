@@ -174,4 +174,37 @@ router.post(
   publicEmployerInterviewInvitationController.runCodingSubmission
 );
 
+// (31A) Proctoring — observable browser/session event types only. Never
+// clipboard content, camera/mic/screen, or biometric data.
+const proctoringEventValidation = [
+  body('eventType')
+    .isIn([
+      'session_started',
+      'session_resumed',
+      'visibility_hidden',
+      'visibility_visible',
+      'window_blur',
+      'window_focus',
+      'fullscreen_exit',
+      'fullscreen_enter',
+      'copy',
+      'paste',
+      'navigation_attempt',
+    ])
+    .withMessage('Invalid eventType'),
+  body('assessmentArea').isIn(['interview', 'scenario', 'coding']).withMessage('Invalid assessmentArea'),
+  body('metadata').optional().isObject().withMessage('metadata must be an object'),
+  body('occurredAt').optional().isISO8601().withMessage('occurredAt must be a valid date'),
+];
+
+router.get('/:token/session/proctoring-disclosure', ...tokenValidation, validate, publicEmployerInterviewInvitationController.getProctoringDisclosure);
+
+router.post(
+  '/:token/session/proctoring-events',
+  ...tokenValidation,
+  ...proctoringEventValidation,
+  validate,
+  publicEmployerInterviewInvitationController.recordProctoringEvent
+);
+
 export default router;

@@ -78,6 +78,10 @@ import employerApi, {
   EmployerCodingEvaluation,
   EmployerCodingAssessmentReport,
   EmployerCodingReportQualityLevelCounts,
+  EmployerAssessmentProctoringConfig,
+  EmployerAssessmentProctoringEventSummary,
+  EmployerAssessmentIntegritySummary,
+  EmployerHiringWorkflowExecution,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -905,6 +909,33 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [buildingCodingReport, setBuildingCodingReport] = useState(false);
   const [buildCodingReportError, setBuildCodingReportError] = useState<string | null>(null);
 
+  const [proctoringConfig, setProctoringConfig] = useState<EmployerAssessmentProctoringConfig | null>(null);
+  const [proctoringConfigLoading, setProctoringConfigLoading] = useState(false);
+  const [proctoringConfigError, setProctoringConfigError] = useState<string | null>(null);
+  const [savingProctoringConfig, setSavingProctoringConfig] = useState(false);
+  const [saveProctoringConfigError, setSaveProctoringConfigError] = useState<string | null>(null);
+  const [proctoringEvents, setProctoringEvents] = useState<EmployerAssessmentProctoringEventSummary[]>([]);
+  const [proctoringEventsLoading, setProctoringEventsLoading] = useState(false);
+  const [pcEnabled, setPcEnabled] = useState(false);
+  const [pcCapture, setPcCapture] = useState<EmployerAssessmentProctoringConfig['capture']>({
+    tabVisibility: true,
+    windowBlur: true,
+    fullscreenExit: true,
+    copyPaste: true,
+    navigationAttempt: true,
+  });
+  const [pcEnforcement, setPcEnforcement] = useState<EmployerAssessmentProctoringConfig['enforcement']>('informational');
+
+  const [integritySummary, setIntegritySummary] = useState<EmployerAssessmentIntegritySummary | null>(null);
+  const [integrityLoading, setIntegrityLoading] = useState(false);
+  const [integrityError, setIntegrityError] = useState<string | null>(null);
+  const [buildingIntegrity, setBuildingIntegrity] = useState(false);
+  const [buildIntegrityError, setBuildIntegrityError] = useState<string | null>(null);
+
+  const [workflowExecutions, setWorkflowExecutions] = useState<EmployerHiringWorkflowExecution[]>([]);
+  const [workflowExecutionsLoading, setWorkflowExecutionsLoading] = useState(false);
+  const [workflowExecutionsError, setWorkflowExecutionsError] = useState<string | null>(null);
+
   const [sessionQuestions, setSessionQuestions] = useState<EmployerInterviewSessionQuestions | null>(null);
   const [sessionQuestionsLoading, setSessionQuestionsLoading] = useState(false);
   const [sessionQuestionsError, setSessionQuestionsError] = useState<string | null>(null);
@@ -1616,6 +1647,123 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setBuildingCodingReport(false);
     }
   };
+
+  const fetchProctoringConfig = useCallback(async () => {
+    if (!organizationId || !interviewSession) return;
+    setProctoringConfigLoading(true);
+    setProctoringConfigError(null);
+    try {
+      const response = await employerApi.getEmployerAssessmentProctoringConfig(organizationId, interviewSession.id);
+      setProctoringConfig(response.data);
+      setPcEnabled(response.data.enabled);
+      setPcCapture(response.data.capture);
+      setPcEnforcement(response.data.enforcement);
+    } catch (err: any) {
+      setProctoringConfigError(err.message || 'Failed to load proctoring configuration');
+    } finally {
+      setProctoringConfigLoading(false);
+    }
+  }, [organizationId, interviewSession]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && interviewSession) {
+      fetchProctoringConfig();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canView, interviewSession?.id]);
+
+  const fetchProctoringEvents = useCallback(async () => {
+    if (!organizationId || !interviewSession) return;
+    setProctoringEventsLoading(true);
+    try {
+      const response = await employerApi.listEmployerAssessmentProctoringEvents(organizationId, interviewSession.id);
+      setProctoringEvents(response.data.events);
+    } catch {
+      // Non-critical — the config section still renders without event history.
+    } finally {
+      setProctoringEventsLoading(false);
+    }
+  }, [organizationId, interviewSession]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && interviewSession && proctoringConfig?.enabled) {
+      fetchProctoringEvents();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canView, interviewSession?.id, proctoringConfig?.enabled]);
+
+  const handleSaveProctoringConfig = async () => {
+    if (!organizationId || !interviewSession) return;
+    setSavingProctoringConfig(true);
+    setSaveProctoringConfigError(null);
+    try {
+      const response = await employerApi.updateEmployerAssessmentProctoringConfig(organizationId, interviewSession.id, {
+        enabled: pcEnabled,
+        capture: pcCapture,
+        enforcement: pcEnforcement,
+      });
+      setProctoringConfig(response.data);
+    } catch (err: any) {
+      setSaveProctoringConfigError(err.message || 'Failed to save proctoring configuration');
+    } finally {
+      setSavingProctoringConfig(false);
+    }
+  };
+
+  const fetchIntegritySummary = useCallback(async () => {
+    if (!organizationId || !interviewSession) return;
+    setIntegrityLoading(true);
+    setIntegrityError(null);
+    try {
+      const response = await employerApi.getEmployerAssessmentIntegritySummary(organizationId, interviewSession.id);
+      setIntegritySummary(response.data);
+    } catch (err: any) {
+      setIntegrityError(err.message || 'Failed to load integrity review');
+    } finally {
+      setIntegrityLoading(false);
+    }
+  }, [organizationId, interviewSession]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView && interviewSession && proctoringConfig?.enabled) {
+      fetchIntegritySummary();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSyncing, activeOrganization, canView, interviewSession?.id, proctoringConfig?.enabled]);
+
+  const handleBuildIntegritySummary = async () => {
+    if (!organizationId || !interviewSession) return;
+    setBuildingIntegrity(true);
+    setBuildIntegrityError(null);
+    try {
+      const response = await employerApi.buildEmployerAssessmentIntegritySummary(organizationId, interviewSession.id);
+      setIntegritySummary(response.data);
+    } catch (err: any) {
+      setBuildIntegrityError(err.message || 'Failed to build integrity review');
+    } finally {
+      setBuildingIntegrity(false);
+    }
+  };
+
+  const fetchWorkflowExecutions = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setWorkflowExecutionsLoading(true);
+    setWorkflowExecutionsError(null);
+    try {
+      const response = await employerApi.listEmployerHiringWorkflowExecutions(organizationId, applicationId);
+      setWorkflowExecutions(response.data.executions);
+    } catch (err: any) {
+      setWorkflowExecutionsError(err.message || 'Failed to load workflow activity');
+    } finally {
+      setWorkflowExecutionsLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchWorkflowExecutions();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchWorkflowExecutions]);
 
   const handleSaveCodingSession = async () => {
     if (!organizationId || !interviewSession) return;
@@ -6263,6 +6411,207 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 )}
               </div>
             )}
+
+            {interviewSession && (
+              <div className="card mt-6">
+                <h2 className="section-title mb-1">Assessment Proctoring</h2>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Records observable browser/session events only — no camera, microphone, screen, or clipboard content capture,
+                  and no cheating score.
+                </p>
+
+                {proctoringConfigLoading ? (
+                  <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                ) : proctoringConfigError ? (
+                  <p className="text-sm text-mentor-error">{proctoringConfigError}</p>
+                ) : (
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 text-sm text-mentor-text">
+                      <input type="checkbox" checked={pcEnabled} disabled={!canManage} onChange={(e) => setPcEnabled(e.target.checked)} />
+                      Enable proctoring for this interview
+                    </label>
+
+                    {pcEnabled && (
+                      <>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {(
+                            [
+                              ['tabVisibility', 'Tab visibility changes'],
+                              ['windowBlur', 'Window focus changes'],
+                              ['fullscreenExit', 'Fullscreen exits'],
+                              ['copyPaste', 'Copy/paste'],
+                              ['navigationAttempt', 'Navigation attempts'],
+                            ] as const
+                          ).map(([key, label]) => (
+                            <label key={key} className="flex items-center gap-1.5 text-xs text-mentor-text">
+                              <input
+                                type="checkbox"
+                                checked={pcCapture[key]}
+                                disabled={!canManage}
+                                onChange={(e) => setPcCapture((prev) => ({ ...prev, [key]: e.target.checked }))}
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                        <div className="max-w-[220px]">
+                          <label className="label mb-1 block">Enforcement</label>
+                          <select
+                            value={pcEnforcement}
+                            disabled={!canManage}
+                            onChange={(e) => setPcEnforcement(e.target.value as EmployerAssessmentProctoringConfig['enforcement'])}
+                            className="input"
+                          >
+                            <option value="informational">Informational only</option>
+                            <option value="warn_candidate">Warn candidate</option>
+                          </select>
+                        </div>
+                        <div className="surface-muted p-3 text-xs text-mentor-text-secondary">
+                          Candidate disclosure preview: "This assessment may record browser events such as tab changes, focus
+                          changes, fullscreen exits, and copy/paste actions. It does not record your camera, microphone,
+                          clipboard content, or screen."
+                        </div>
+                      </>
+                    )}
+
+                    {canManage && (
+                      <div>
+                        {saveProctoringConfigError && <p className="text-sm text-mentor-error mb-2">{saveProctoringConfigError}</p>}
+                        <button onClick={handleSaveProctoringConfig} disabled={savingProctoringConfig} className="btn btn-primary px-3 py-1.5 text-xs">
+                          {savingProctoringConfig ? 'Saving...' : 'Save Proctoring Settings'}
+                        </button>
+                      </div>
+                    )}
+
+                    {proctoringConfig?.enabled && (
+                      <div className="pt-3 border-t border-mentor-border">
+                        <p className="text-sm font-medium text-mentor-text mb-2">Recent Events</p>
+                        {proctoringEventsLoading ? (
+                          <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                        ) : proctoringEvents.length === 0 ? (
+                          <p className="text-xs text-mentor-text-muted">No events recorded yet.</p>
+                        ) : (
+                          <div className="max-h-64 overflow-y-auto space-y-1">
+                            {proctoringEvents.map((e, i) => (
+                              <p key={i} className="text-xs text-mentor-text-secondary">
+                                {labelizeCode(e.eventType)} &middot; {e.assessmentArea} &middot; {new Date(e.occurredAt).toLocaleString()}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {proctoringConfig?.enabled && (
+                      <div className="pt-3 border-t border-mentor-border">
+                        <p className="text-sm font-medium text-mentor-text mb-1">Integrity Review</p>
+                        <p className="text-xs text-mentor-text-muted mb-3">
+                          Browser events can have legitimate explanations and should be reviewed in context before making
+                          hiring decisions.
+                        </p>
+
+                        {integrityLoading ? (
+                          <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
+                        ) : integrityError ? (
+                          <p className="text-sm text-mentor-error">{integrityError}</p>
+                        ) : !integritySummary || !integritySummary.built ? (
+                          <div>
+                            <p className="text-xs text-mentor-text-secondary mb-2">Not built yet.</p>
+                            {canManage && (
+                              <>
+                                {buildIntegrityError && <p className="text-sm text-mentor-error mb-2">{buildIntegrityError}</p>}
+                                <button onClick={handleBuildIntegritySummary} disabled={buildingIntegrity} className="btn btn-secondary px-3 py-1.5 text-xs">
+                                  {buildingIntegrity ? 'Building...' : 'Build Integrity Review'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className={`badge ${integritySummary.reviewState === 'review_suggested' ? 'badge-warning' : 'badge-success'}`}>
+                                {integritySummary.reviewState === 'review_suggested' ? 'Review suggested' : 'No signals'}
+                              </span>
+                              <span className="text-xs text-mentor-text-muted">
+                                {integritySummary.timeline?.totalRecordedEvents ?? 0} total events
+                              </span>
+                              {canManage && (
+                                <button onClick={handleBuildIntegritySummary} disabled={buildingIntegrity} className="btn btn-secondary px-2 py-1 text-xs">
+                                  {buildingIntegrity ? 'Rebuilding...' : 'Rebuild'}
+                                </button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-mentor-text-secondary">
+                              <p>Tab hidden: {integritySummary.eventCounts?.visibilityHidden ?? 0}</p>
+                              <p>Window blur: {integritySummary.eventCounts?.windowBlur ?? 0}</p>
+                              <p>Fullscreen exit: {integritySummary.eventCounts?.fullscreenExit ?? 0}</p>
+                              <p>Copy: {integritySummary.eventCounts?.copy ?? 0}</p>
+                              <p>Paste: {integritySummary.eventCounts?.paste ?? 0}</p>
+                              <p>Navigation: {integritySummary.eventCounts?.navigationAttempt ?? 0}</p>
+                            </div>
+                            {(integritySummary.signals?.length ?? 0) === 0 ? (
+                              <p className="text-xs text-mentor-text-muted">No signals detected.</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {integritySummary.signals!.map((s, i) => (
+                                  <p key={i} className="text-xs text-mentor-text-secondary">
+                                    <span
+                                      className={`badge ${s.level === 'high' ? 'badge-warning' : s.level === 'medium' ? 'badge-warning' : 'badge-neutral'}`}
+                                    >
+                                      {labelizeCode(s.signalType)} &middot; {s.level}
+                                    </span>{' '}
+                                    {s.description}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="card mt-6">
+              <h2 className="section-title mb-1">Workflow Activity</h2>
+              <p className="text-xs text-mentor-text-muted mb-4">Deterministic internal automation history for this application.</p>
+              {workflowExecutionsLoading ? (
+                <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+              ) : workflowExecutionsError ? (
+                <div>
+                  <p className="text-sm text-mentor-error mb-2">{workflowExecutionsError}</p>
+                  <button onClick={fetchWorkflowExecutions} className="btn btn-secondary">
+                    Try Again
+                  </button>
+                </div>
+              ) : workflowExecutions.length === 0 ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-4">No workflow activity yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {workflowExecutions.map((exec) => (
+                    <div key={exec.id} className="surface-muted p-3 text-xs">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="font-medium text-mentor-text">{exec.ruleName}</span>
+                        <span className="text-mentor-text-muted">{exec.trigger.replace(/_/g, ' ')}</span>
+                        <span className={`badge ${exec.matched ? 'badge-success' : 'badge-neutral'}`}>{exec.matched ? 'Matched' : 'Skipped'}</span>
+                        <span className="text-mentor-text-muted">{new Date(exec.executedAt).toLocaleString()}</span>
+                      </div>
+                      {exec.actions.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {exec.actions.map((a, i) => (
+                            <span key={i} className={`badge ${a.status === 'completed' ? 'badge-success' : a.status === 'failed' ? 'badge-warning' : 'badge-neutral'}`}>
+                              {labelizeCode(a.type)}: {a.status}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="card mt-6">
               <h2 className="section-title flex items-center gap-2 mb-4">

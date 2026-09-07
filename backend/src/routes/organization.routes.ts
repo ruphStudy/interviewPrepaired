@@ -79,6 +79,11 @@ import employerCodingAssessmentSessionController from '../controllers/EmployerCo
 import employerCodingExecutionController from '../controllers/EmployerCodingExecutionController';
 import employerCodingEvaluationController from '../controllers/EmployerCodingEvaluationController';
 import employerCodingAssessmentReportController from '../controllers/EmployerCodingAssessmentReportController';
+import employerAssessmentProctoringConfigController from '../controllers/EmployerAssessmentProctoringConfigController';
+import employerAssessmentProctoringEventController from '../controllers/EmployerAssessmentProctoringEventController';
+import employerAssessmentIntegrityController from '../controllers/EmployerAssessmentIntegrityController';
+import employerHiringWorkflowRuleController from '../controllers/EmployerHiringWorkflowRuleController';
+import employerHiringWorkflowController from '../controllers/EmployerHiringWorkflowController';
 import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
 import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
@@ -4238,6 +4243,165 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.REPORTS_VIEW),
   employerCodingAssessmentReportController.getReport
+);
+
+// ---- Assessment Proctoring Foundation (31A) — observable browser/session
+// EVENT TYPES only. No camera/mic/screen/biometric capture. ----
+const proctoringConfigValidation = [
+  body('enabled').optional().isBoolean().withMessage('enabled must be a boolean'),
+  body('capture').optional().isObject().withMessage('capture must be an object'),
+  body('enforcement').optional().isIn(['informational', 'warn_candidate']).withMessage('Invalid enforcement mode'),
+];
+
+router.get(
+  '/:organizationId/interviews/:interviewId/proctoring-config',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerAssessmentProctoringConfigController.getConfig
+);
+
+router.put(
+  '/:organizationId/interviews/:interviewId/proctoring-config',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...proctoringConfigValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerAssessmentProctoringConfigController.updateConfig
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/proctoring-events',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerAssessmentProctoringEventController.listEvents
+);
+
+// ---- Integrity Event Detection (31B) — deterministic (NO AI) signal
+// aggregation over 31A events. Never a cheating score/probability. ----
+router.post(
+  '/:organizationId/interviews/:interviewId/integrity/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerAssessmentIntegrityController.buildSummary
+);
+
+router.get(
+  '/:organizationId/interviews/:interviewId/integrity',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerAssessmentIntegrityController.getSummary
+);
+
+// ---- Hiring Workflow Automation (31C) — deterministic (NO AI) rules over
+// fixed, trusted trigger/condition/action vocabularies only. Never
+// automatic hire/reject; never a terminal pipeline transition. ----
+const workflowRuleIdValidation = [param('ruleId').isMongoId().withMessage('Invalid workflow rule ID')];
+const workflowRuleValidation = [
+  body('name').isString().trim().isLength({ min: 1, max: 200 }).withMessage('name is required (max 200 characters)'),
+  body('description').optional().isString().trim().isLength({ max: 1000 }).withMessage('description must be at most 1000 characters'),
+  body('enabled').optional().isBoolean().withMessage('enabled must be a boolean'),
+  body('trigger')
+    .isIn(['assessment_completed', 'interview_finalized', 'scenario_completed', 'coding_completed', 'report_ready'])
+    .withMessage('Invalid trigger'),
+  body('conditions').optional().isArray().withMessage('conditions must be an array'),
+  body('actions').isArray({ min: 1 }).withMessage('At least one action is required'),
+];
+const workflowRuleUpdateValidation = [
+  body('name').optional().isString().trim().isLength({ min: 1, max: 200 }).withMessage('name must be 1-200 characters'),
+  body('description').optional().isString().trim().isLength({ max: 1000 }).withMessage('description must be at most 1000 characters'),
+  body('enabled').optional().isBoolean().withMessage('enabled must be a boolean'),
+  body('trigger')
+    .optional()
+    .isIn(['assessment_completed', 'interview_finalized', 'scenario_completed', 'coding_completed', 'report_ready'])
+    .withMessage('Invalid trigger'),
+  body('conditions').optional().isArray().withMessage('conditions must be an array'),
+  body('actions').optional().isArray().withMessage('actions must be an array'),
+];
+
+router.post(
+  '/:organizationId/jobs/:jobId/workflow-rules',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...workflowRuleValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringWorkflowRuleController.createRule
+);
+
+router.get(
+  '/:organizationId/jobs/:jobId/workflow-rules',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringWorkflowRuleController.listRules
+);
+
+router.patch(
+  '/:organizationId/jobs/:jobId/workflow-rules/:ruleId',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...workflowRuleIdValidation,
+  ...workflowRuleUpdateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringWorkflowRuleController.updateRule
+);
+
+router.post(
+  '/:organizationId/jobs/:jobId/workflow-rules/:ruleId/archive',
+  protect,
+  ...organizationIdValidation,
+  ...jobIdValidation,
+  ...workflowRuleIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringWorkflowRuleController.archiveRule
+);
+
+const workflowEvaluateValidation = [
+  body('trigger')
+    .isIn(['assessment_completed', 'interview_finalized', 'scenario_completed', 'coding_completed', 'report_ready'])
+    .withMessage('Invalid trigger'),
+  body('interviewId').optional().isMongoId().withMessage('Invalid interview ID'),
+];
+
+router.post(
+  '/:organizationId/applications/:applicationId/workflows/evaluate',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...workflowEvaluateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringWorkflowController.evaluateTrigger
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/workflows/executions',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringWorkflowController.listExecutions
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

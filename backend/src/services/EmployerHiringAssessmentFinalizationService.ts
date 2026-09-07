@@ -17,6 +17,7 @@ import EmployerHiringAssessmentFinalization, {
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
+import { employerHiringWorkflowService } from './EmployerHiringWorkflowService';
 import { ApiError } from '../utils/ApiError';
 
 const CALCULATION_VERSION = 'hiring-assessment-finalization-v1';
@@ -199,6 +200,18 @@ export class EmployerHiringAssessmentFinalizationService {
         throw new ApiError(409, 'Finalization is already being prepared — please try again shortly');
       }
       return this.toDetail(winner);
+    }
+
+    // Best-effort (31C) — a workflow-automation failure must never affect the primary finalization result.
+    try {
+      await employerHiringWorkflowService.evaluateTrigger({
+        organizationId,
+        applicationId: application._id.toString(),
+        interviewId: artifacts.interview._id.toString(),
+        trigger: 'interview_finalized',
+      });
+    } catch (workflowError) {
+      console.error('[EmployerHiringAssessmentFinalizationService] Workflow trigger evaluation failed (non-fatal)', workflowError);
     }
 
     return this.toDetail(doc);

@@ -69,11 +69,35 @@ export class EmployerCollaborationNotificationService {
     });
   }
 
+  /** Called by the 31C workflow engine's `notify_hiring_team` action, AFTER the execution row already claimed the milestone. Recipients are the application's own collaborators; deduped via the model's own unique index (also doubling as this action's own idempotency guard alongside the execution claim). */
+  async createWorkflowAutomationNotifications(params: {
+    organizationId: Types.ObjectId;
+    applicationId: Types.ObjectId;
+    jobId: Types.ObjectId;
+    candidateId: Types.ObjectId;
+    executionId: Types.ObjectId;
+    recipientMembershipIds: Types.ObjectId[];
+    actorMembershipId: Types.ObjectId;
+  }): Promise<void> {
+    for (const recipientId of params.recipientMembershipIds) {
+      await this.safeCreate({
+        organizationId: params.organizationId,
+        recipientMembershipId: recipientId,
+        type: 'workflow_automation',
+        applicationId: params.applicationId,
+        jobId: params.jobId,
+        candidateId: params.candidateId,
+        sourceId: params.executionId,
+        actorMembershipId: params.actorMembershipId,
+      });
+    }
+  }
+
   /** Best-effort create — a duplicate (E11000) or any other failure is logged and swallowed, never thrown, so the caller's already-successful write is never affected. */
   private async safeCreate(doc: {
     organizationId: Types.ObjectId;
     recipientMembershipId: Types.ObjectId;
-    type: 'note_mention' | 'collaborator_assigned';
+    type: 'note_mention' | 'collaborator_assigned' | 'workflow_automation';
     applicationId: Types.ObjectId;
     jobId: Types.ObjectId;
     candidateId: Types.ObjectId;
