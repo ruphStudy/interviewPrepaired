@@ -70,6 +70,8 @@ import employerApi, {
   EmployerApplicationSkillIntelligence,
   EmployerInterviewKnowledgeConfig,
   OrganizationKnowledgeBase,
+  EmployerHiringKnowledgeGroundedEvaluation,
+  EmployerInterviewKnowledgeAnalytics,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -699,6 +701,50 @@ const capitalizeStatus = (value?: string) => (value ? value.charAt(0).toUpperCas
 
 const labelizeCode = (value?: string) => (value ? value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '—');
 
+// 29E — deliberately worded to avoid implying deception detection ("Candidate lied"/"False") — see Sprint 29E wording rules.
+const KNOWLEDGE_ALIGNMENT_LABEL: Record<string, string> = {
+  aligned: 'Aligned',
+  partially_aligned: 'Partially Aligned',
+  conflicting: 'Conflicting',
+  insufficient_evidence: 'Insufficient Evidence',
+  not_applicable: 'Not Applicable',
+};
+const KNOWLEDGE_ALIGNMENT_BADGE: Record<string, string> = {
+  aligned: 'badge-success',
+  partially_aligned: 'badge-warning',
+  conflicting: 'badge-warning',
+  insufficient_evidence: 'badge-neutral',
+  not_applicable: 'badge-neutral',
+};
+const KNOWLEDGE_ALIGNMENT_NOTE: Record<string, string> = {
+  aligned: 'This response aligns with the organization knowledge retrieved for this question.',
+  partially_aligned: 'This response partially aligns with the organization knowledge retrieved for this question.',
+  conflicting: 'This response conflicts with the organization knowledge retrieved for this question.',
+  insufficient_evidence: "There isn't enough retrieved organization knowledge to assess this response.",
+  not_applicable: 'Knowledge alignment does not apply to this response.',
+};
+const KNOWLEDGE_CLAIM_LABEL: Record<string, string> = {
+  supported: 'Supported',
+  partially_supported: 'Partially Supported',
+  conflicting: 'Conflicting',
+  not_supported: 'Not Supported',
+  unverifiable: 'Unverifiable',
+};
+const KNOWLEDGE_CLAIM_BADGE: Record<string, string> = {
+  supported: 'badge-success',
+  partially_supported: 'badge-warning',
+  conflicting: 'badge-warning',
+  not_supported: 'badge-neutral',
+  unverifiable: 'badge-neutral',
+};
+const KNOWLEDGE_CLAIM_NOTE: Record<string, string> = {
+  supported: 'Confirmed by the retrieved organization knowledge.',
+  partially_supported: 'Partially confirmed by the retrieved organization knowledge.',
+  conflicting: 'This response conflicts with the organization knowledge retrieved for this question.',
+  not_supported: 'Not supported by the retrieved organization knowledge.',
+  unverifiable: 'Cannot be verified from the retrieved organization knowledge.',
+};
+
 /**
  * Application detail (18D). Readable with only ORGANIZATION_VIEW — editing
  * (notes/source) and status actions require INTERVIEWS_MANAGE on a
@@ -850,6 +896,17 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [followUpRouteLoadingByQuestion, setFollowUpRouteLoadingByQuestion] = useState<Record<string, boolean>>({});
   const [followUpRouteErrorByQuestion, setFollowUpRouteErrorByQuestion] = useState<Record<string, string>>({});
   const [followUpRouteGeneratingByQuestion, setFollowUpRouteGeneratingByQuestion] = useState<Record<string, boolean>>({});
+
+  const [knowledgeEvaluationByQuestion, setKnowledgeEvaluationByQuestion] = useState<Record<string, EmployerHiringKnowledgeGroundedEvaluation>>({});
+  const [knowledgeEvaluationLoadingByQuestion, setKnowledgeEvaluationLoadingByQuestion] = useState<Record<string, boolean>>({});
+  const [knowledgeEvaluationErrorByQuestion, setKnowledgeEvaluationErrorByQuestion] = useState<Record<string, string>>({});
+  const [knowledgeEvaluationGeneratingByQuestion, setKnowledgeEvaluationGeneratingByQuestion] = useState<Record<string, boolean>>({});
+
+  const [knowledgeAnalytics, setKnowledgeAnalytics] = useState<EmployerInterviewKnowledgeAnalytics | null>(null);
+  const [knowledgeAnalyticsLoading, setKnowledgeAnalyticsLoading] = useState(false);
+  const [knowledgeAnalyticsError, setKnowledgeAnalyticsError] = useState<string | null>(null);
+  const [buildingKnowledgeAnalytics, setBuildingKnowledgeAnalytics] = useState(false);
+  const [buildKnowledgeAnalyticsError, setBuildKnowledgeAnalyticsError] = useState<string | null>(null);
 
   const [competencyCoverage, setCompetencyCoverage] = useState<EmployerInterviewCompetencyCoverage | null>(null);
   const [competencyCoverageLoading, setCompetencyCoverageLoading] = useState(false);
@@ -1696,6 +1753,85 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setFollowUpRouteErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to generate follow-up route' }));
     } finally {
       setFollowUpRouteGeneratingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+    }
+  };
+
+  const fetchKnowledgeEvaluation = useCallback(
+    async (questionId: string) => {
+      if (!organizationId || !sessionAnswers) return;
+      setKnowledgeEvaluationLoadingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+      setKnowledgeEvaluationErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+      try {
+        const response = await employerApi.getEmployerHiringKnowledgeGroundedEvaluation(organizationId, sessionAnswers.sessionId, Number(questionId));
+        setKnowledgeEvaluationByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+      } catch (err: any) {
+        setKnowledgeEvaluationErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to load knowledge alignment' }));
+      } finally {
+        setKnowledgeEvaluationLoadingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+      }
+    },
+    [organizationId, sessionAnswers]
+  );
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      sessionAnswers.questions.forEach((q) => {
+        if (q.answerText) fetchKnowledgeEvaluation(q.id);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus, sessionAnswers?.questions.length]);
+
+  const handleGenerateKnowledgeEvaluation = async (questionId: string) => {
+    if (!organizationId || !sessionAnswers) return;
+    setKnowledgeEvaluationGeneratingByQuestion((prev) => ({ ...prev, [questionId]: true }));
+    setKnowledgeEvaluationErrorByQuestion((prev) => ({ ...prev, [questionId]: '' }));
+    try {
+      const response = await employerApi.generateEmployerHiringKnowledgeGroundedEvaluation(
+        organizationId,
+        sessionAnswers.sessionId,
+        Number(questionId)
+      );
+      setKnowledgeEvaluationByQuestion((prev) => ({ ...prev, [questionId]: response.data }));
+    } catch (err: any) {
+      setKnowledgeEvaluationErrorByQuestion((prev) => ({ ...prev, [questionId]: err.message || 'Failed to run knowledge alignment evaluation' }));
+    } finally {
+      setKnowledgeEvaluationGeneratingByQuestion((prev) => ({ ...prev, [questionId]: false }));
+    }
+  };
+
+  const fetchKnowledgeAnalytics = useCallback(async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setKnowledgeAnalyticsLoading(true);
+    setKnowledgeAnalyticsError(null);
+    try {
+      const response = await employerApi.getEmployerInterviewKnowledgeAnalytics(organizationId, sessionAnswers.sessionId);
+      setKnowledgeAnalytics(response.data);
+    } catch (err: any) {
+      setKnowledgeAnalyticsError(err.message || 'Failed to load knowledge analytics');
+    } finally {
+      setKnowledgeAnalyticsLoading(false);
+    }
+  }, [organizationId, sessionAnswers]);
+
+  useEffect(() => {
+    if (sessionAnswers?.hiringEvaluationStatus === 'completed') {
+      fetchKnowledgeAnalytics();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionAnswers?.sessionId, sessionAnswers?.hiringEvaluationStatus]);
+
+  const handleBuildKnowledgeAnalytics = async () => {
+    if (!organizationId || !sessionAnswers) return;
+    setBuildingKnowledgeAnalytics(true);
+    setBuildKnowledgeAnalyticsError(null);
+    try {
+      const response = await employerApi.buildEmployerInterviewKnowledgeAnalytics(organizationId, sessionAnswers.sessionId);
+      setKnowledgeAnalytics(response.data);
+    } catch (err: any) {
+      setBuildKnowledgeAnalyticsError(err.message || 'Failed to build knowledge analytics');
+    } finally {
+      setBuildingKnowledgeAnalytics(false);
     }
   };
 
@@ -3872,6 +4008,134 @@ const EmployerApplicationDetailPage: React.FC = () => {
                                   )}
                                 </div>
                               )}
+
+                              {q.answerText && (
+                                <div className="mt-3 pt-3 border-t border-mentor-border">
+                                  <p className="text-xs font-medium text-mentor-text mb-1">Organization Knowledge Alignment</p>
+                                  <p className="text-[11px] text-mentor-text-muted mb-2">
+                                    Optional, employer-internal check of whether this answer aligns with organization knowledge
+                                    that was retrieved for this question. Not a truth detector and not a hiring recommendation.
+                                  </p>
+
+                                  {(() => {
+                                    const entry = knowledgeEvaluationByQuestion[q.id];
+                                    if (knowledgeEvaluationLoadingByQuestion[q.id] && !entry) {
+                                      return <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />;
+                                    }
+                                    if (!entry || (!entry.evaluated && entry.available !== false)) {
+                                      return (
+                                        <div>
+                                          {knowledgeEvaluationErrorByQuestion[q.id] && (
+                                            <p className="text-xs text-mentor-error mb-1">{knowledgeEvaluationErrorByQuestion[q.id]}</p>
+                                          )}
+                                          <p className="text-xs text-mentor-text-muted mb-1">Not evaluated</p>
+                                          {canManage && (
+                                            <button
+                                              onClick={() => handleGenerateKnowledgeEvaluation(q.id)}
+                                              disabled={knowledgeEvaluationGeneratingByQuestion[q.id]}
+                                              className="btn btn-secondary px-2 py-1 text-xs"
+                                            >
+                                              {knowledgeEvaluationGeneratingByQuestion[q.id]
+                                                ? 'Evaluating...'
+                                                : 'Evaluate Against Organization Knowledge'}
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    }
+                                    if (entry.available === false) {
+                                      return (
+                                        <span className="badge badge-neutral">
+                                          {entry.reason === 'no_retrievable_knowledge'
+                                            ? 'No indexed knowledge available'
+                                            : 'Knowledge grounding disabled'}
+                                        </span>
+                                      );
+                                    }
+                                    if (entry.status === 'processing') {
+                                      return <p className="text-xs text-mentor-text-secondary">Evaluating against organization knowledge...</p>;
+                                    }
+                                    if (entry.status === 'failed') {
+                                      return (
+                                        <div>
+                                          <p className="text-xs text-mentor-error mb-1">{entry.errorMessage || 'Knowledge alignment evaluation failed.'}</p>
+                                          {canManage && (
+                                            <button
+                                              onClick={() => handleGenerateKnowledgeEvaluation(q.id)}
+                                              disabled={knowledgeEvaluationGeneratingByQuestion[q.id]}
+                                              className="btn btn-secondary px-2 py-1 text-xs"
+                                            >
+                                              {knowledgeEvaluationGeneratingByQuestion[q.id] ? 'Retrying...' : 'Retry'}
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    }
+                                    // completed
+                                    const overall = entry.alignment?.overall;
+                                    return (
+                                      <div className="space-y-2">
+                                        <span className={`badge ${KNOWLEDGE_ALIGNMENT_BADGE[overall || 'not_applicable']}`}>
+                                          {KNOWLEDGE_ALIGNMENT_LABEL[overall || 'not_applicable']}
+                                        </span>
+                                        {overall && <p className="text-xs text-mentor-text-secondary">{KNOWLEDGE_ALIGNMENT_NOTE[overall]}</p>}
+                                        {entry.summary && <p className="text-xs text-mentor-text-muted">{entry.summary}</p>}
+
+                                        {(entry.alignment?.claims.length ?? 0) > 0 && (
+                                          <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                              <thead>
+                                                <tr className="text-left text-mentor-text-muted border-b border-mentor-border">
+                                                  <th className="py-1 pr-2">Claim</th>
+                                                  <th className="py-1 pr-2">Alignment</th>
+                                                  <th className="py-1 pr-2">Sources</th>
+                                                  <th className="py-1 pr-2">Explanation</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {entry.alignment!.claims.map((c, i) => (
+                                                  <tr key={i} className="border-b border-mentor-border last:border-0 align-top">
+                                                    <td className="py-1.5 pr-2 text-mentor-text">{c.claim}</td>
+                                                    <td className="py-1.5 pr-2">
+                                                      <span className={`badge ${KNOWLEDGE_CLAIM_BADGE[c.status]}`}>{KNOWLEDGE_CLAIM_LABEL[c.status]}</span>
+                                                    </td>
+                                                    <td className="py-1.5 pr-2 text-mentor-text-secondary">
+                                                      {c.evidenceSourceCount > 0 ? (
+                                                        <span title={c.sources.map((s) => `${s.documentTitle} · chunk ${s.chunkIndex}`).join(', ')}>
+                                                          {c.evidenceSourceCount} source{c.evidenceSourceCount === 1 ? '' : 's'}
+                                                        </span>
+                                                      ) : (
+                                                        '—'
+                                                      )}
+                                                    </td>
+                                                    <td className="py-1.5 pr-2 text-mentor-text-secondary max-w-[240px]">
+                                                      {c.explanation || KNOWLEDGE_CLAIM_NOTE[c.status]}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+
+                                        {entry.organizationKnowledgeSignals && (
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {entry.organizationKnowledgeSignals.demonstratesKnowledge && (
+                                              <span className="badge badge-neutral">Demonstrates knowledge</span>
+                                            )}
+                                            {entry.organizationKnowledgeSignals.usesRelevantTerminology && (
+                                              <span className="badge badge-neutral">Uses relevant terminology</span>
+                                            )}
+                                            {entry.organizationKnowledgeSignals.respectsKnownConstraints && (
+                                              <span className="badge badge-neutral">Respects known constraints</span>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -5199,6 +5463,177 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 <p className="text-sm text-mentor-text-secondary">Waiting for the candidate to accept the interview invitation.</p>
               )}
             </div>
+
+            {sessionAnswers?.hiringEvaluationStatus === 'completed' && (
+              <div className="card mt-6">
+                <h2 className="section-title flex items-center gap-2 mb-1">Knowledge Grounding Analytics</h2>
+                <p className="text-xs text-mentor-text-muted mb-4">
+                  Deterministic (no AI) rollup of completed Organization Knowledge Alignment checks for this interview.
+                  Evaluation coverage only — not a performance score, not a hiring recommendation.
+                </p>
+
+                {knowledgeAnalyticsLoading ? (
+                  <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                ) : knowledgeAnalyticsError ? (
+                  <div>
+                    <p className="text-sm text-mentor-error mb-2">{knowledgeAnalyticsError}</p>
+                    <button onClick={fetchKnowledgeAnalytics} className="btn btn-secondary">
+                      Try Again
+                    </button>
+                  </div>
+                ) : !knowledgeAnalytics || !knowledgeAnalytics.built ? (
+                  <div>
+                    <p className="text-sm text-mentor-text-secondary mb-3">Not built yet.</p>
+                    {canManage && (
+                      <>
+                        {buildKnowledgeAnalyticsError && <p className="text-sm text-mentor-error mb-2">{buildKnowledgeAnalyticsError}</p>}
+                        <button onClick={handleBuildKnowledgeAnalytics} disabled={buildingKnowledgeAnalytics} className="btn btn-primary">
+                          {buildingKnowledgeAnalytics ? 'Building...' : 'Build Knowledge Analytics'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  (() => {
+                    const ret = knowledgeAnalytics.retrieval!;
+                    const align = knowledgeAnalytics.alignment!;
+                    const claimsAgg = knowledgeAnalytics.claims!;
+                    const signalsAgg = knowledgeAnalytics.knowledgeSignals!;
+                    const cov = knowledgeAnalytics.coverage!;
+                    const barMax = Math.max(
+                      align.alignedCount,
+                      align.partiallyAlignedCount,
+                      align.conflictingCount,
+                      align.insufficientEvidenceCount,
+                      align.notApplicableCount,
+                      1
+                    );
+                    const claimBarMax = Math.max(
+                      claimsAgg.supportedCount,
+                      claimsAgg.partiallySupportedCount,
+                      claimsAgg.conflictingCount,
+                      claimsAgg.notSupportedCount,
+                      claimsAgg.unverifiableCount,
+                      1
+                    );
+                    const bar = (value: number, max: number, colorClass: string) => (
+                      <div className="h-1.5 w-full bg-mentor-border rounded-full overflow-hidden">
+                        <div className={`h-full ${colorClass}`} style={{ width: `${Math.round((value / max) * 100)}%` }} />
+                      </div>
+                    );
+
+                    return (
+                      <div className="space-y-5">
+                        {canManage && (
+                          <div>
+                            {buildKnowledgeAnalyticsError && <p className="text-sm text-mentor-error mb-2">{buildKnowledgeAnalyticsError}</p>}
+                            <button onClick={handleBuildKnowledgeAnalytics} disabled={buildingKnowledgeAnalytics} className="btn btn-secondary">
+                              {buildingKnowledgeAnalytics ? 'Rebuilding...' : 'Rebuild Knowledge Analytics'}
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Evaluation Coverage</p>
+                            <p className="text-lg font-semibold text-mentor-text">{cov.coveragePercent}%</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Grounded Questions</p>
+                            <p className="text-lg font-semibold text-mentor-text">{ret.groundedQuestionCount}</p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Knowledge Sources Used</p>
+                            <p className="text-lg font-semibold text-mentor-text">
+                              {ret.uniqueKnowledgeBaseCount} KB · {ret.uniqueDocumentCount} doc{ret.uniqueDocumentCount === 1 ? '' : 's'}
+                            </p>
+                          </div>
+                          <div className="surface-muted p-3">
+                            <p className="text-xs text-mentor-text-muted">Conflicting Responses</p>
+                            <p className="text-lg font-semibold text-mentor-warning">{align.conflictingCount}</p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">A. Alignment</p>
+                          <div className="space-y-1.5">
+                            {[
+                              ['Aligned', align.alignedCount, 'bg-mentor-success'],
+                              ['Partially Aligned', align.partiallyAlignedCount, 'bg-mentor-warning'],
+                              ['Conflicting', align.conflictingCount, 'bg-mentor-warning'],
+                              ['Insufficient Evidence', align.insufficientEvidenceCount, 'bg-mentor-border'],
+                              ['Not Applicable', align.notApplicableCount, 'bg-mentor-border'],
+                            ].map(([label, value, color]) => (
+                              <div key={label as string} className="flex items-center gap-2 text-xs">
+                                <span className="w-36 text-mentor-text-secondary">{label}</span>
+                                {bar(value as number, barMax, color as string)}
+                                <span className="w-6 text-right text-mentor-text">{value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">B. Claim Alignment</p>
+                          <div className="space-y-1.5">
+                            {[
+                              ['Supported', claimsAgg.supportedCount, 'bg-mentor-success'],
+                              ['Partially Supported', claimsAgg.partiallySupportedCount, 'bg-mentor-warning'],
+                              ['Conflicting', claimsAgg.conflictingCount, 'bg-mentor-warning'],
+                              ['Not Supported', claimsAgg.notSupportedCount, 'bg-mentor-border'],
+                              ['Unverifiable', claimsAgg.unverifiableCount, 'bg-mentor-border'],
+                            ].map(([label, value, color]) => (
+                              <div key={label as string} className="flex items-center gap-2 text-xs">
+                                <span className="w-36 text-mentor-text-secondary">{label}</span>
+                                {bar(value as number, claimBarMax, color as string)}
+                                <span className="w-6 text-right text-mentor-text">{value}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-[11px] text-mentor-text-muted mt-1">{claimsAgg.totalClaimCount} total claims assessed.</p>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">C. Knowledge Usage</p>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Knowledge Bases</p>
+                              <p className="text-lg font-semibold text-mentor-text">{ret.uniqueKnowledgeBaseCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Documents</p>
+                              <p className="text-lg font-semibold text-mentor-text">{ret.uniqueDocumentCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Chunks</p>
+                              <p className="text-lg font-semibold text-mentor-text">{ret.uniqueChunkCount}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="label mb-2">D. Observable Knowledge Signals</p>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Demonstrates Knowledge</p>
+                              <p className="text-lg font-semibold text-mentor-text">{signalsAgg.demonstratesKnowledgeCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Uses Relevant Terminology</p>
+                              <p className="text-lg font-semibold text-mentor-text">{signalsAgg.usesRelevantTerminologyCount}</p>
+                            </div>
+                            <div className="surface-muted p-3">
+                              <p className="text-xs text-mentor-text-muted">Respects Known Constraints</p>
+                              <p className="text-lg font-semibold text-mentor-text">{signalsAgg.respectsKnownConstraintsCount}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+            )}
 
             <div className="card mt-6">
               <h2 className="section-title flex items-center gap-2 mb-4">

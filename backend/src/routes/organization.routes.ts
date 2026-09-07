@@ -73,6 +73,8 @@ import organizationKnowledgeBaseController from '../controllers/OrganizationKnow
 import organizationKnowledgeDocumentController from '../controllers/OrganizationKnowledgeDocumentController';
 import organizationKnowledgeIndexController from '../controllers/OrganizationKnowledgeIndexController';
 import employerInterviewKnowledgeConfigController from '../controllers/EmployerInterviewKnowledgeConfigController';
+import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
+import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
   MAX_KNOWLEDGE_DOCUMENT_FILE_SIZE_BYTES,
   ALLOWED_KNOWLEDGE_DOCUMENT_EXTENSIONS,
@@ -3534,6 +3536,55 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewFollowUpRouteController.generateFollowUpRoute
+);
+
+// GET/POST .../interviews/:interviewId/questions/:questionIndex/knowledge-evaluation
+// (29E) — OPTIONAL, employer-internal knowledge-grounding layer over an
+// already-answered question. Never replaces 21D's competency/rubric
+// evaluation; never a truth/deception detector or hiring recommendation.
+router.get(
+  '/:organizationId/interviews/:interviewId/questions/:questionIndex/knowledge-evaluation',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIndexValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringKnowledgeGroundedEvaluationController.getEvaluation
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/questions/:questionIndex/knowledge-evaluation',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  ...questionIndexValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringKnowledgeGroundedEvaluationController.generateEvaluation
+);
+
+// GET/POST .../interviews/:interviewId/knowledge-analytics[/build] (29E) —
+// deterministic (NO AI) analytics over completed 29E evaluations only.
+// Never auto-creates missing evaluations.
+router.get(
+  '/:organizationId/interviews/:interviewId/knowledge-analytics',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerInterviewKnowledgeAnalyticsController.getAnalytics
+);
+
+router.post(
+  '/:organizationId/interviews/:interviewId/knowledge-analytics/build',
+  protect,
+  ...organizationIdValidation,
+  ...interviewIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerInterviewKnowledgeAnalyticsController.buildAnalytics
 );
 
 // GET/POST .../interviews/:interviewId/competency-coverage[/build] (27C) —

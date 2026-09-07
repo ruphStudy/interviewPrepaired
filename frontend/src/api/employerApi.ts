@@ -2569,6 +2569,106 @@ export type GetEmployerInterviewKnowledgeConfigResponse = ApiEnvelope<EmployerIn
 export type UpdateEmployerInterviewKnowledgeConfigResponse = ApiEnvelope<EmployerInterviewKnowledgeConfig>;
 
 // ============================================================================
+// Employer Hiring Knowledge-Grounded Evaluation + Analytics (Sprint 29E) —
+// OPTIONAL, employer-internal layer showing whether a candidate answer
+// aligns with organization knowledge actually retrieved for that question.
+// NOT a truth/deception detector, NOT a candidate ranking, NOT a hiring
+// recommendation, and never replaces the 21D competency/rubric evaluation.
+// ============================================================================
+
+export type KnowledgeEvaluationUnavailableReason = 'knowledge_grounding_disabled' | 'no_retrievable_knowledge';
+export type KnowledgeAlignmentOverall = 'aligned' | 'partially_aligned' | 'conflicting' | 'insufficient_evidence' | 'not_applicable';
+export type KnowledgeClaimStatus = 'supported' | 'partially_supported' | 'conflicting' | 'not_supported' | 'unverifiable';
+
+export interface KnowledgeEvaluationSourceDetail {
+  chunkId: string;
+  documentTitle: string;
+  chunkIndex: number;
+}
+
+export interface KnowledgeEvaluationClaim {
+  claim: string;
+  status: KnowledgeClaimStatus;
+  evidenceSourceCount: number;
+  sources: KnowledgeEvaluationSourceDetail[];
+  explanation: string;
+}
+
+export interface EmployerHiringKnowledgeGroundedEvaluation {
+  evaluated: boolean;
+  available?: boolean;
+  reason?: KnowledgeEvaluationUnavailableReason;
+  status?: 'processing' | 'completed' | 'failed';
+  errorMessage?: string;
+  evaluationVersion?: string;
+  evaluatedAt?: string;
+  knowledgeContext?: {
+    enabled: boolean;
+    retrievalAvailable: boolean;
+    sourceCount: number;
+    sources: KnowledgeEvaluationSourceDetail[];
+  };
+  alignment?: {
+    overall: KnowledgeAlignmentOverall;
+    claims: KnowledgeEvaluationClaim[];
+  };
+  organizationKnowledgeSignals?: {
+    demonstratesKnowledge: boolean;
+    usesRelevantTerminology: boolean;
+    respectsKnownConstraints: boolean;
+    evidence: string[];
+    gaps: string[];
+  };
+  summary?: string;
+}
+
+export type GetEmployerHiringKnowledgeGroundedEvaluationResponse = ApiEnvelope<EmployerHiringKnowledgeGroundedEvaluation>;
+export type GenerateEmployerHiringKnowledgeGroundedEvaluationResponse = ApiEnvelope<EmployerHiringKnowledgeGroundedEvaluation>;
+
+export interface EmployerInterviewKnowledgeAnalytics {
+  built: boolean;
+  analyticsVersion?: string;
+  generatedAt?: string;
+  configuration?: { enabled: boolean; selectedKnowledgeBaseCount: number };
+  retrieval?: {
+    evaluatedQuestionCount: number;
+    groundedQuestionCount: number;
+    noKnowledgeQuestionCount: number;
+    uniqueKnowledgeBaseCount: number;
+    uniqueDocumentCount: number;
+    uniqueChunkCount: number;
+  };
+  alignment?: {
+    alignedCount: number;
+    partiallyAlignedCount: number;
+    conflictingCount: number;
+    insufficientEvidenceCount: number;
+    notApplicableCount: number;
+  };
+  claims?: {
+    totalClaimCount: number;
+    supportedCount: number;
+    partiallySupportedCount: number;
+    conflictingCount: number;
+    notSupportedCount: number;
+    unverifiableCount: number;
+  };
+  knowledgeSignals?: {
+    demonstratesKnowledgeCount: number;
+    usesRelevantTerminologyCount: number;
+    respectsKnownConstraintsCount: number;
+  };
+  coverage?: {
+    answeredQuestionCount: number;
+    knowledgeEvaluatedQuestionCount: number;
+    coveragePercent: number;
+  };
+}
+
+export type GetEmployerInterviewKnowledgeAnalyticsResponse = ApiEnvelope<EmployerInterviewKnowledgeAnalytics>;
+export type BuildEmployerInterviewKnowledgeAnalyticsResponse = ApiEnvelope<EmployerInterviewKnowledgeAnalytics>;
+
+// ============================================================================
 // Employer Hiring Assessment Result — deterministic (no AI) competency
 // aggregate of 21D evaluations (Sprint 21E). Employer-only; never exposed
 // to the candidate.
@@ -4687,6 +4787,65 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to generate follow-up route');
+    }
+  }
+
+  async getEmployerHiringKnowledgeGroundedEvaluation(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GetEmployerHiringKnowledgeGroundedEvaluationResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringKnowledgeGroundedEvaluationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/knowledge-evaluation`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load knowledge-grounded evaluation');
+    }
+  }
+
+  /** No client-supplied knowledgeBaseIds/chunkIds — the server resolves everything through the interview's own 29D config. */
+  async generateEmployerHiringKnowledgeGroundedEvaluation(
+    organizationId: string,
+    interviewId: string,
+    questionIndex: number
+  ): Promise<GenerateEmployerHiringKnowledgeGroundedEvaluationResponse> {
+    try {
+      const response = await this.api.post<GenerateEmployerHiringKnowledgeGroundedEvaluationResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/questions/${questionIndex}/knowledge-evaluation`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to run knowledge-grounded evaluation');
+    }
+  }
+
+  async getEmployerInterviewKnowledgeAnalytics(
+    organizationId: string,
+    interviewId: string
+  ): Promise<GetEmployerInterviewKnowledgeAnalyticsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerInterviewKnowledgeAnalyticsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/knowledge-analytics`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load knowledge analytics');
+    }
+  }
+
+  async buildEmployerInterviewKnowledgeAnalytics(
+    organizationId: string,
+    interviewId: string
+  ): Promise<BuildEmployerInterviewKnowledgeAnalyticsResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerInterviewKnowledgeAnalyticsResponse>(
+        `/organizations/${organizationId}/interviews/${interviewId}/knowledge-analytics/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build knowledge analytics');
     }
   }
 
