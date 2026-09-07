@@ -86,6 +86,9 @@ import employerHiringWorkflowRuleController from '../controllers/EmployerHiringW
 import employerHiringWorkflowController from '../controllers/EmployerHiringWorkflowController';
 import employerIntegrationConnectionController from '../controllers/EmployerIntegrationConnectionController';
 import employerInterviewCalendarEventController from '../controllers/EmployerInterviewCalendarEventController';
+import employerUnifiedTalentProfileController from '../controllers/EmployerUnifiedTalentProfileController';
+import employerCrossAssessmentTalentIntelligenceController from '../controllers/EmployerCrossAssessmentTalentIntelligenceController';
+import employerHiringOutcomeController from '../controllers/EmployerHiringOutcomeController';
 import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
 import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
@@ -4572,6 +4575,77 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerInterviewCalendarEventController.getIcs
+);
+
+// ---- Unified Talent Profile (32A) + Cross-Assessment Talent Intelligence
+// (32B) — deterministic (NO AI), employer-internal only. Never a ranking,
+// never a hiring recommendation, never a candidate comparison. ----
+router.post(
+  '/:organizationId/candidates/:candidateId/talent-profile/build',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerUnifiedTalentProfileController.buildProfile
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId/talent-profile',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerUnifiedTalentProfileController.getProfile
+);
+
+router.post(
+  '/:organizationId/candidates/:candidateId/cross-assessment-intelligence/build',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCrossAssessmentTalentIntelligenceController.buildIntelligence
+);
+
+router.get(
+  '/:organizationId/candidates/:candidateId/cross-assessment-intelligence',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerCrossAssessmentTalentIntelligenceController.getIntelligence
+);
+
+// ---- Hiring Outcome Tracking (32C) — POST-HOC observation only. Never
+// auto-decides/scores/predicts. ----
+const hiringOutcomeValidation = [
+  body('employmentOutcome').optional().isObject().withMessage('employmentOutcome must be an object'),
+  body('notes').optional().isString().trim().isLength({ max: 2000 }).withMessage('notes cannot exceed 2000 characters'),
+];
+
+router.put(
+  '/:organizationId/applications/:applicationId/hiring-outcome',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  ...hiringOutcomeValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerHiringOutcomeController.updateOutcome
+);
+
+router.get(
+  '/:organizationId/applications/:applicationId/hiring-outcome',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  employerHiringOutcomeController.getOutcome
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

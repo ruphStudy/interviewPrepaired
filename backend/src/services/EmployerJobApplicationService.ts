@@ -19,6 +19,7 @@ import { OrganizationType, OrganizationStatus } from '../constants/organization'
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { employerIntegrationEventService } from './EmployerIntegrationEventService';
+import { employerHiringOutcomeService } from './EmployerHiringOutcomeService';
 import { ApiError } from '../utils/ApiError';
 
 const MAX_SEARCH_MATCH_IDS = 500;
@@ -379,6 +380,13 @@ export class EmployerJobApplicationService {
       sourceArtifactId: `${application._id.toString()}:${targetStatus}`,
       data: { status: targetStatus },
     });
+
+    // Best-effort (32C) — mirrors a REACHED terminal pipeline status only; never invents a decision, never blocks the transition.
+    try {
+      await employerHiringOutcomeService.syncFromPipeline(organization._id, application);
+    } catch (outcomeError) {
+      console.error('[EmployerJobApplicationService] Hiring outcome pipeline sync failed (non-fatal)', outcomeError);
+    }
 
     const [job, candidate] = await this.getReferencedJobAndCandidate(organization._id, application.jobId, application.candidateId);
     return this.toDetail(application.toObject(), job, candidate);

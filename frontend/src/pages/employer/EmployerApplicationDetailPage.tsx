@@ -83,6 +83,11 @@ import employerApi, {
   EmployerAssessmentIntegritySummary,
   EmployerHiringWorkflowExecution,
   EmployerInterviewCalendarEvent,
+  EmployerHiringOutcome,
+  EmployerHiringEmploymentStatus,
+  EmployerHiringOutcomeReviewWindow,
+  EmployerHiringOutcomePerformanceBand,
+  EmployerHiringOutcomeRetentionStatus,
 } from '../../api/employerApi';
 import {
   AlertCircle,
@@ -940,6 +945,20 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [calendarEvent, setCalendarEvent] = useState<EmployerInterviewCalendarEvent | null>(null);
   const [calendarEventLoading, setCalendarEventLoading] = useState(false);
   const [calendarEventError, setCalendarEventError] = useState<string | null>(null);
+
+  const [hiringOutcome, setHiringOutcome] = useState<EmployerHiringOutcome | null>(null);
+  const [hiringOutcomeLoading, setHiringOutcomeLoading] = useState(true);
+  const [hiringOutcomeError, setHiringOutcomeError] = useState<string | null>(null);
+  const [savingHiringOutcome, setSavingHiringOutcome] = useState(false);
+  const [saveHiringOutcomeError, setSaveHiringOutcomeError] = useState<string | null>(null);
+  const [hoStatus, setHoStatus] = useState<EmployerHiringEmploymentStatus>('unknown');
+  const [hoJoinedAt, setHoJoinedAt] = useState('');
+  const [hoLeftAt, setHoLeftAt] = useState('');
+  const [hoReviewWindow, setHoReviewWindow] = useState<EmployerHiringOutcomeReviewWindow>('not_available');
+  const [hoPerformanceBand, setHoPerformanceBand] = useState<EmployerHiringOutcomePerformanceBand | ''>('');
+  const [hoRetentionStatus, setHoRetentionStatus] = useState<EmployerHiringOutcomeRetentionStatus>('unknown');
+  const [hoNotes, setHoNotes] = useState('');
+  const [editingHiringOutcome, setEditingHiringOutcome] = useState(false);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
   const [scheduleStartsAt, setScheduleStartsAt] = useState('');
   const [scheduleEndsAt, setScheduleEndsAt] = useState('');
@@ -1852,6 +1871,63 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setCalendarEventError(err.message || 'Failed to download calendar file');
     } finally {
       setDownloadingIcs(false);
+    }
+  };
+
+  const fetchHiringOutcome = useCallback(async () => {
+    if (!organizationId || !applicationId) return;
+    setHiringOutcomeLoading(true);
+    setHiringOutcomeError(null);
+    try {
+      const response = await employerApi.getEmployerHiringOutcome(organizationId, applicationId);
+      setHiringOutcome(response.data);
+    } catch (err: any) {
+      setHiringOutcomeError(err.message || 'Failed to load hiring outcome');
+    } finally {
+      setHiringOutcomeLoading(false);
+    }
+  }, [organizationId, applicationId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchHiringOutcome();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchHiringOutcome]);
+
+  const handleOpenHiringOutcomeForm = () => {
+    setHoStatus(hiringOutcome?.employmentOutcome?.status ?? 'unknown');
+    setHoJoinedAt(hiringOutcome?.employmentOutcome?.joinedAt ? hiringOutcome.employmentOutcome.joinedAt.slice(0, 10) : '');
+    setHoLeftAt(hiringOutcome?.employmentOutcome?.leftAt ? hiringOutcome.employmentOutcome.leftAt.slice(0, 10) : '');
+    setHoReviewWindow(hiringOutcome?.employmentOutcome?.reviewWindow ?? 'not_available');
+    setHoPerformanceBand(hiringOutcome?.employmentOutcome?.performanceBand ?? '');
+    setHoRetentionStatus(hiringOutcome?.employmentOutcome?.retentionStatus ?? 'unknown');
+    setHoNotes(hiringOutcome?.notes ?? '');
+    setSaveHiringOutcomeError(null);
+    setEditingHiringOutcome(true);
+  };
+
+  const handleSaveHiringOutcome = async () => {
+    if (!organizationId || !applicationId) return;
+    setSavingHiringOutcome(true);
+    setSaveHiringOutcomeError(null);
+    try {
+      const response = await employerApi.updateEmployerHiringOutcome(organizationId, applicationId, {
+        employmentOutcome: {
+          status: hoStatus,
+          joinedAt: hoJoinedAt ? new Date(hoJoinedAt).toISOString() : undefined,
+          leftAt: hoLeftAt ? new Date(hoLeftAt).toISOString() : undefined,
+          reviewWindow: hoReviewWindow,
+          performanceBand: hoPerformanceBand || undefined,
+          retentionStatus: hoRetentionStatus,
+        },
+        notes: hoNotes,
+      });
+      setHiringOutcome(response.data);
+      setEditingHiringOutcome(false);
+    } catch (err: any) {
+      setSaveHiringOutcomeError(err.message || 'Failed to save hiring outcome');
+    } finally {
+      setSavingHiringOutcome(false);
     }
   };
 
@@ -6848,6 +6924,196 @@ const EmployerApplicationDetailPage: React.FC = () => {
                     </li>
                   ))}
                 </ul>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <h2 className="section-title flex items-center gap-2 mb-1">Hiring Outcome</h2>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Structured record of what actually happened after the hiring decision. This tracks outcomes only — it does not
+                predict them and does not affect any assessment or pipeline decision.
+              </p>
+
+              {hiringOutcomeLoading ? (
+                <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+              ) : hiringOutcomeError ? (
+                <div>
+                  <p className="text-sm text-mentor-error mb-2">{hiringOutcomeError}</p>
+                  <button onClick={fetchHiringOutcome} className="btn btn-secondary">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Hiring Outcome</p>
+                      <p className="text-sm font-semibold text-mentor-text">{labelizeCode(hiringOutcome?.hiringOutcome)}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Decision Date</p>
+                      <p className="text-sm font-semibold text-mentor-text">
+                        {hiringOutcome?.decisionAt ? new Date(hiringOutcome.decisionAt).toLocaleDateString() : '—'}
+                      </p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Source</p>
+                      <p className="text-sm font-semibold text-mentor-text">{labelizeCode(hiringOutcome?.source) || '—'}</p>
+                    </div>
+                  </div>
+
+                  {hiringOutcome?.recorded && hiringOutcome.employmentOutcome && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Employment Status</p>
+                        <p className="text-sm font-semibold text-mentor-text">{labelizeCode(hiringOutcome.employmentOutcome.status)}</p>
+                      </div>
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Joined</p>
+                        <p className="text-sm font-semibold text-mentor-text">
+                          {hiringOutcome.employmentOutcome.joinedAt
+                            ? new Date(hiringOutcome.employmentOutcome.joinedAt).toLocaleDateString()
+                            : '—'}
+                        </p>
+                      </div>
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Left</p>
+                        <p className="text-sm font-semibold text-mentor-text">
+                          {hiringOutcome.employmentOutcome.leftAt
+                            ? new Date(hiringOutcome.employmentOutcome.leftAt).toLocaleDateString()
+                            : '—'}
+                        </p>
+                      </div>
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Review Window</p>
+                        <p className="text-sm font-semibold text-mentor-text">{labelizeCode(hiringOutcome.employmentOutcome.reviewWindow)}</p>
+                      </div>
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Performance Band</p>
+                        <p className="text-sm font-semibold text-mentor-text">
+                          {hiringOutcome.employmentOutcome.performanceBand ? labelizeCode(hiringOutcome.employmentOutcome.performanceBand) : '—'}
+                        </p>
+                      </div>
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Retention</p>
+                        <p className="text-sm font-semibold text-mentor-text">
+                          {labelizeCode(hiringOutcome.employmentOutcome.retentionStatus) || '—'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {hiringOutcome?.notes && (
+                    <div>
+                      <p className="label mb-1">Notes</p>
+                      <p className="text-sm text-mentor-text-secondary whitespace-pre-wrap">{hiringOutcome.notes}</p>
+                    </div>
+                  )}
+
+                  {canManage && (
+                    <div>
+                      {!editingHiringOutcome ? (
+                        <button onClick={handleOpenHiringOutcomeForm} className="btn btn-secondary">
+                          {hiringOutcome?.recorded ? 'Update Employment Outcome' : 'Record Employment Outcome'}
+                        </button>
+                      ) : (
+                        <div className="surface-muted p-3 space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="label mb-1 block">Employment Status</label>
+                              <select
+                                value={hoStatus}
+                                onChange={(e) => setHoStatus(e.target.value as EmployerHiringEmploymentStatus)}
+                                className="input w-full"
+                              >
+                                <option value="unknown">Unknown</option>
+                                <option value="joined">Joined</option>
+                                <option value="did_not_join">Did Not Join</option>
+                                <option value="employed">Employed</option>
+                                <option value="left">Left</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="label mb-1 block">Review Window</label>
+                              <select
+                                value={hoReviewWindow}
+                                onChange={(e) => setHoReviewWindow(e.target.value as EmployerHiringOutcomeReviewWindow)}
+                                className="input w-full"
+                              >
+                                <option value="not_available">Not Available</option>
+                                <option value="thirty_day">30 Day</option>
+                                <option value="ninety_day">90 Day</option>
+                                <option value="six_month">6 Month</option>
+                                <option value="twelve_month">12 Month</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="label mb-1 block">Joined Date</label>
+                              <input type="date" value={hoJoinedAt} onChange={(e) => setHoJoinedAt(e.target.value)} className="input w-full" />
+                            </div>
+                            <div>
+                              <label className="label mb-1 block">Left Date</label>
+                              <input type="date" value={hoLeftAt} onChange={(e) => setHoLeftAt(e.target.value)} className="input w-full" />
+                            </div>
+                            <div>
+                              <label className="label mb-1 block">Performance Band</label>
+                              <select
+                                value={hoPerformanceBand}
+                                onChange={(e) => setHoPerformanceBand(e.target.value as EmployerHiringOutcomePerformanceBand | '')}
+                                className="input w-full"
+                              >
+                                <option value="">Not Set</option>
+                                <option value="below_expectations">Below Expectations</option>
+                                <option value="meets_expectations">Meets Expectations</option>
+                                <option value="exceeds_expectations">Exceeds Expectations</option>
+                              </select>
+                              <p className="text-xs text-mentor-text-muted mt-1">
+                                Only saved when status is Employed/Left and a review window is set.
+                              </p>
+                            </div>
+                            <div>
+                              <label className="label mb-1 block">Retention</label>
+                              <select
+                                value={hoRetentionStatus}
+                                onChange={(e) => setHoRetentionStatus(e.target.value as EmployerHiringOutcomeRetentionStatus)}
+                                className="input w-full"
+                              >
+                                <option value="unknown">Unknown</option>
+                                <option value="retained">Retained</option>
+                                <option value="exited">Exited</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="label mb-1 block">Notes</label>
+                            <textarea
+                              value={hoNotes}
+                              onChange={(e) => setHoNotes(e.target.value)}
+                              rows={3}
+                              maxLength={2000}
+                              className="input w-full"
+                              placeholder="Employment-related notes (optional)..."
+                            />
+                          </div>
+                          {saveHiringOutcomeError && <p className="text-sm text-mentor-error">{saveHiringOutcomeError}</p>}
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={handleSaveHiringOutcome}
+                              disabled={savingHiringOutcome}
+                              className="btn btn-primary"
+                            >
+                              {savingHiringOutcome ? 'Saving...' : 'Save'}
+                            </button>
+                            <button type="button" onClick={() => setEditingHiringOutcome(false)} className="btn btn-secondary">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 

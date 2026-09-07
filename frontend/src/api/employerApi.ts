@@ -4130,6 +4130,144 @@ export type ScheduleEmployerInterviewCalendarEventResponse = ApiEnvelope<Employe
 export type GetEmployerInterviewCalendarEventResponse = ApiEnvelope<EmployerInterviewCalendarEvent>;
 export type CancelEmployerInterviewCalendarEventResponse = ApiEnvelope<EmployerInterviewCalendarEvent>;
 
+// ============================================================================
+// Unified Talent Profile (Sprint 32A) + Cross-Assessment Talent
+// Intelligence (Sprint 32B) — deterministic (NO AI), employer-internal
+// only. Never a ranking, never a hiring recommendation, never an overall
+// talent score, never a comparison against other candidates.
+// ============================================================================
+
+export interface TalentProfileIdentity {
+  candidateId: string;
+  displayName?: string;
+  primaryEmail?: string;
+}
+
+export interface TalentProfileApplicationSummary {
+  totalApplications: number;
+  activeApplications: number;
+  completedApplications: number;
+  hiredApplications: number;
+  rejectedApplications: number;
+}
+
+export interface TalentProfileAssessmentSummary {
+  interviewCount: number;
+  completedInterviewCount: number;
+  scenarioAssessmentCount: number;
+  codingAssessmentCount: number;
+}
+
+export interface TalentProfileSkill {
+  skillName: string;
+  evidenceCount: number;
+  latestEvidenceAt?: string;
+  sourceTypes: string[];
+}
+
+export type TalentEvidenceState = 'strong' | 'sufficient' | 'partial' | 'insufficient' | 'not_observed';
+
+export interface TalentProfileCompetency {
+  competencyName: string;
+  evidenceCount: number;
+  states: { strong: number; sufficient: number; partial: number; insufficient: number; notObserved: number };
+  latestEvidenceState?: TalentEvidenceState;
+  latestEvidenceAt?: string;
+  sourceTypes: string[];
+}
+
+export interface TalentProfileAssessmentSources {
+  standardInterviewCount: number;
+  scenarioCount: number;
+  codingCount: number;
+  knowledgeGroundedCount: number;
+}
+
+export interface EmployerUnifiedTalentProfile {
+  built: boolean;
+  profileVersion?: string;
+  generatedAt?: string;
+  identity?: TalentProfileIdentity;
+  applicationSummary?: TalentProfileApplicationSummary;
+  assessmentSummary?: TalentProfileAssessmentSummary;
+  skills?: TalentProfileSkill[];
+  competencies?: TalentProfileCompetency[];
+  assessmentSources?: TalentProfileAssessmentSources;
+  timeline?: { firstApplicationAt?: string; latestActivityAt?: string };
+}
+
+export type BuildEmployerUnifiedTalentProfileResponse = ApiEnvelope<EmployerUnifiedTalentProfile>;
+export type GetEmployerUnifiedTalentProfileResponse = ApiEnvelope<EmployerUnifiedTalentProfile>;
+
+export type TalentConsistencyLevel = 'consistent_strong' | 'consistent_sufficient' | 'mixed' | 'consistent_gap' | 'insufficient_data';
+
+export interface CompetencyConsistency {
+  competencyName: string;
+  sourceCount: number;
+  sourceStates: { sourceType: string; state: TalentEvidenceState }[];
+  consistency: TalentConsistencyLevel;
+}
+
+export interface EmployerCrossAssessmentTalentIntelligence {
+  built: boolean;
+  intelligenceVersion?: string;
+  generatedAt?: string;
+  competencyConsistency?: CompetencyConsistency[];
+  crossAssessmentSignals?: { repeatedStrengths: string[]; repeatedEvidenceGaps: string[]; mixedEvidence: string[] };
+  sourceCoverage?: { standardInterview: boolean; scenario: boolean; coding: boolean; knowledgeGrounding: boolean; totalSourceTypes: number };
+  evidenceBreadth?: { skillCount: number; competencyCount: number; multiSourceCompetencyCount: number };
+}
+
+export type BuildEmployerCrossAssessmentTalentIntelligenceResponse = ApiEnvelope<EmployerCrossAssessmentTalentIntelligence>;
+export type GetEmployerCrossAssessmentTalentIntelligenceResponse = ApiEnvelope<EmployerCrossAssessmentTalentIntelligence>;
+
+// ============================================================================
+// Hiring Outcome Tracking (Sprint 32C) — POST-HOC observation only. Never
+// a prediction, never auto-decides a hiring outcome.
+// ============================================================================
+
+export type EmployerHiringOutcomeDecision = 'hired' | 'rejected' | 'withdrawn' | 'no_decision';
+export type EmployerHiringEmploymentStatus = 'unknown' | 'joined' | 'did_not_join' | 'employed' | 'left';
+export type EmployerHiringOutcomeReviewWindow = 'not_available' | 'thirty_day' | 'ninety_day' | 'six_month' | 'twelve_month';
+export type EmployerHiringOutcomePerformanceBand = 'below_expectations' | 'meets_expectations' | 'exceeds_expectations';
+export type EmployerHiringOutcomeRetentionStatus = 'unknown' | 'retained' | 'exited';
+
+export interface EmployerHiringEmploymentOutcome {
+  status: EmployerHiringEmploymentStatus;
+  joinedAt?: string;
+  leftAt?: string;
+  reviewWindow: EmployerHiringOutcomeReviewWindow;
+  performanceBand?: EmployerHiringOutcomePerformanceBand;
+  retentionStatus?: EmployerHiringOutcomeRetentionStatus;
+  recordedAt?: string;
+}
+
+export interface EmployerHiringOutcome {
+  recorded: boolean;
+  hiringOutcome: EmployerHiringOutcomeDecision;
+  decisionAt?: string;
+  employmentOutcome?: EmployerHiringEmploymentOutcome;
+  source?: 'manual' | 'pipeline';
+  notes?: string;
+  currentApplicationStatus?: string;
+  updatedAt?: string;
+}
+
+export interface UpdateEmployerHiringOutcomeInput {
+  employmentOutcome?: {
+    status?: EmployerHiringEmploymentStatus;
+    joinedAt?: string;
+    leftAt?: string;
+    reviewWindow?: EmployerHiringOutcomeReviewWindow;
+    performanceBand?: EmployerHiringOutcomePerformanceBand;
+    retentionStatus?: EmployerHiringOutcomeRetentionStatus;
+  };
+  notes?: string;
+}
+
+export type UpdateEmployerHiringOutcomeResponse = ApiEnvelope<EmployerHiringOutcome>;
+export type GetEmployerHiringOutcomeResponse = ApiEnvelope<EmployerHiringOutcome>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -7046,6 +7184,87 @@ class EmployerApiService {
       URL.revokeObjectURL(url);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to download calendar file');
+    }
+  }
+
+  // ---- Unified Talent Profile (32A) + Cross-Assessment Talent Intelligence (32B) ----
+
+  async buildEmployerUnifiedTalentProfile(organizationId: string, candidateId: string): Promise<BuildEmployerUnifiedTalentProfileResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerUnifiedTalentProfileResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/talent-profile/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build talent profile');
+    }
+  }
+
+  async getEmployerUnifiedTalentProfile(organizationId: string, candidateId: string): Promise<GetEmployerUnifiedTalentProfileResponse> {
+    try {
+      const response = await this.api.get<GetEmployerUnifiedTalentProfileResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/talent-profile`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load talent profile');
+    }
+  }
+
+  async buildEmployerCrossAssessmentTalentIntelligence(
+    organizationId: string,
+    candidateId: string
+  ): Promise<BuildEmployerCrossAssessmentTalentIntelligenceResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerCrossAssessmentTalentIntelligenceResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/cross-assessment-intelligence/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build cross-assessment intelligence');
+    }
+  }
+
+  async getEmployerCrossAssessmentTalentIntelligence(
+    organizationId: string,
+    candidateId: string
+  ): Promise<GetEmployerCrossAssessmentTalentIntelligenceResponse> {
+    try {
+      const response = await this.api.get<GetEmployerCrossAssessmentTalentIntelligenceResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/cross-assessment-intelligence`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load cross-assessment intelligence');
+    }
+  }
+
+  // ---- Hiring Outcome Tracking (32C) ----
+
+  async updateEmployerHiringOutcome(
+    organizationId: string,
+    applicationId: string,
+    input: UpdateEmployerHiringOutcomeInput
+  ): Promise<UpdateEmployerHiringOutcomeResponse> {
+    try {
+      const response = await this.api.put<UpdateEmployerHiringOutcomeResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/hiring-outcome`,
+        input
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to save hiring outcome');
+    }
+  }
+
+  async getEmployerHiringOutcome(organizationId: string, applicationId: string): Promise<GetEmployerHiringOutcomeResponse> {
+    try {
+      const response = await this.api.get<GetEmployerHiringOutcomeResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/hiring-outcome`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load hiring outcome');
     }
   }
 }

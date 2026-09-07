@@ -17,6 +17,8 @@ import employerApi, {
   CandidateSourceAttribution,
   EmployerCandidateSkillMemory,
   EmployerCandidateSkillEvolution,
+  EmployerUnifiedTalentProfile,
+  EmployerCrossAssessmentTalentIntelligence,
 } from '../../api/employerApi';
 import { EMPTY_CANDIDATE_FORM, CandidateFormState, candidateFormToPayload, candidateToFormState } from './candidateFormUtils';
 import {
@@ -403,6 +405,18 @@ const EmployerCandidateDetailPage: React.FC = () => {
   const [refreshingSkillEvolution, setRefreshingSkillEvolution] = useState(false);
   const [refreshSkillEvolutionError, setRefreshSkillEvolutionError] = useState<string | null>(null);
 
+  const [talentProfile, setTalentProfile] = useState<EmployerUnifiedTalentProfile | null>(null);
+  const [talentProfileLoading, setTalentProfileLoading] = useState(true);
+  const [talentProfileError, setTalentProfileError] = useState<string | null>(null);
+  const [buildingTalentProfile, setBuildingTalentProfile] = useState(false);
+  const [buildTalentProfileError, setBuildTalentProfileError] = useState<string | null>(null);
+
+  const [crossAssessmentIntelligence, setCrossAssessmentIntelligence] = useState<EmployerCrossAssessmentTalentIntelligence | null>(null);
+  const [crossAssessmentLoading, setCrossAssessmentLoading] = useState(true);
+  const [crossAssessmentError, setCrossAssessmentError] = useState<string | null>(null);
+  const [buildingCrossAssessment, setBuildingCrossAssessment] = useState(false);
+  const [buildCrossAssessmentError, setBuildCrossAssessmentError] = useState<string | null>(null);
+
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
       setActiveOrganization(organizationId);
@@ -678,6 +692,74 @@ const EmployerCandidateDetailPage: React.FC = () => {
       setSkillEvolutionLoading(false);
     }
   }, [organizationId, candidateId]);
+
+  const fetchTalentProfile = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setTalentProfileLoading(true);
+    setTalentProfileError(null);
+    try {
+      const response = await employerApi.getEmployerUnifiedTalentProfile(organizationId, candidateId);
+      setTalentProfile(response.data);
+    } catch (err: any) {
+      setTalentProfileError(err.message || 'Failed to load talent profile');
+    } finally {
+      setTalentProfileLoading(false);
+    }
+  }, [organizationId, candidateId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchTalentProfile();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchTalentProfile]);
+
+  const handleBuildTalentProfile = async () => {
+    if (!organizationId || !candidateId) return;
+    setBuildingTalentProfile(true);
+    setBuildTalentProfileError(null);
+    try {
+      const response = await employerApi.buildEmployerUnifiedTalentProfile(organizationId, candidateId);
+      setTalentProfile(response.data);
+    } catch (err: any) {
+      setBuildTalentProfileError(err.message || 'Failed to build talent profile');
+    } finally {
+      setBuildingTalentProfile(false);
+    }
+  };
+
+  const fetchCrossAssessmentIntelligence = useCallback(async () => {
+    if (!organizationId || !candidateId) return;
+    setCrossAssessmentLoading(true);
+    setCrossAssessmentError(null);
+    try {
+      const response = await employerApi.getEmployerCrossAssessmentTalentIntelligence(organizationId, candidateId);
+      setCrossAssessmentIntelligence(response.data);
+    } catch (err: any) {
+      setCrossAssessmentError(err.message || 'Failed to load cross-assessment intelligence');
+    } finally {
+      setCrossAssessmentLoading(false);
+    }
+  }, [organizationId, candidateId]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'company' && canView) {
+      fetchCrossAssessmentIntelligence();
+    }
+  }, [isSyncing, activeOrganization, canView, fetchCrossAssessmentIntelligence]);
+
+  const handleBuildCrossAssessmentIntelligence = async () => {
+    if (!organizationId || !candidateId) return;
+    setBuildingCrossAssessment(true);
+    setBuildCrossAssessmentError(null);
+    try {
+      const response = await employerApi.buildEmployerCrossAssessmentTalentIntelligence(organizationId, candidateId);
+      setCrossAssessmentIntelligence(response.data);
+    } catch (err: any) {
+      setBuildCrossAssessmentError(err.message || 'Failed to build cross-assessment intelligence');
+    } finally {
+      setBuildingCrossAssessment(false);
+    }
+  };
 
   useEffect(() => {
     if (!isSyncing && activeOrganization?.type === 'company' && canView) {
@@ -2121,6 +2203,256 @@ const EmployerCandidateDetailPage: React.FC = () => {
                   })()
                 )}
               </div>
+            </div>
+
+            <div className="card mt-6">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+                <h2 className="section-title">Unified Talent Profile</h2>
+                {canManage && (
+                  <button onClick={handleBuildTalentProfile} disabled={buildingTalentProfile} className="btn btn-primary px-3 py-1.5 text-xs">
+                    {buildingTalentProfile ? 'Building...' : talentProfile?.built ? 'Refresh Talent Profile' : 'Build Talent Profile'}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Deterministic (no AI) consolidation of this candidate's own evidence across their applications within this
+                organization. Not a talent score, not a ranking.
+              </p>
+              {buildTalentProfileError && <p className="text-sm text-mentor-error mb-2">{buildTalentProfileError}</p>}
+
+              {talentProfileLoading ? (
+                <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+              ) : talentProfileError ? (
+                <div>
+                  <p className="text-sm text-mentor-error mb-2">{talentProfileError}</p>
+                  <button onClick={fetchTalentProfile} className="btn btn-secondary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !talentProfile?.built ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-4">Not built yet.</p>
+              ) : (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Applications</p>
+                      <p className="text-lg font-semibold text-mentor-text">{talentProfile.applicationSummary?.totalApplications}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Active</p>
+                      <p className="text-lg font-semibold text-mentor-text">{talentProfile.applicationSummary?.activeApplications}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Hired</p>
+                      <p className="text-lg font-semibold text-mentor-success">{talentProfile.applicationSummary?.hiredApplications}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Rejected</p>
+                      <p className="text-lg font-semibold text-mentor-text">{talentProfile.applicationSummary?.rejectedApplications}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Interviews</p>
+                      <p className="text-lg font-semibold text-mentor-text">{talentProfile.assessmentSummary?.interviewCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Completed Interviews</p>
+                      <p className="text-lg font-semibold text-mentor-text">{talentProfile.assessmentSummary?.completedInterviewCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Scenario Assessments</p>
+                      <p className="text-lg font-semibold text-mentor-text">{talentProfile.assessmentSummary?.scenarioAssessmentCount}</p>
+                    </div>
+                    <div className="surface-muted p-3">
+                      <p className="text-xs text-mentor-text-muted">Coding Assessments</p>
+                      <p className="text-lg font-semibold text-mentor-text">{talentProfile.assessmentSummary?.codingAssessmentCount}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">Assessment Sources</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="badge badge-neutral">Standard Interview {talentProfile.assessmentSources?.standardInterviewCount}</span>
+                      <span className="badge badge-neutral">Scenario {talentProfile.assessmentSources?.scenarioCount}</span>
+                      <span className="badge badge-neutral">Coding {talentProfile.assessmentSources?.codingCount}</span>
+                      <span className="badge badge-neutral">Knowledge Grounded {talentProfile.assessmentSources?.knowledgeGroundedCount}</span>
+                    </div>
+                  </div>
+
+                  {(talentProfile.skills?.length ?? 0) > 0 && (
+                    <div>
+                      <p className="label mb-2">Skills — Evidence</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {talentProfile.skills!.map((s) => (
+                          <span key={s.skillName} className="badge badge-neutral" title={s.sourceTypes.join(', ')}>
+                            {s.skillName} · {s.evidenceCount} evidence
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(talentProfile.competencies?.length ?? 0) > 0 && (
+                    <div>
+                      <p className="label mb-2">Competencies — Evidence</p>
+                      <div className="space-y-1.5">
+                        {talentProfile.competencies!.map((c) => (
+                          <div key={c.competencyName} className="surface-muted p-2 text-xs">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <span className="font-medium text-mentor-text">{c.competencyName}</span>
+                              {c.latestEvidenceState && (
+                                <span className="badge badge-neutral">Latest: {c.latestEvidenceState.replace(/_/g, ' ')}</span>
+                              )}
+                              <span className="text-mentor-text-muted">{c.sourceTypes.join(', ')}</span>
+                            </div>
+                            <p className="text-mentor-text-muted">
+                              Strong {c.states.strong} &middot; Sufficient {c.states.sufficient} &middot; Partial {c.states.partial} &middot;
+                              Insufficient {c.states.insufficient} &middot; Not observed {c.states.notObserved}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-mentor-text-muted">
+                    First application: {formatDate(talentProfile.timeline?.firstApplicationAt)} &middot; Latest activity:{' '}
+                    {formatDate(talentProfile.timeline?.latestActivityAt)}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="card mt-6">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+                <h2 className="section-title">Cross-Assessment Intelligence</h2>
+                {canManage && (
+                  <button
+                    onClick={handleBuildCrossAssessmentIntelligence}
+                    disabled={buildingCrossAssessment}
+                    className="btn btn-secondary px-3 py-1.5 text-xs"
+                  >
+                    {buildingCrossAssessment ? 'Building...' : 'Build / Refresh'}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-mentor-text-muted mb-4">
+                Deterministic patterns across this SAME candidate's own assessment sources. Never a comparison with other
+                candidates, never a hire/reject recommendation.
+              </p>
+              {buildCrossAssessmentError && <p className="text-sm text-mentor-error mb-2">{buildCrossAssessmentError}</p>}
+
+              {crossAssessmentLoading ? (
+                <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+              ) : crossAssessmentError ? (
+                <div>
+                  <p className="text-sm text-mentor-error mb-2">{crossAssessmentError}</p>
+                  <button onClick={fetchCrossAssessmentIntelligence} className="btn btn-secondary">
+                    Try Again
+                  </button>
+                </div>
+              ) : !crossAssessmentIntelligence?.built ? (
+                <p className="text-sm text-mentor-text-secondary text-center py-4">Not built yet.</p>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <p className="label mb-1">Repeated Strengths</p>
+                    {(crossAssessmentIntelligence.crossAssessmentSignals?.repeatedStrengths.length ?? 0) === 0 ? (
+                      <p className="text-xs text-mentor-text-muted">None yet.</p>
+                    ) : (
+                      crossAssessmentIntelligence.crossAssessmentSignals!.repeatedStrengths.map((s, i) => (
+                        <p key={i} className="text-xs text-mentor-success">
+                          {s}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                  <div>
+                    <p className="label mb-1">Repeated Evidence Gaps</p>
+                    {(crossAssessmentIntelligence.crossAssessmentSignals?.repeatedEvidenceGaps.length ?? 0) === 0 ? (
+                      <p className="text-xs text-mentor-text-muted">None.</p>
+                    ) : (
+                      crossAssessmentIntelligence.crossAssessmentSignals!.repeatedEvidenceGaps.map((s, i) => (
+                        <p key={i} className="text-xs text-mentor-warning">
+                          {s}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                  <div>
+                    <p className="label mb-1">Mixed Evidence</p>
+                    {(crossAssessmentIntelligence.crossAssessmentSignals?.mixedEvidence.length ?? 0) === 0 ? (
+                      <p className="text-xs text-mentor-text-muted">None.</p>
+                    ) : (
+                      crossAssessmentIntelligence.crossAssessmentSignals!.mixedEvidence.map((s, i) => (
+                        <p key={i} className="text-xs text-mentor-text-secondary">
+                          {s}
+                        </p>
+                      ))
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">Competency Consistency</p>
+                    <div className="space-y-1">
+                      {(crossAssessmentIntelligence.competencyConsistency?.length ?? 0) === 0 ? (
+                        <p className="text-xs text-mentor-text-muted">No competency evidence yet.</p>
+                      ) : (
+                        crossAssessmentIntelligence.competencyConsistency!.map((c) => (
+                          <div key={c.competencyName} className="surface-muted p-2 text-xs">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium text-mentor-text">{c.competencyName}</span>
+                              <span className="badge badge-neutral">{c.consistency.replace(/_/g, ' ')}</span>
+                              <span className="text-mentor-text-muted">
+                                {c.sourceStates.map((s) => `${s.sourceType}: ${s.state}`).join(', ')}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">Source Coverage</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {crossAssessmentIntelligence.sourceCoverage?.standardInterview && (
+                        <span className="badge badge-success">Standard Interview</span>
+                      )}
+                      {crossAssessmentIntelligence.sourceCoverage?.scenario && <span className="badge badge-success">Scenario</span>}
+                      {crossAssessmentIntelligence.sourceCoverage?.coding && <span className="badge badge-success">Coding</span>}
+                      {crossAssessmentIntelligence.sourceCoverage?.knowledgeGrounding && (
+                        <span className="badge badge-success">Knowledge Grounding</span>
+                      )}
+                      <span className="text-xs text-mentor-text-muted">
+                        {crossAssessmentIntelligence.sourceCoverage?.totalSourceTypes} of 4 source types
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="label mb-2">Evidence Breadth</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Skills</p>
+                        <p className="text-lg font-semibold text-mentor-text">{crossAssessmentIntelligence.evidenceBreadth?.skillCount}</p>
+                      </div>
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Competencies</p>
+                        <p className="text-lg font-semibold text-mentor-text">{crossAssessmentIntelligence.evidenceBreadth?.competencyCount}</p>
+                      </div>
+                      <div className="surface-muted p-3">
+                        <p className="text-xs text-mentor-text-muted">Multi-Source Competencies</p>
+                        <p className="text-lg font-semibold text-mentor-text">
+                          {crossAssessmentIntelligence.evidenceBreadth?.multiSourceCompetencyCount}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
