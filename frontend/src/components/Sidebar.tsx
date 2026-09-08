@@ -171,6 +171,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
                 { to: `/organizations/${activeOrganizationId}/employer/jobs`, label: 'Jobs', icon: Briefcase },
                 { to: `/organizations/${activeOrganizationId}/employer/candidates`, label: 'Candidates', icon: Users },
                 { to: `/organizations/${activeOrganizationId}/employer/talent-skills`, label: 'Talent Skills', icon: Network },
+                ...(hasPermission('analytics:view')
+                  ? [
+                      {
+                        to: `/organizations/${activeOrganizationId}/employer/talent-intelligence`,
+                        label: 'Talent Intelligence',
+                        icon: LayoutDashboard,
+                      },
+                    ]
+                  : []),
                 { to: `/organizations/${activeOrganizationId}/employer/knowledge-base`, label: 'Knowledge Base', icon: BookOpen },
                 { to: `/organizations/${activeOrganizationId}/employer/coding-questions`, label: 'Coding Assessments', icon: Code2 },
                 { to: `/organizations/${activeOrganizationId}/employer/integrations`, label: 'Integrations', icon: Plug },

@@ -89,6 +89,8 @@ import employerInterviewCalendarEventController from '../controllers/EmployerInt
 import employerUnifiedTalentProfileController from '../controllers/EmployerUnifiedTalentProfileController';
 import employerCrossAssessmentTalentIntelligenceController from '../controllers/EmployerCrossAssessmentTalentIntelligenceController';
 import employerHiringOutcomeController from '../controllers/EmployerHiringOutcomeController';
+import employerOutcomeQualityAnalyticsController from '../controllers/EmployerOutcomeQualityAnalyticsController';
+import employerTalentIntelligenceDashboardController from '../controllers/EmployerTalentIntelligenceDashboardController';
 import employerHiringKnowledgeGroundedEvaluationController from '../controllers/EmployerHiringKnowledgeGroundedEvaluationController';
 import employerInterviewKnowledgeAnalyticsController from '../controllers/EmployerInterviewKnowledgeAnalyticsController';
 import {
@@ -4646,6 +4648,39 @@ router.get(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
   employerHiringOutcomeController.getOutcome
+);
+
+// ---- Outcome / Quality Analytics (32D) — deterministic (NO AI), organization-level,
+// POST-HOC analytics. Never a candidate ranking, never a hiring prediction. ----
+router.post(
+  '/:organizationId/outcome-quality-analytics/build',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerOutcomeQualityAnalyticsController.buildAnalytics
+);
+
+router.get(
+  '/:organizationId/outcome-quality-analytics',
+  protect,
+  ...organizationIdValidation,
+  query('jobId').optional().isMongoId().withMessage('jobId must be a valid id'),
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerOutcomeQualityAnalyticsController.getAnalytics
+);
+
+// ---- Unified Talent Intelligence Dashboard (32E) — read-only, organization-level
+// aggregation over 32A/32B/32C/32D persisted artifacts. Never rebuilds everything
+// on every GET. No new ranking engine, no automated hiring decisions. ----
+router.get(
+  '/:organizationId/talent-intelligence/dashboard',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ANALYTICS_VIEW),
+  employerTalentIntelligenceDashboardController.getDashboard
 );
 
 // ---- Institute Branches (10B) — institute-only (400 for a company org). DELETE is soft/idempotent. ----

@@ -4268,6 +4268,172 @@ export interface UpdateEmployerHiringOutcomeInput {
 export type UpdateEmployerHiringOutcomeResponse = ApiEnvelope<EmployerHiringOutcome>;
 export type GetEmployerHiringOutcomeResponse = ApiEnvelope<EmployerHiringOutcome>;
 
+// ============================================================================
+// Outcome / Quality Analytics (Sprint 32D) — organization-level, POST-HOC,
+// descriptive analytics. ZERO AI. Never a candidate ranking/prediction.
+// ============================================================================
+
+export interface EmployerOutcomeQualityHiringOutcomes {
+  totalRecorded: number;
+  hired: number;
+  rejected: number;
+  withdrawn: number;
+  noDecision: number;
+}
+
+export interface EmployerOutcomeQualityEmploymentOutcomes {
+  joined: number;
+  didNotJoin: number;
+  employed: number;
+  left: number;
+  unknown: number;
+}
+
+export interface EmployerOutcomeQualityRetention {
+  retained: number;
+  exited: number;
+  unknown: number;
+}
+
+export interface EmployerOutcomeQualityPerformance {
+  belowExpectations: number;
+  meetsExpectations: number;
+  exceedsExpectations: number;
+  notRecorded: number;
+}
+
+export interface EmployerOutcomeQualityAssessmentCoverage {
+  applicationsWithInterviewReport: number;
+  applicationsWithScenarioReport: number;
+  applicationsWithCodingReport: number;
+  applicationsWithKnowledgeEvaluation: number;
+  applicationsWithAnyAssessmentEvidence: number;
+}
+
+export interface EmployerOutcomeEvidenceMatrixEntry {
+  hiringOutcome: EmployerHiringOutcomeDecision;
+  applicationCount: number;
+  withStandardInterview: number;
+  withScenario: number;
+  withCoding: number;
+  withKnowledgeGrounding: number;
+}
+
+export interface EmployerOutcomeQualityEvidenceQuality {
+  totalCandidates: number;
+  candidatesWithUnifiedProfile: number;
+  candidatesWithCrossAssessmentIntelligence: number;
+  multiSourceCandidates: number;
+  singleSourceCandidates: number;
+  noAssessmentEvidenceCandidates: number;
+}
+
+export interface EmployerOutcomeQualityReviewWindows {
+  thirtyDay: number;
+  ninetyDay: number;
+  sixMonth: number;
+  twelveMonth: number;
+  notAvailable: number;
+}
+
+export interface EmployerOutcomeQualityDataQuality {
+  outcomeCoveragePercent: number;
+  employmentOutcomeCoveragePercent: number;
+  assessmentEvidenceCoveragePercent: number;
+}
+
+export interface EmployerOutcomeQualityAnalytics {
+  built: boolean;
+  analyticsVersion?: string;
+  generatedAt?: string;
+  jobId?: string;
+  hiringOutcomes?: EmployerOutcomeQualityHiringOutcomes;
+  employmentOutcomes?: EmployerOutcomeQualityEmploymentOutcomes;
+  retention?: EmployerOutcomeQualityRetention;
+  performance?: EmployerOutcomeQualityPerformance;
+  assessmentCoverage?: EmployerOutcomeQualityAssessmentCoverage;
+  outcomeEvidenceMatrix?: EmployerOutcomeEvidenceMatrixEntry[];
+  evidenceQuality?: EmployerOutcomeQualityEvidenceQuality;
+  reviewWindows?: EmployerOutcomeQualityReviewWindows;
+  dataQuality?: EmployerOutcomeQualityDataQuality;
+}
+
+export type BuildEmployerOutcomeQualityAnalyticsResponse = ApiEnvelope<EmployerOutcomeQualityAnalytics>;
+export type GetEmployerOutcomeQualityAnalyticsResponse = ApiEnvelope<EmployerOutcomeQualityAnalytics>;
+
+// ============================================================================
+// Unified Talent Intelligence Dashboard (Sprint 32E) — read-only, organization-
+// level aggregation over 32A/32B/32C/32D persisted artifacts. ZERO AI.
+// ============================================================================
+
+export interface EmployerTalentIntelligenceOverview {
+  totalCandidates: number;
+  activeApplications: number;
+  completedAssessments: number;
+  talentProfilesBuilt: number;
+  multiSourceCandidates: number;
+}
+
+export interface EmployerTalentIntelligenceEvidenceCoverage {
+  standardInterviewCandidates: number;
+  scenarioCandidates: number;
+  codingCandidates: number;
+  knowledgeGroundedCandidates: number;
+}
+
+export interface EmployerTalentIntelligenceCompetencyLandscapeEntry {
+  competencyName: string;
+  candidateEvidenceCount: number;
+  strongOrSufficientCount: number;
+  gapCount: number;
+}
+
+export interface EmployerTalentIntelligenceSkillLandscapeEntry {
+  skillName: string;
+  candidateCount: number;
+  evidenceCount: number;
+}
+
+export interface EmployerTalentIntelligenceCrossAssessment {
+  repeatedStrengthCount: number;
+  repeatedGapCount: number;
+  mixedEvidenceCount: number;
+}
+
+export interface EmployerTalentIntelligenceOutcomes {
+  hired: number;
+  rejected: number;
+  withdrawn: number;
+  noDecision: number;
+}
+
+export interface EmployerTalentIntelligenceDataQuality {
+  talentProfileCoveragePercent: number;
+  crossAssessmentCoveragePercent: number;
+  hiringOutcomeCoveragePercent: number;
+}
+
+export interface EmployerTalentIntelligenceRecentActivityItem {
+  type: 'application' | 'talent_profile' | 'hiring_outcome' | 'scenario_assessment' | 'coding_assessment';
+  candidateId?: string;
+  applicationId?: string;
+  label: string;
+  occurredAt: string;
+}
+
+export interface EmployerTalentIntelligenceDashboard {
+  overview: EmployerTalentIntelligenceOverview;
+  evidenceCoverage: EmployerTalentIntelligenceEvidenceCoverage;
+  competencyLandscape: EmployerTalentIntelligenceCompetencyLandscapeEntry[];
+  skillsLandscape: EmployerTalentIntelligenceSkillLandscapeEntry[];
+  crossAssessment: EmployerTalentIntelligenceCrossAssessment;
+  outcomes: EmployerTalentIntelligenceOutcomes;
+  dataQuality: EmployerTalentIntelligenceDataQuality;
+  recentActivity: EmployerTalentIntelligenceRecentActivityItem[];
+}
+
+export type GetEmployerTalentIntelligenceDashboardResponse = ApiEnvelope<EmployerTalentIntelligenceDashboard>;
+
 class EmployerApiService {
   private api: AxiosInstance;
 
@@ -7265,6 +7431,44 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load hiring outcome');
+    }
+  }
+
+  // ---- Outcome / Quality Analytics (32D) ----
+
+  async buildEmployerOutcomeQualityAnalytics(organizationId: string): Promise<BuildEmployerOutcomeQualityAnalyticsResponse> {
+    try {
+      const response = await this.api.post<BuildEmployerOutcomeQualityAnalyticsResponse>(
+        `/organizations/${organizationId}/outcome-quality-analytics/build`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to build outcome quality analytics');
+    }
+  }
+
+  async getEmployerOutcomeQualityAnalytics(organizationId: string, jobId?: string): Promise<GetEmployerOutcomeQualityAnalyticsResponse> {
+    try {
+      const response = await this.api.get<GetEmployerOutcomeQualityAnalyticsResponse>(
+        `/organizations/${organizationId}/outcome-quality-analytics`,
+        { params: jobId ? { jobId } : undefined }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load outcome quality analytics');
+    }
+  }
+
+  // ---- Unified Talent Intelligence Dashboard (32E) ----
+
+  async getEmployerTalentIntelligenceDashboard(organizationId: string): Promise<GetEmployerTalentIntelligenceDashboardResponse> {
+    try {
+      const response = await this.api.get<GetEmployerTalentIntelligenceDashboardResponse>(
+        `/organizations/${organizationId}/talent-intelligence/dashboard`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load talent intelligence dashboard');
     }
   }
 }

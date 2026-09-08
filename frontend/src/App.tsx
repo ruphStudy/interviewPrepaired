@@ -49,6 +49,7 @@ import EmployerNotificationsPage from './pages/employer/EmployerNotificationsPag
 import EmployerCandidateFormPage from './pages/employer/EmployerCandidateFormPage';
 import EmployerCandidateDetailPage from './pages/employer/EmployerCandidateDetailPage';
 import EmployerApplicationDetailPage from './pages/employer/EmployerApplicationDetailPage';
+import EmployerTalentIntelligenceDashboardPage from './pages/employer/EmployerTalentIntelligenceDashboardPage';
 import InstituteReadinessPage from './pages/institute/InstituteReadinessPage';
 import InstituteBillingPage from './pages/institute/InstituteBillingPage';
 import TrainerDashboardPage from './pages/institute/TrainerDashboardPage';
@@ -336,6 +337,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerCandidatesPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Talent Intelligence Dashboard (Sprint 32E) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/talent-intelligence"
+            element={
+              <ProtectedRoute>
+                <EmployerTalentIntelligenceDashboardPage />
               </ProtectedRoute>
             }
           />
