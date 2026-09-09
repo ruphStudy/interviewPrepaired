@@ -569,7 +569,7 @@ export const cancelUserSubscriptionAdmin = catchAsync(async (req: AuthRequest, r
   }
 
   const cancelAtPeriodEnd = req.body?.cancelAtPeriodEnd === true;
-  const subscription = await userSubscriptionService.cancelSubscription(userId, cancelAtPeriodEnd);
+  const subscription = await userSubscriptionService.cancelSubscription(userId, cancelAtPeriodEnd, 'admin');
 
   if (!subscription) {
     res.status(200).json(successResponse('No active subscription to cancel'));

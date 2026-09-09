@@ -1,6 +1,9 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
-export type UserSubscriptionStatus = 'active' | 'expired' | 'cancelled' | 'trial';
+// 'past_due' added for payment-retry foundation (PR-BILL-1) — existing
+// stored values ('active' | 'expired' | 'cancelled' | 'trial') are
+// preserved as-is, this only widens the allowed set.
+export type UserSubscriptionStatus = 'active' | 'expired' | 'cancelled' | 'trial' | 'past_due';
 export type UserSubscriptionSource = 'system' | 'admin' | 'payment';
 
 export interface IUserSubscription extends Document {
@@ -13,6 +16,8 @@ export interface IUserSubscription extends Document {
   startedAt: Date;
   cancelledAt?: Date;
   cancelAtPeriodEnd: boolean;
+  /** FREE is always false. Paid is true unless cancelAtPeriodEnd is set. No payment gateway wired yet — this only records intent. */
+  autoRenew: boolean;
   source: UserSubscriptionSource;
   metadata?: Record<string, unknown>;
   createdAt: Date;
@@ -41,7 +46,7 @@ const userSubscriptionSchema = new Schema<IUserSubscription>(
     },
     status: {
       type: String,
-      enum: ['active', 'expired', 'cancelled', 'trial'],
+      enum: ['active', 'expired', 'cancelled', 'trial', 'past_due'],
       required: true,
       default: 'active',
     },
@@ -60,6 +65,10 @@ const userSubscriptionSchema = new Schema<IUserSubscription>(
       type: Date,
     },
     cancelAtPeriodEnd: {
+      type: Boolean,
+      default: false,
+    },
+    autoRenew: {
       type: Boolean,
       default: false,
     },

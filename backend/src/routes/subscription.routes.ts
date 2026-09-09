@@ -6,6 +6,8 @@ import {
   getMyCredits,
   getMyCreditHistory,
   cancelMySubscription,
+  cancelMySubscriptionAtPeriodEnd,
+  resumeMySubscriptionRenewal,
 } from '../controllers/subscription.controller';
 import { protect } from '../middleware/auth';
 import { validate } from '../middleware/validation';
@@ -36,5 +38,11 @@ router.post(
   validate,
   cancelMySubscription
 );
+
+// Authenticated user only — no userId accepted from the client. Paid
+// activation/renewal remain internal-only (see UserSubscriptionService).
+router.post('/me/cancel-at-period-end', protect, cancelMySubscriptionAtPeriodEnd);
+
+router.post('/me/resume-renewal', protect, resumeMySubscriptionRenewal);
 
 export default router;

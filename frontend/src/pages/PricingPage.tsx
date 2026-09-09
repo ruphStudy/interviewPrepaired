@@ -128,7 +128,7 @@ const PricingPage: React.FC = () => {
                     aria-disabled="true"
                     className="btn btn-secondary w-full justify-center opacity-60 cursor-not-allowed"
                   >
-                    {isCurrentPlan ? 'Current Plan' : 'Upgrade Coming Soon'}
+                    {isCurrentPlan ? 'Current Plan' : 'Payment Setup Pending'}
                   </button>
                 </div>
               );

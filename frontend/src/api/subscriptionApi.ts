@@ -30,7 +30,8 @@ export interface GetPlansResponse {
   data: SubscriptionPlan[];
 }
 
-export type SubscriptionStatus = 'active' | 'expired' | 'cancelled' | 'trial';
+export type SubscriptionStatus = 'active' | 'expired' | 'cancelled' | 'trial' | 'past_due';
+export type SubscriptionSource = 'system' | 'admin' | 'payment';
 
 export interface CurrentSubscription {
   status: SubscriptionStatus;
@@ -39,6 +40,8 @@ export interface CurrentSubscription {
   startedAt: string;
   cancelAtPeriodEnd: boolean;
   cancelledAt?: string;
+  autoRenew: boolean;
+  source: SubscriptionSource;
 }
 
 export interface GetMySubscriptionResponse {
@@ -47,7 +50,24 @@ export interface GetMySubscriptionResponse {
   data: {
     plan: SubscriptionPlan;
     subscription: CurrentSubscription;
+    credits: {
+      balance: number;
+    };
   };
+}
+
+export interface SubscriptionActionResult {
+  status: SubscriptionStatus;
+  cancelAtPeriodEnd: boolean;
+  autoRenew: boolean;
+  currentPeriodEnd?: string;
+  cancelledAt?: string;
+}
+
+export interface SubscriptionActionResponse {
+  success: boolean;
+  message: string;
+  data?: SubscriptionActionResult;
 }
 
 export type CreditTransactionType = 'PLAN_GRANT' | 'PACK_GRANT' | 'CONSUME' | 'REFUND' | 'ADMIN_ADJUSTMENT' | 'EXPIRE';
@@ -172,6 +192,32 @@ class SubscriptionApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to load credit history');
+    }
+  }
+
+  /**
+   * Schedules cancellation for the end of the current billing period —
+   * the subscription stays active until then. Authenticated user only.
+   */
+  async cancelAtPeriodEnd(): Promise<SubscriptionActionResponse> {
+    try {
+      const response = await this.api.post<SubscriptionActionResponse>('/subscription/me/cancel-at-period-end');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to schedule cancellation');
+    }
+  }
+
+  /**
+   * Resumes renewal on a subscription previously scheduled to cancel at
+   * period end. Authenticated user only.
+   */
+  async resumeRenewal(): Promise<SubscriptionActionResponse> {
+    try {
+      const response = await this.api.post<SubscriptionActionResponse>('/subscription/me/resume-renewal');
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to resume renewal');
     }
   }
 }

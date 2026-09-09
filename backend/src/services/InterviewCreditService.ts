@@ -208,6 +208,13 @@ class InterviewCreditService {
    * retries (or re-calls from ensureFreeSubscription/changePlan) never
    * double-grant. includedInterviews is always read from SubscriptionPlan,
    * never hardcoded here.
+   *
+   * The FREE/default plan is the one exception: because a user can end up
+   * with MULTIPLE FREE subscription documents over their lifetime (e.g. a
+   * paid plan expires and they fall back to a fresh FREE subscription), a
+   * per-subscription key would grant the FREE starter credit again each
+   * time. The FREE plan therefore uses a stable, userId-only idempotency
+   * key so the starter credit is granted at most once per user, ever.
    */
   async grantPlanCredits(userId: string, subscription: IUserSubscription): Promise<IInterviewCreditLedger | null> {
     const plan = await SubscriptionPlan.findById(subscription.planId);
@@ -220,7 +227,9 @@ class InterviewCreditService {
     }
 
     const subscriptionId = (subscription._id as Types.ObjectId).toString();
-    const idempotencyKey = `plan-grant:${subscriptionId}:${subscription.currentPeriodStart.toISOString()}`;
+    const idempotencyKey = plan.isDefault
+      ? `free-starter-credit:${userId}`
+      : `plan-grant:${subscriptionId}:${subscription.currentPeriodStart.toISOString()}`;
 
     return this.addCredits({
       userId,

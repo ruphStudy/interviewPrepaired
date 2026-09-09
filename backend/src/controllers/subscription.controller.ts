@@ -24,7 +24,11 @@ export const getActivePlans = catchAsync(async (_req: AuthRequest, res: Response
 });
 
 export const getMySubscription = catchAsync(async (req: AuthRequest, res: Response) => {
-  const { plan, subscription } = await userSubscriptionService.getSubscriptionDetails(req.user!.id);
+  const userId = req.user!.id;
+  const [{ plan, subscription }, balance] = await Promise.all([
+    userSubscriptionService.getSubscriptionDetails(userId),
+    interviewCreditService.getBalance(userId),
+  ]);
 
   res.status(200).json(
     successResponse('Current subscription retrieved successfully', {
@@ -44,6 +48,11 @@ export const getMySubscription = catchAsync(async (req: AuthRequest, res: Respon
         startedAt: subscription.startedAt,
         cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
         cancelledAt: subscription.cancelledAt,
+        autoRenew: subscription.autoRenew,
+        source: subscription.source,
+      },
+      credits: {
+        balance,
       },
     })
   );
@@ -107,7 +116,41 @@ export const cancelMySubscription = catchAsync(async (req: AuthRequest, res: Res
     successResponse('Subscription cancelled successfully', {
       status: subscription.status,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      autoRenew: subscription.autoRenew,
       cancelledAt: subscription.cancelledAt,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+    })
+  );
+});
+
+/** POST /subscription/me/cancel-at-period-end — authenticated user only, no userId accepted from the client. */
+export const cancelMySubscriptionAtPeriodEnd = catchAsync(async (req: AuthRequest, res: Response) => {
+  const subscription = await userSubscriptionService.cancelSubscription(req.user!.id, true);
+
+  if (!subscription) {
+    res.status(200).json(successResponse('No active subscription to cancel'));
+    return;
+  }
+
+  res.status(200).json(
+    successResponse('Subscription will not renew after the current period', {
+      status: subscription.status,
+      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      autoRenew: subscription.autoRenew,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+    })
+  );
+});
+
+/** POST /subscription/me/resume-renewal — authenticated user only, no userId accepted from the client. */
+export const resumeMySubscriptionRenewal = catchAsync(async (req: AuthRequest, res: Response) => {
+  const subscription = await userSubscriptionService.resumeRenewal(req.user!.id);
+
+  res.status(200).json(
+    successResponse('Subscription renewal resumed', {
+      status: subscription.status,
+      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      autoRenew: subscription.autoRenew,
       currentPeriodEnd: subscription.currentPeriodEnd,
     })
   );

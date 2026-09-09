@@ -10,6 +10,8 @@ const getStatusBadgeClass = (status: CurrentSubscription['status']) => {
       return 'badge-success';
     case 'trial':
       return 'badge-info';
+    case 'past_due':
+      return 'badge-warning';
     case 'expired':
     case 'cancelled':
       return 'badge-neutral';
@@ -58,6 +60,9 @@ const AccountPage: React.FC = () => {
   const [recentTransactions, setRecentTransactions] = useState<CreditTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchAccount = useCallback(async () => {
     setLoading(true);
@@ -81,6 +86,32 @@ const AccountPage: React.FC = () => {
   useEffect(() => {
     fetchAccount();
   }, [fetchAccount]);
+
+  const handleCancelAtPeriodEnd = async () => {
+    setCancelling(true);
+    setActionError(null);
+    try {
+      await subscriptionApi.cancelAtPeriodEnd();
+      await fetchAccount();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to schedule cancellation');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleResumeRenewal = async () => {
+    setResuming(true);
+    setActionError(null);
+    try {
+      await subscriptionApi.resumeRenewal();
+      await fetchAccount();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to resume renewal');
+    } finally {
+      setResuming(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -129,7 +160,7 @@ const AccountPage: React.FC = () => {
                 <p className="text-sm text-mentor-text-secondary">{plan.description}</p>
               </div>
               <span className={`badge ${getStatusBadgeClass(subscription.status)} shrink-0 capitalize`}>
-                {subscription.status}
+                {subscription.status.replace('_', ' ')}
               </span>
             </div>
 
@@ -137,8 +168,12 @@ const AccountPage: React.FC = () => {
               <div className="flex items-start gap-2.5">
                 <CalendarClock size={18} className="text-mentor-text-muted mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-xs text-mentor-text-muted mb-0.5">Current period ends</p>
-                  <p className="text-sm font-medium text-mentor-text">{formatDate(subscription.currentPeriodEnd)}</p>
+                  <p className="text-xs text-mentor-text-muted mb-0.5">
+                    {plan.priceInr === 0 ? 'Renewal' : subscription.status === 'expired' ? 'Ended on' : 'Current period ends'}
+                  </p>
+                  <p className="text-sm font-medium text-mentor-text">
+                    {plan.priceInr === 0 ? 'Not applicable' : formatDate(subscription.currentPeriodEnd)}
+                  </p>
                 </div>
               </div>
               <div className="flex items-start gap-2.5">
@@ -148,20 +183,71 @@ const AccountPage: React.FC = () => {
                   <p className="text-sm font-medium text-mentor-text">{formatDate(subscription.startedAt)}</p>
                 </div>
               </div>
+              {plan.priceInr > 0 && (
+                <div className="flex items-start gap-2.5">
+                  <ArrowUpRight size={18} className="text-mentor-text-muted mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs text-mentor-text-muted mb-0.5">Auto renew</p>
+                    <p className="text-sm font-medium text-mentor-text">{subscription.autoRenew ? 'On' : 'Off'}</p>
+                  </div>
+                </div>
+              )}
+              {plan.priceInr > 0 && (
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle size={18} className="text-mentor-text-muted mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs text-mentor-text-muted mb-0.5">Cancellation scheduled</p>
+                    <p className="text-sm font-medium text-mentor-text">{subscription.cancelAtPeriodEnd ? 'Yes' : 'No'}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {subscription.cancelAtPeriodEnd && (
+            {subscription.status === 'expired' && (
+              <div className="mt-4 flex items-start gap-2 bg-mentor-error/10 border border-mentor-error/30 rounded-lg p-3">
+                <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                <p className="text-sm text-mentor-error">Subscription expired.</p>
+              </div>
+            )}
+
+            {subscription.status === 'past_due' && (
               <div className="mt-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
                 <AlertCircle size={16} className="text-mentor-warning mt-0.5 shrink-0" />
                 <p className="text-sm text-amber-800">
-                  Your plan will not renew after the current period ends on {formatDate(subscription.currentPeriodEnd)}.
+                  We couldn't confirm your last payment. Your plan is still active for now.
                 </p>
               </div>
             )}
 
-            <button onClick={() => navigate('/pricing')} className="btn btn-secondary mt-5">
-              View Plans
-            </button>
+            {subscription.cancelAtPeriodEnd && subscription.status !== 'expired' && (
+              <div className="mt-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <AlertCircle size={16} className="text-mentor-warning mt-0.5 shrink-0" />
+                <p className="text-sm text-amber-800">
+                  Your plan remains active until {formatDate(subscription.currentPeriodEnd)}.
+                </p>
+              </div>
+            )}
+
+            {actionError && <p className="text-sm text-mentor-error mt-3">{actionError}</p>}
+
+            <div className="flex flex-wrap gap-3 mt-5">
+              <button onClick={() => navigate('/pricing')} className="btn btn-secondary">
+                View Plans
+              </button>
+              {plan.priceInr > 0 && (subscription.status === 'active' || subscription.status === 'trial' || subscription.status === 'past_due') && (
+                <>
+                  {subscription.cancelAtPeriodEnd ? (
+                    <button onClick={handleResumeRenewal} disabled={resuming} className="btn btn-secondary">
+                      {resuming ? 'Resuming...' : 'Resume Renewal'}
+                    </button>
+                  ) : (
+                    <button onClick={handleCancelAtPeriodEnd} disabled={cancelling} className="btn btn-secondary">
+                      {cancelling ? 'Cancelling...' : 'Cancel at Period End'}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           {/* Credit balance */}
