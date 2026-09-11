@@ -16,8 +16,11 @@ export interface IUserSubscription extends Document {
   startedAt: Date;
   cancelledAt?: Date;
   cancelAtPeriodEnd: boolean;
-  /** FREE is always false. Paid is true unless cancelAtPeriodEnd is set. No payment gateway wired yet — this only records intent. */
+  /** FREE is always false. Paid is true unless cancelAtPeriodEnd is set. True only reflects intent — actual renewal still requires a real payment (manual checkout or provider-confirmed recurring charge). */
   autoRenew: boolean;
+  /** A scheduled plan change (PR-BILL-4 downgrade) — never applied immediately, only at pendingPlanEffectiveAt (the current billing boundary). */
+  pendingPlanCode?: string;
+  pendingPlanEffectiveAt?: Date;
   source: UserSubscriptionSource;
   metadata?: Record<string, unknown>;
   createdAt: Date;
@@ -71,6 +74,14 @@ const userSubscriptionSchema = new Schema<IUserSubscription>(
     autoRenew: {
       type: Boolean,
       default: false,
+    },
+    pendingPlanCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    pendingPlanEffectiveAt: {
+      type: Date,
     },
     source: {
       type: String,

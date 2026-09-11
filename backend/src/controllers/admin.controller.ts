@@ -13,6 +13,7 @@ import {
 } from '../services/AIUsageService';
 import { userSubscriptionService } from '../services/UserSubscriptionService';
 import { interviewCreditService } from '../services/InterviewCreditService';
+import { billingAdminService } from '../services/BillingAdminService';
 
 /** Shared by the three usage endpoints — malformed from/to must fail clearly rather than silently produce a wrong range. */
 function parseUsageDateRange(query: Record<string, unknown>): UsageDateRange {
@@ -584,4 +585,37 @@ export const cancelUserSubscriptionAdmin = catchAsync(async (req: AuthRequest, r
       currentPeriodEnd: subscription.currentPeriodEnd,
     })
   );
+});
+
+/**
+ * Minimal admin-safe billing order visibility (PR-BILL-8) — no secrets, no
+ * raw webhook payload. Reuses the same admin RBAC as every other admin
+ * route.
+ */
+export const listPaymentOrdersAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+
+  const result = await billingAdminService.listOrders({ userId, status, page, limit });
+  res.status(200).json(successResponse('Payment orders retrieved successfully', result));
+});
+
+export const getPaymentOrderAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const order = await billingAdminService.getOrder(req.params.orderId);
+  res.status(200).json(successResponse('Payment order retrieved successfully', order));
+});
+
+/** Read-only — queries the provider's own record for comparison; never auto-alters local entitlement/status. */
+export const reconcilePaymentOrderAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const result = await billingAdminService.reconcileOrder(req.params.orderId);
+  res.status(200).json(successResponse('Reconciliation retrieved successfully', result));
+});
+
+/** Admin-only refund action — the provider refund must succeed before anything local is marked final. */
+export const refundPaymentOrderAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const { amountPaise, reason } = req.body;
+  const order = await billingAdminService.refundOrder(req.params.orderId, req.user!.id, { amountPaise, reason });
+  res.status(200).json(successResponse('Refund processed successfully', order));
 });

@@ -74,6 +74,7 @@ export const InterviewSetupPage: React.FC = () => {
   // UI State
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errors, setErrors] = useState<FormErrors>({});
+  const [insufficientCredits, setInsufficientCredits] = useState(false);
   const [apiError, setApiError] = useState<string>('');
 
   // ============================================================================
@@ -250,7 +251,11 @@ export const InterviewSetupPage: React.FC = () => {
       }
     } catch (error: any) {
       console.error('❌ Error starting interview:', error);
-      setApiError(error.message || 'Failed to start interview. Please try again.');
+      if (error.code === 'INSUFFICIENT_INTERVIEW_CREDITS') {
+        setInsufficientCredits(true);
+      } else {
+        setApiError(error.message || 'Failed to start interview. Please try again.');
+      }
       setIsLoading(false);
     }
   };
@@ -271,6 +276,7 @@ export const InterviewSetupPage: React.FC = () => {
     setShuffleQuestions(false);
     setErrors({});
     setApiError('');
+    setInsufficientCredits(false);
   };
 
   // ============================================================================
@@ -633,8 +639,29 @@ export const InterviewSetupPage: React.FC = () => {
                 </div>
               )}
 
+              {/* Zero-credit recovery — no dead end */}
+              {insufficientCredits && (
+                <div className="flex items-start gap-3 rounded-lg border border-mentor-error/30 bg-mentor-error/10 p-4">
+                  <AlertCircle size={20} className="text-mentor-error mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-mentor-error">You're out of interview credits</h4>
+                    <p className="text-sm text-mentor-error mt-0.5">
+                      Upgrade your plan or add interview credits to continue practicing.
+                    </p>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <button type="button" onClick={() => navigate('/pricing')} className="btn btn-primary px-3 py-1.5 text-xs">
+                        Upgrade Plan
+                      </button>
+                      <button type="button" onClick={() => navigate('/pricing')} className="btn btn-secondary px-3 py-1.5 text-xs">
+                        Buy Credits
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* API Error */}
-              {apiError && (
+              {apiError && !insufficientCredits && (
                 <div className="flex items-start gap-3 rounded-lg border border-mentor-error/30 bg-mentor-error/10 p-4">
                   <AlertCircle size={20} className="text-mentor-error mt-0.5 shrink-0" />
                   <div>

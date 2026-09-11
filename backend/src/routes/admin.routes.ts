@@ -17,6 +17,10 @@ import {
   adjustUserCreditsAdmin,
   getUserCreditsAdmin,
   cancelUserSubscriptionAdmin,
+  listPaymentOrdersAdmin,
+  getPaymentOrderAdmin,
+  reconcilePaymentOrderAdmin,
+  refundPaymentOrderAdmin,
 } from '../controllers/admin.controller';
 import { protect, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validation';
@@ -182,6 +186,36 @@ router.get(
   [...userIdParamValidation, ...creditHistoryQueryValidation],
   validate,
   getUserCreditsAdmin
+);
+
+// B2C Billing troubleshooting (PR-BILL-8) — minimal admin-safe visibility + refund. No secrets, no raw webhook payload.
+const orderIdParamValidation = [param('orderId').isMongoId().withMessage('Invalid order ID')];
+
+router.get(
+  '/payment-orders',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('userId').optional().isMongoId().withMessage('userId must be a valid id'),
+    query('status').optional().isString().trim(),
+  ],
+  validate,
+  listPaymentOrdersAdmin
+);
+
+router.get('/payment-orders/:orderId', orderIdParamValidation, validate, getPaymentOrderAdmin);
+
+router.get('/payment-orders/:orderId/reconcile', orderIdParamValidation, validate, reconcilePaymentOrderAdmin);
+
+router.post(
+  '/payment-orders/:orderId/refund',
+  [
+    ...orderIdParamValidation,
+    body('amountPaise').optional().isInt({ min: 1 }).withMessage('amountPaise must be a positive integer'),
+    body('reason').trim().notEmpty().withMessage('reason is required').isLength({ max: 300 }),
+  ],
+  validate,
+  refundPaymentOrderAdmin
 );
 
 export default router;

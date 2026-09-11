@@ -3,6 +3,7 @@ import { connectDatabase } from './config/database';
 import { env, validateEnv } from './config/environment';
 import { logInfo, logError } from './middleware/logger';
 import { subscriptionPlanService } from './services/SubscriptionPlanService';
+import { creditPackService } from './services/CreditPackService';
 
 // Validate environment variables
 validateEnv();
@@ -20,6 +21,16 @@ const startServer = async (): Promise<void> => {
     } catch (error: any) {
       logError('Failed to seed default subscription plans', { error: error.message });
       console.error('❌ Failed to seed default subscription plans:', error);
+      process.exit(1);
+    }
+
+    // Ensure the default B2C interview-credit pack catalog exists
+    try {
+      await creditPackService.ensureDefaultPacks();
+      logInfo('Default credit packs verified');
+    } catch (error: any) {
+      logError('Failed to seed default credit packs', { error: error.message });
+      console.error('❌ Failed to seed default credit packs:', error);
       process.exit(1);
     }
 

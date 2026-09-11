@@ -42,6 +42,8 @@ export interface CurrentSubscription {
   cancelledAt?: string;
   autoRenew: boolean;
   source: SubscriptionSource;
+  pendingPlanCode?: string;
+  pendingPlanEffectiveAt?: string;
 }
 
 export interface GetMySubscriptionResponse {

@@ -4,12 +4,16 @@ import { UserSubscriptionStatus, UserSubscriptionSource } from './UserSubscripti
 export type UserSubscriptionHistoryAction =
   | 'created'
   | 'plan_changed'
+  | 'upgrade'
   | 'cancel_scheduled'
   | 'cancellation_resumed'
   | 'cancelled'
   | 'expired'
   | 'past_due'
-  | 'renewed';
+  | 'renewed'
+  | 'downgrade_scheduled'
+  | 'downgrade_cancelled'
+  | 'downgrade_applied';
 
 /**
  * Append-only audit trail of actual B2C subscription state transitions
@@ -68,12 +72,16 @@ const userSubscriptionHistorySchema = new Schema<IUserSubscriptionHistory>(
       enum: [
         'created',
         'plan_changed',
+        'upgrade',
         'cancel_scheduled',
         'cancellation_resumed',
         'cancelled',
         'expired',
         'past_due',
         'renewed',
+        'downgrade_scheduled',
+        'downgrade_cancelled',
+        'downgrade_applied',
       ],
       required: true,
     },

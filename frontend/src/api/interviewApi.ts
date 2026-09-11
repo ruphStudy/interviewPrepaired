@@ -295,9 +295,15 @@ class InterviewApiService {
       (response) => response,
       (error) => {
         if (error.response) {
-          // Server responded with error
+          // Server responded with error — preserve a structured `code`
+          // (e.g. INSUFFICIENT_INTERVIEW_CREDITS) and `balance` when the
+          // backend includes them, so callers can show a specific recovery
+          // CTA instead of just a generic message.
           const message = error.response.data?.message || 'An error occurred';
-          throw new Error(message);
+          const err = new Error(message) as Error & { code?: string; balance?: number };
+          if (error.response.data?.code) err.code = error.response.data.code;
+          if (typeof error.response.data?.balance === 'number') err.balance = error.response.data.balance;
+          throw err;
         } else if (error.request) {
           // No response received
           throw new Error('No response from server. Please check your connection.');

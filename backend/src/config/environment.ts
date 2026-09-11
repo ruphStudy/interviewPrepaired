@@ -15,6 +15,12 @@ interface Environment {
   rateLimitMaxRequests: number;
   logLevel: string;
   logFile: string;
+  paymentProvider: string;
+  razorpayKeyId: string;
+  razorpayKeySecret: string;
+  razorpayWebhookSecret: string;
+  appBaseUrl: string;
+  frontendUrl: string;
 }
 
 export const env: Environment = {
@@ -36,6 +42,15 @@ export const env: Environment = {
   rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
   logLevel: process.env.LOG_LEVEL || 'info',
   logFile: process.env.LOG_FILE || 'logs/app.log',
+  // Payment provider foundation (PR-BILL) — never defaulted to a real
+  // value; an empty secret means the provider is treated as unconfigured
+  // (PAYMENT_PROVIDER_UNAVAILABLE), never a silent fake-success path.
+  paymentProvider: process.env.PAYMENT_PROVIDER || 'razorpay',
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID || '',
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || '',
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+  appBaseUrl: process.env.APP_BASE_URL || '',
+  frontendUrl: process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000',
 };
 
 export const validateEnv = (): void => {

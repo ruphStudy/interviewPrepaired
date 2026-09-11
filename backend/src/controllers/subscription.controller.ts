@@ -50,6 +50,8 @@ export const getMySubscription = catchAsync(async (req: AuthRequest, res: Respon
         cancelledAt: subscription.cancelledAt,
         autoRenew: subscription.autoRenew,
         source: subscription.source,
+        pendingPlanCode: subscription.pendingPlanCode,
+        pendingPlanEffectiveAt: subscription.pendingPlanEffectiveAt,
       },
       credits: {
         balance,

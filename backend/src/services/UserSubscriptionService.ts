@@ -95,9 +95,23 @@ class UserSubscriptionService {
       return current;
     }
 
+    // A scheduled downgrade to another PAID plan is applied AT the billing
+    // boundary — never immediately. A scheduled downgrade to FREE has no
+    // separate plan to activate here; it falls through to the normal expiry
+    // branch below (the FREE fallback happens lazily via
+    // ensureFreeSubscription on the next getSubscriptionDetails call).
+    if (current.pendingPlanCode) {
+      const targetPlan = await subscriptionPlanService.getPlanByCode(current.pendingPlanCode);
+      if (targetPlan && targetPlan.isActive && !targetPlan.isDefault) {
+        return this.applyScheduledPlanChange(userId, current, targetPlan);
+      }
+    }
+
     const previousStatus = current.status;
     current.status = 'expired';
     current.autoRenew = false;
+    current.pendingPlanCode = undefined;
+    current.pendingPlanEffectiveAt = undefined;
     await current.save();
 
     await this.appendHistory({
@@ -108,6 +122,52 @@ class UserSubscriptionService {
       previousStatus,
       nextStatus: 'expired',
       action: 'expired',
+      source: 'system',
+    });
+
+    return current;
+  }
+
+  /**
+   * Applies an already-scheduled downgrade to a lower PAID plan at the
+   * billing boundary — mutates the same subscription document in place
+   * (the underlying subscription lifecycle continues, this is not a fresh
+   * purchase), and grants that new period's plan credits exactly once.
+   */
+  private async applyScheduledPlanChange(
+    userId: string,
+    current: IUserSubscription,
+    targetPlan: ISubscriptionPlan
+  ): Promise<IUserSubscription> {
+    const previousStatus = current.status;
+    const previousPlanCode = current.planCode;
+    const now = new Date();
+
+    current.planId = targetPlan._id as Types.ObjectId;
+    current.planCode = targetPlan.code;
+    current.status = 'active';
+    current.currentPeriodStart = now;
+    current.currentPeriodEnd = targetPlan.billingInterval === 'month' ? addOneCalendarMonth(now) : undefined;
+    current.pendingPlanCode = undefined;
+    current.pendingPlanEffectiveAt = undefined;
+    current.cancelAtPeriodEnd = false;
+    current.autoRenew = true;
+    await current.save();
+
+    try {
+      await interviewCreditService.grantPlanCredits(userId, current);
+    } catch (error) {
+      console.error('[UserSubscriptionService] Failed to grant plan credits on scheduled downgrade:', error);
+    }
+
+    await this.appendHistory({
+      userId,
+      subscriptionId: current._id as Types.ObjectId,
+      previousPlanCode,
+      nextPlanCode: current.planCode,
+      previousStatus,
+      nextStatus: 'active',
+      action: 'downgrade_applied',
       source: 'system',
     });
 
@@ -181,14 +241,19 @@ class UserSubscriptionService {
 
   /**
    * Assigns a new plan to the user, cleanly closing any current
-   * subscription first. Internal/service-level only for now — paid plans
-   * must not be reachable through a public endpoint until payment
-   * verification exists.
+   * subscription first. Reused by BOTH the admin plan-change action
+   * (source='admin', default history action 'plan_changed') AND
+   * BillingSettlementService's payment-verified subscription activation
+   * (source='payment', historyAction='upgrade'/'created') — never
+   * reachable directly through a public endpoint; a paid plan is only ever
+   * activated after verified payment or by an admin.
    */
   async changePlan(
     userId: string,
     planCode: string,
-    source: UserSubscriptionSource = 'system'
+    source: UserSubscriptionSource = 'system',
+    historyAction?: UserSubscriptionHistoryAction,
+    externalReference?: string
   ): Promise<IUserSubscription> {
     const plan = await subscriptionPlanService.getPlanByCode(planCode);
     if (!plan || !plan.isActive) {
@@ -201,6 +266,8 @@ class UserSubscriptionService {
       current.cancelledAt = new Date();
       current.cancelAtPeriodEnd = false;
       current.autoRenew = false;
+      current.pendingPlanCode = undefined;
+      current.pendingPlanEffectiveAt = undefined;
       await current.save();
     }
 
@@ -227,8 +294,9 @@ class UserSubscriptionService {
       nextPlanCode: created.planCode,
       previousStatus: current?.status,
       nextStatus: created.status,
-      action: current ? 'plan_changed' : 'created',
+      action: historyAction ?? (current ? 'plan_changed' : 'created'),
       source,
+      externalReference,
     });
 
     // Grant the new plan's full included interviews — no proration, no
@@ -240,6 +308,100 @@ class UserSubscriptionService {
     }
 
     return created;
+  }
+
+  /**
+   * Schedules a downgrade (to a cheaper paid plan, or to FREE) that takes
+   * effect at the CURRENT paid period's boundary — never immediately, so
+   * already-paid entitlement for the current period is never destroyed. A
+   * FREE target reuses the exact cancel-at-period-end mechanism (there is
+   * no new paid plan to activate; the user simply falls back to FREE via
+   * the existing ensureFreeSubscription path once the period lapses).
+   * Idempotent — re-scheduling the same target plan is a no-op.
+   */
+  async scheduleDowngrade(userId: string, targetPlanCode: string): Promise<IUserSubscription> {
+    const current = await this.getCurrentSubscription(userId);
+    if (!current) {
+      throw new ApiError(400, 'No active subscription to downgrade');
+    }
+
+    const currentPlan = await SubscriptionPlan.findById(current.planId);
+    if (!isPaidPlan(currentPlan)) {
+      throw new ApiError(400, 'The Free plan cannot be downgraded');
+    }
+    if (!current.currentPeriodEnd) {
+      throw new ApiError(400, 'This subscription has no billing period to downgrade at');
+    }
+
+    const targetPlan = await subscriptionPlanService.getPlanByCode(targetPlanCode);
+    if (!targetPlan || !targetPlan.isActive) {
+      throw new ApiError(400, `Plan "${targetPlanCode}" is not available`);
+    }
+    if (!targetPlan.isDefault && targetPlan.priceInrPaise >= currentPlan!.priceInrPaise) {
+      throw new ApiError(400, 'The selected plan is not a downgrade from your current plan');
+    }
+
+    if (current.pendingPlanCode === targetPlan.code) {
+      return current;
+    }
+
+    const previousStatus = current.status;
+    current.pendingPlanCode = targetPlan.code;
+    current.pendingPlanEffectiveAt = current.currentPeriodEnd;
+    if (targetPlan.isDefault) {
+      current.cancelAtPeriodEnd = true;
+      current.autoRenew = false;
+    }
+    await current.save();
+
+    await this.appendHistory({
+      userId,
+      subscriptionId: current._id as Types.ObjectId,
+      previousPlanCode: current.planCode,
+      nextPlanCode: targetPlan.code,
+      previousStatus,
+      nextStatus: current.status,
+      action: 'downgrade_scheduled',
+      source: 'system',
+    });
+
+    return current;
+  }
+
+  /**
+   * Cancels a previously-scheduled downgrade — the current plan simply
+   * continues renewing as before. Idempotent — a no-op if nothing is
+   * scheduled.
+   */
+  async cancelScheduledDowngrade(userId: string): Promise<IUserSubscription | null> {
+    const current = await this.getCurrentSubscription(userId);
+    if (!current || !current.pendingPlanCode) {
+      return current;
+    }
+
+    const previousStatus = current.status;
+    const previousPlanCode = current.planCode;
+    const wasFreeTarget = current.pendingPlanCode !== current.planCode && current.cancelAtPeriodEnd;
+    current.pendingPlanCode = undefined;
+    current.pendingPlanEffectiveAt = undefined;
+    if (wasFreeTarget) {
+      current.cancelAtPeriodEnd = false;
+      current.autoRenew = true;
+    }
+    await current.save();
+
+    await this.appendHistory({
+      userId,
+      subscriptionId: current._id as Types.ObjectId,
+      previousPlanCode,
+      nextPlanCode: current.planCode,
+      previousStatus,
+      nextStatus: current.status,
+      action: 'downgrade_cancelled',
+      source: 'system',
+    });
+
+    return current;
   }
 
   /**
@@ -291,6 +453,8 @@ class UserSubscriptionService {
       current.cancelledAt = new Date();
       current.cancelAtPeriodEnd = false;
       current.autoRenew = false;
+      current.pendingPlanCode = undefined;
+      current.pendingPlanEffectiveAt = undefined;
       await current.save();
       await this.appendHistory({
         userId,
@@ -331,6 +495,10 @@ class UserSubscriptionService {
       const previousStatus = current.status;
       current.cancelAtPeriodEnd = false;
       current.autoRenew = true;
+      // A FREE-target scheduled downgrade is implemented via
+      // cancelAtPeriodEnd — resuming renewal also cancels that schedule.
+      current.pendingPlanCode = undefined;
+      current.pendingPlanEffectiveAt = undefined;
       await current.save();
       await this.appendHistory({
         userId,

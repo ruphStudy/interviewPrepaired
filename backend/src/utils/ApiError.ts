@@ -1,11 +1,14 @@
 export class ApiError extends Error {
   statusCode: number;
   errors?: any;
+  /** Optional stable machine-readable code (e.g. billing error codes) — additive, never required. */
+  code?: string;
 
-  constructor(statusCode: number, message: string, errors?: any) {
+  constructor(statusCode: number, message: string, errors?: any, code?: string) {
     super(message);
     this.statusCode = statusCode;
     this.errors = errors;
+    this.code = code;
     this.name = 'ApiError';
     Error.captureStackTrace(this, this.constructor);
   }

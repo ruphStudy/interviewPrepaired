@@ -13,6 +13,7 @@ export const errorHandler = (
     res.status(err.statusCode).json({
       success: false,
       message: err.message,
+      ...(err.code !== undefined ? { code: err.code } : {}),
       ...(err.errors !== undefined ? { errors: err.errors } : {}),
     });
     return;

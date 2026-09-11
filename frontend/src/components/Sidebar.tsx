@@ -59,6 +59,7 @@ const ACCOUNT_NAV_ITEMS = [
   { to: '/profile', label: 'Profile', icon: UserRound },
   { to: '/account', label: 'Billing', icon: Wallet },
   { to: '/pricing', label: 'Pricing', icon: CreditCard },
+  { to: '/billing/history', label: 'Billing History', icon: History },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 

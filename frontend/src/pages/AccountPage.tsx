@@ -187,8 +187,14 @@ const AccountPage: React.FC = () => {
                 <div className="flex items-start gap-2.5">
                   <ArrowUpRight size={18} className="text-mentor-text-muted mt-0.5 shrink-0" />
                   <div>
-                    <p className="text-xs text-mentor-text-muted mb-0.5">Auto renew</p>
-                    <p className="text-sm font-medium text-mentor-text">{subscription.autoRenew ? 'On' : 'Off'}</p>
+                    <p className="text-xs text-mentor-text-muted mb-0.5">Renewal</p>
+                    <p className="text-sm font-medium text-mentor-text">
+                      {subscription.cancelAtPeriodEnd
+                        ? 'Off — plan ends at period close'
+                        : subscription.autoRenew
+                          ? 'Manual — renew from Pricing before your period ends'
+                          : 'Off'}
+                    </p>
                   </div>
                 </div>
               )}
@@ -228,11 +234,24 @@ const AccountPage: React.FC = () => {
               </div>
             )}
 
+            {subscription.pendingPlanCode && !subscription.cancelAtPeriodEnd && (
+              <div className="mt-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <AlertCircle size={16} className="text-mentor-warning mt-0.5 shrink-0" />
+                <p className="text-sm text-amber-800">
+                  Scheduled to move to <strong>{subscription.pendingPlanCode}</strong> on{' '}
+                  {formatDate(subscription.pendingPlanEffectiveAt)}.
+                </p>
+              </div>
+            )}
+
             {actionError && <p className="text-sm text-mentor-error mt-3">{actionError}</p>}
 
             <div className="flex flex-wrap gap-3 mt-5">
               <button onClick={() => navigate('/pricing')} className="btn btn-secondary">
                 View Plans
+              </button>
+              <button onClick={() => navigate('/pricing')} className="btn btn-primary">
+                Buy Credits
               </button>
               {plan.priceInr > 0 && (subscription.status === 'active' || subscription.status === 'trial' || subscription.status === 'past_due') && (
                 <>
@@ -265,14 +284,22 @@ const AccountPage: React.FC = () => {
 
         {/* Recent transactions */}
         <div className="card p-0 overflow-hidden">
-          <div className="px-6 py-4 border-b border-mentor-border flex items-center justify-between">
+          <div className="px-6 py-4 border-b border-mentor-border flex items-center justify-between flex-wrap gap-2">
             <h2 className="section-title">Recent Credit Activity</h2>
-            <button
-              onClick={() => navigate('/account/credits')}
-              className="text-sm text-primary-600 hover:text-primary-700 font-medium"
-            >
-              View Credit History
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => navigate('/billing/history')}
+                className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+              >
+                View Billing History
+              </button>
+              <button
+                onClick={() => navigate('/account/credits')}
+                className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+              >
+                View Credit History
+              </button>
+            </div>
           </div>
 
           {recentTransactions.length === 0 ? (

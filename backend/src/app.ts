@@ -32,6 +32,13 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
+// Razorpay webhook signature verification needs the EXACT raw request
+// bytes — mounting this raw-body parser on the exact webhook path, before
+// the global JSON parser below, means body-parser's own "already parsed"
+// guard makes express.json() a no-op for this one path without disturbing
+// any other route.
+app.use('/api/v1/billing/webhooks/razorpay', express.raw({ type: '*/*', limit: '1mb' }));
+
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

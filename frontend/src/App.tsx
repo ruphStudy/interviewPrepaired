@@ -15,6 +15,8 @@ import SettingsPage from './pages/SettingsPage';
 import HistoryPage from './pages/HistoryPage';
 import AccountPage from './pages/AccountPage';
 import CreditHistoryPage from './pages/CreditHistoryPage';
+import BillingHistoryPage from './pages/BillingHistoryPage';
+import ReceiptPage from './pages/ReceiptPage';
 import CreateOrganizationPage from './pages/CreateOrganizationPage';
 import OrganizationProfilePage from './pages/OrganizationProfilePage';
 import OrganizationMembersPage from './pages/OrganizationMembersPage';
@@ -142,6 +144,22 @@ function App() {
             element={
               <ProtectedRoute>
                 <CreditHistoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/billing/history"
+            element={
+              <ProtectedRoute>
+                <BillingHistoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/billing/orders/:id/receipt"
+            element={
+              <ProtectedRoute>
+                <ReceiptPage />
               </ProtectedRoute>
             }
           />
