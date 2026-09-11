@@ -1556,6 +1556,8 @@ export interface ApplicationInterviewInvitation {
   createdByMembershipId: string;
   createdAt: string;
   updatedAt: string;
+  /** Safe, HR-facing email delivery state (e.g. "queued"/"sent"/"delivered"/"failed") — never provider internals. Present on GET only. */
+  emailDeliveryStatus?: string | null;
 }
 
 /** Never includes invitedEmail/invitedName/candidateId/jobId/blueprintId/rubricId/status/tokenHash/expiresAt — those are all derived/rejected server-side. */
@@ -1564,10 +1566,13 @@ export interface CreateEmployerInterviewInvitationPayload {
   message?: string;
 }
 
-export type CreateEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation; token: string }>;
+// `token` is present only outside production (local/dev testing convenience) —
+// production always delivers the interview link by email instead.
+export type CreateEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation; token?: string }>;
 export type GetEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation | null }>;
-export type RegenerateEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation; token: string }>;
+export type RegenerateEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation; token?: string }>;
 export type RevokeEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation }>;
+export type RetryEmployerInterviewInvitationEmailResponse = ApiEnvelope<{ invitation: ApplicationInterviewInvitation }>;
 
 // ============================================================================
 // Employer Interview Session — authenticated recruiter READ only (Sprint
@@ -5437,6 +5442,21 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to revoke interview invitation');
+    }
+  }
+
+  /** Re-attempts sending the SAME active invitation's most recent delivery immediately — never rotates the token, never duplicates the invitation. */
+  async retryEmployerInterviewInvitationEmail(
+    organizationId: string,
+    applicationId: string
+  ): Promise<RetryEmployerInterviewInvitationEmailResponse> {
+    try {
+      const response = await this.api.post<RetryEmployerInterviewInvitationEmailResponse>(
+        `/organizations/${organizationId}/applications/${applicationId}/interview-invitation/retry-email`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to retry interview invitation email');
     }
   }
 

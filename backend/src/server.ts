@@ -4,6 +4,9 @@ import { env, validateEnv } from './config/environment';
 import { logInfo, logError } from './middleware/logger';
 import { subscriptionPlanService } from './services/SubscriptionPlanService';
 import { creditPackService } from './services/CreditPackService';
+import { emailRetryService } from './services/EmailRetryService';
+
+const EMAIL_RETRY_INTERVAL_MS = 30 * 1000;
 
 // Validate environment variables
 validateEnv();
@@ -33,6 +36,15 @@ const startServer = async (): Promise<void> => {
       console.error('❌ Failed to seed default credit packs:', error);
       process.exit(1);
     }
+
+    // Minimal persistent email retry/outbox worker (PR-COMM-6) — polls for
+    // queued EmailDelivery rows whose nextAttemptAt has passed. Atomic
+    // per-row claiming makes this safe to run in more than one process.
+    setInterval(() => {
+      emailRetryService.runOnce().catch((error) => {
+        console.error('[EmailRetryService] runOnce failed', error);
+      });
+    }, EMAIL_RETRY_INTERVAL_MS);
 
     // Start Express server
     app.listen(env.port, () => {

@@ -21,6 +21,14 @@ interface Environment {
   razorpayWebhookSecret: string;
   appBaseUrl: string;
   frontendUrl: string;
+  emailProvider: string;
+  emailFrom: string;
+  emailFromName: string;
+  emailReplyTo: string;
+  resendApiKey: string;
+  emailWebhookSecret: string;
+  /** Explicit, non-production-only opt-in for the console/dev email provider — see emails/index.ts. */
+  emailDevMode: boolean;
 }
 
 export const env: Environment = {
@@ -51,6 +59,17 @@ export const env: Environment = {
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
   appBaseUrl: process.env.APP_BASE_URL || '',
   frontendUrl: process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000',
+  // Transactional email foundation (PR-COMM) — leave RESEND_API_KEY blank in
+  // any environment without a real provider; the send path then returns
+  // EMAIL_PROVIDER_UNAVAILABLE (or uses the dev-console provider, but ONLY
+  // when EMAIL_DEV_MODE=true AND NODE_ENV!=='production' — see emails/index.ts).
+  emailProvider: process.env.EMAIL_PROVIDER || 'resend',
+  emailFrom: process.env.EMAIL_FROM || '',
+  emailFromName: process.env.EMAIL_FROM_NAME || 'EnterSkill',
+  emailReplyTo: process.env.EMAIL_REPLY_TO || '',
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  emailWebhookSecret: process.env.EMAIL_WEBHOOK_SECRET || '',
+  emailDevMode: process.env.EMAIL_DEV_MODE === 'true',
 };
 
 export const validateEnv = (): void => {

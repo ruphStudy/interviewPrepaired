@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
+import rateLimit from 'express-rate-limit';
 import {
   register,
   login,
@@ -45,6 +46,17 @@ const resetPasswordValidation = [
     .withMessage('Password must be at least 8 characters'),
 ];
 
+// Focused abuse protection — bounded per-IP attempts, independent of the
+// global `/api` limiter. Deliberately generic message so it never hints at
+// account existence either.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many password reset requests. Please try again later.' },
+});
+
 router.post('/register', ...registerValidation, validate, register);
 router.post('/login', ...loginValidation, validate, login);
 router.post('/logout', logout);
@@ -57,7 +69,7 @@ router.put(
   validate,
   updatePassword
 );
-router.post('/forgot-password', ...forgotPasswordValidation, validate, forgotPassword);
+router.post('/forgot-password', forgotPasswordLimiter, ...forgotPasswordValidation, validate, forgotPassword);
 router.put('/reset-password/:token', ...resetPasswordValidation, validate, resetPassword);
 
 export default router;

@@ -9,6 +9,10 @@ import { OrganizationStatus } from '../constants/organization';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { User } from '../models/user.model';
 import { ApiError } from '../utils/ApiError';
+import { transactionalEmailService } from './TransactionalEmailService';
+import { renderOrganizationInvitationEmail } from '../emails/templates';
+import { EmailTemplateCode } from '../constants/email';
+import { env } from '../config/environment';
 
 interface CreateInvitationParams {
   email: string;
@@ -75,12 +79,15 @@ export class OrganizationInvitationService {
 
     if (existingPending) {
       // Rotate rather than create a duplicate pending row — same invitation
-      // record, fresh token/expiry/role/inviter.
+      // record, fresh token/expiry/role/inviter. The OLD emailed link stops
+      // working the moment tokenHash changes, regardless of email delivery.
       existingPending.tokenHash = tokenHash;
       existingPending.expiresAt = expiresAt;
       existingPending.role = params.role;
       existingPending.invitedByUserId = invitedByObjectId;
       await existingPending.save();
+
+      await this.sendInvitationEmail(organization, existingPending, token, invitedByObjectId);
       return { invitation: this.toDetail(existingPending), token };
     }
 
@@ -94,7 +101,50 @@ export class OrganizationInvitationService {
       expiresAt,
     });
 
+    await this.sendInvitationEmail(organization, invitation, token, invitedByObjectId);
     return { invitation: this.toDetail(invitation), token };
+  }
+
+  /**
+   * Best-effort — a delivery failure never blocks invitation creation
+   * (the invitation itself is already valid/persisted; email is the
+   * transport, not the source of truth). Idempotency key is derived from
+   * the invitation id + its CURRENT tokenHash, so a rotation (resend)
+   * always sends a fresh email while a retried HTTP request for the exact
+   * same rotation never double-sends.
+   */
+  private async sendInvitationEmail(
+    organization: IOrganization,
+    invitation: IOrganizationInvitation,
+    rawToken: string,
+    invitedByUserId: Types.ObjectId
+  ): Promise<void> {
+    try {
+      const inviter = await User.findById(invitedByUserId).select('name');
+      const acceptUrl = `${env.frontendUrl.replace(/\/$/, '')}/accept-invite/${rawToken}`;
+      const { subject, html, text } = renderOrganizationInvitationEmail({
+        organizationName: organization.name,
+        role: invitation.role,
+        inviterName: inviter?.name,
+        acceptUrl,
+        expiresAt: invitation.expiresAt,
+      });
+
+      await transactionalEmailService.sendTransactionalEmail({
+        to: invitation.email,
+        templateCode: EmailTemplateCode.ORGANIZATION_INVITATION,
+        subject,
+        html,
+        text,
+        idempotencyKey: `organization-invite:${(invitation._id as Types.ObjectId).toString()}:${invitation.tokenHash}`,
+        relatedEntityType: 'OrganizationInvitation',
+        relatedEntityId: (invitation._id as Types.ObjectId).toString(),
+      });
+    } catch (error) {
+      console.error('[OrganizationInvitationService] Failed to enqueue invitation email', {
+        invitationId: (invitation._id as Types.ObjectId).toString(),
+      });
+    }
   }
 
   async getInvitations(

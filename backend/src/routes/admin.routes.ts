@@ -21,6 +21,8 @@ import {
   getPaymentOrderAdmin,
   reconcilePaymentOrderAdmin,
   refundPaymentOrderAdmin,
+  listEmailDeliveriesAdmin,
+  getEmailDeliveryAdmin,
 } from '../controllers/admin.controller';
 import { protect, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validation';
@@ -217,5 +219,22 @@ router.post(
   validate,
   refundPaymentOrderAdmin
 );
+
+// Transactional email delivery visibility (PR-COMM-6) — masked recipient only.
+const deliveryIdParamValidation = [param('deliveryId').isMongoId().withMessage('Invalid delivery ID')];
+
+router.get(
+  '/email-deliveries',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('status').optional().isString().trim(),
+    query('templateCode').optional().isString().trim(),
+  ],
+  validate,
+  listEmailDeliveriesAdmin
+);
+
+router.get('/email-deliveries/:deliveryId', deliveryIdParamValidation, validate, getEmailDeliveryAdmin);
 
 export default router;

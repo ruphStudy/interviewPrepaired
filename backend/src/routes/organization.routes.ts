@@ -3143,6 +3143,18 @@ router.post(
   employerInterviewInvitationController.revokeInvitation
 );
 
+// PR-COMM-5 — re-attempts sending the SAME active invitation's most recent
+// delivery immediately; never rotates the token, never duplicates the invitation.
+router.post(
+  '/:organizationId/applications/:applicationId/interview-invitation/retry-email',
+  protect,
+  ...organizationIdValidation,
+  ...applicationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewInvitationController.retryInvitationEmail
+);
+
 // ============================================================================
 // Employer Interview Session — authenticated recruiter READ only (20E).
 // The session itself is created exclusively through the PUBLIC candidate

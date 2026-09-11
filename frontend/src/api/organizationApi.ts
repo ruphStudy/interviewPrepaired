@@ -371,7 +371,9 @@ export type UpdateOrganizationSettingsResponse = ApiEnvelope<{ settings: Organiz
 export type ListMembersResponse = ApiEnvelope<{ members: OrganizationMember[]; pagination: Pagination }>;
 export type AddMemberResponse = ApiEnvelope<{ member: OrganizationMember }>;
 export type UpdateMemberResponse = ApiEnvelope<{ member: OrganizationMember }>;
-export type CreateInvitationResponse = ApiEnvelope<{ invitation: OrganizationInvitation; token: string }>;
+// `token` is present only outside production (local/dev testing convenience) —
+// production always delivers the acceptance link by email instead.
+export type CreateInvitationResponse = ApiEnvelope<{ invitation: OrganizationInvitation; token?: string }>;
 export type ListInvitationsResponse = ApiEnvelope<{ invitations: OrganizationInvitation[]; pagination: Pagination }>;
 export type RevokeInvitationResponse = ApiEnvelope<{ invitation: OrganizationInvitation }>;
 export type GetInvitationPreviewResponse = ApiEnvelope<InvitationPreview>;

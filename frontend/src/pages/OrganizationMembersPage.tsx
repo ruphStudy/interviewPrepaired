@@ -88,6 +88,7 @@ const OrganizationMembersPage: React.FC = () => {
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [newInviteLink, setNewInviteLink] = useState<string | null>(null);
+  const [invitedEmailSent, setInvitedEmailSent] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
   const membersTotalPages = Math.max(1, Math.ceil(membersTotal / PAGE_LIMIT));
@@ -218,11 +219,19 @@ const OrganizationMembersPage: React.FC = () => {
     setInviteSubmitting(true);
     setInviteError(null);
     try {
+      const sentToEmail = inviteEmail.trim();
       const response = await organizationApi.createInvitation(organizationId, {
-        email: inviteEmail.trim(),
+        email: sentToEmail,
         role: inviteRole,
       });
-      setNewInviteLink(`${window.location.origin}/accept-invite/${response.data.token}`);
+      if (response.data.token) {
+        // Non-production only — production never returns the raw token.
+        setNewInviteLink(`${window.location.origin}/accept-invite/${response.data.token}`);
+        setInvitedEmailSent(null);
+      } else {
+        setNewInviteLink(null);
+        setInvitedEmailSent(sentToEmail);
+      }
       setInviteEmail('');
       setInviteRole('member');
       setShowInvite(false);
@@ -325,13 +334,34 @@ const OrganizationMembersPage: React.FC = () => {
           </div>
         )}
 
+        {invitedEmailSent && (
+          <div className="card bg-mentor-mint dark:bg-future-card mb-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="section-title mb-1">Invitation sent</h3>
+                <p className="text-sm text-mentor-text-secondary">
+                  An invitation email has been sent to <strong>{invitedEmailSent}</strong>. It'll expire if not accepted
+                  in time.
+                </p>
+              </div>
+              <button
+                onClick={() => setInvitedEmailSent(null)}
+                className="text-mentor-text-muted hover:text-mentor-text shrink-0"
+                aria-label="Dismiss"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+        )}
+
         {newInviteLink && (
           <div className="card bg-mentor-mint dark:bg-future-card mb-6">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <h3 className="section-title mb-1">Invitation created</h3>
                 <p className="text-sm text-mentor-text-secondary mb-3">
-                  There's no email delivery yet — copy this link and share it with the invitee directly.
+                  Development mode only — copy this link and share it with the invitee directly.
                 </p>
                 <div className="flex items-center gap-2">
                   <code className="text-xs bg-white dark:bg-future-elevated px-3 py-2 rounded-lg border border-mentor-border dark:border-future-border truncate flex-1">

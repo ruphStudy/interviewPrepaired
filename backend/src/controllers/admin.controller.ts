@@ -14,6 +14,7 @@ import {
 import { userSubscriptionService } from '../services/UserSubscriptionService';
 import { interviewCreditService } from '../services/InterviewCreditService';
 import { billingAdminService } from '../services/BillingAdminService';
+import { emailDeliveryAdminService } from '../services/EmailDeliveryAdminService';
 
 /** Shared by the three usage endpoints — malformed from/to must fail clearly rather than silently produce a wrong range. */
 function parseUsageDateRange(query: Record<string, unknown>): UsageDateRange {
@@ -618,4 +619,23 @@ export const refundPaymentOrderAdmin = catchAsync(async (req: AuthRequest, res: 
   const { amountPaise, reason } = req.body;
   const order = await billingAdminService.refundOrder(req.params.orderId, req.user!.id, { amountPaise, reason });
   res.status(200).json(successResponse('Refund processed successfully', order));
+});
+
+/**
+ * Minimal admin-safe transactional-email delivery visibility (PR-COMM-6) —
+ * masked recipient only, never the rendered body/token.
+ */
+export const listEmailDeliveriesAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const templateCode = typeof req.query.templateCode === 'string' ? req.query.templateCode : undefined;
+
+  const result = await emailDeliveryAdminService.listDeliveries({ status, templateCode, page, limit });
+  res.status(200).json(successResponse('Email deliveries retrieved successfully', result));
+});
+
+export const getEmailDeliveryAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const delivery = await emailDeliveryAdminService.getDelivery(req.params.deliveryId);
+  res.status(200).json(successResponse('Email delivery retrieved successfully', delivery));
 });

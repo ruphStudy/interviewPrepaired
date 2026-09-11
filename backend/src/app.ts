@@ -38,6 +38,8 @@ app.use('/api', limiter);
 // guard makes express.json() a no-op for this one path without disturbing
 // any other route.
 app.use('/api/v1/billing/webhooks/razorpay', express.raw({ type: '*/*', limit: '1mb' }));
+// Resend webhook signature verification (Svix format) also needs the exact raw bytes.
+app.use('/api/v1/webhooks/email/resend', express.raw({ type: '*/*', limit: '1mb' }));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));

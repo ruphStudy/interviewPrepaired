@@ -877,6 +877,9 @@ const EmployerApplicationDetailPage: React.FC = () => {
   const [rawInvitationToken, setRawInvitationToken] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
+  const [retryingInvitationEmail, setRetryingInvitationEmail] = useState(false);
+  const [retryInvitationEmailError, setRetryInvitationEmailError] = useState<string | null>(null);
+
   const [interviewSession, setInterviewSession] = useState<EmployerInterviewSessionSummary | null>(null);
   const [interviewSessionLoading, setInterviewSessionLoading] = useState(true);
   const [interviewSessionError, setInterviewSessionError] = useState<string | null>(null);
@@ -3249,7 +3252,7 @@ const EmployerApplicationDetailPage: React.FC = () => {
         message: invitationMessageInput.trim() || undefined,
       });
       setInvitation(response.data.invitation);
-      setRawInvitationToken(response.data.token);
+      setRawInvitationToken(response.data.token ?? null);
       setLinkCopied(false);
     } catch (err: any) {
       setCreateInvitationError(err.message || 'Failed to create interview invitation');
@@ -3266,7 +3269,7 @@ const EmployerApplicationDetailPage: React.FC = () => {
     try {
       const response = await employerApi.regenerateEmployerInterviewInvitation(organizationId, applicationId);
       setInvitation(response.data.invitation);
-      setRawInvitationToken(response.data.token);
+      setRawInvitationToken(response.data.token ?? null);
       setLinkCopied(false);
     } catch (err: any) {
       setRegenerateInvitationError(err.message || 'Failed to regenerate interview invitation');
@@ -3288,6 +3291,20 @@ const EmployerApplicationDetailPage: React.FC = () => {
       setRevokeInvitationError(err.message || 'Failed to revoke interview invitation');
     } finally {
       setRevokingInvitation(false);
+    }
+  };
+
+  const handleRetryInvitationEmail = async () => {
+    if (!organizationId || !applicationId) return;
+    setRetryingInvitationEmail(true);
+    setRetryInvitationEmailError(null);
+    try {
+      await employerApi.retryEmployerInterviewInvitationEmail(organizationId, applicationId);
+      await fetchInvitation();
+    } catch (err: any) {
+      setRetryInvitationEmailError(err.message || 'Failed to retry interview invitation email');
+    } finally {
+      setRetryingInvitationEmail(false);
     }
   };
 
@@ -3931,7 +3948,7 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 Interview Invitation
               </h2>
               <p className="text-xs text-mentor-text-muted mb-4">
-                Creates a secure interview link for the candidate. No email is sent yet — share the link manually.
+                Creates a secure interview link and emails it to the candidate automatically.
               </p>
 
               {application.status !== 'shortlisted' ? (
@@ -3956,7 +3973,7 @@ const EmployerApplicationDetailPage: React.FC = () => {
                 <>
                   {rawInvitationToken && (
                     <div className="surface-muted p-4 mb-4">
-                      <p className="label mb-2">Invitation Link — copy now, shown only once</p>
+                      <p className="label mb-2">Invitation Link — development mode only, shown once</p>
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
@@ -4031,8 +4048,20 @@ const EmployerApplicationDetailPage: React.FC = () => {
                           <dt className="text-xs font-medium text-mentor-text-muted mb-1">Created</dt>
                           <dd className="text-sm text-mentor-text">{formatDateTime(invitation.createdAt)}</dd>
                         </div>
+                        <div>
+                          <dt className="text-xs font-medium text-mentor-text-muted mb-1">Email Status</dt>
+                          <dd className="text-sm text-mentor-text capitalize">
+                            {invitation.emailDeliveryStatus ? invitation.emailDeliveryStatus.replace(/_/g, ' ') : '—'}
+                          </dd>
+                        </div>
                       </dl>
 
+                      {retryInvitationEmailError && (
+                        <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3">
+                          <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                          <p className="text-sm text-mentor-error">{retryInvitationEmailError}</p>
+                        </div>
+                      )}
                       {revokeInvitationError && (
                         <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3">
                           <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
@@ -4050,14 +4079,26 @@ const EmployerApplicationDetailPage: React.FC = () => {
                         <div>
                           {!rawInvitationToken && (
                             <p className="text-xs text-mentor-text-muted mb-2">
-                              The invitation link was only shown at creation time and cannot be re-displayed for security reasons.
-                              Regenerate to issue a new link (this invalidates the current one).
+                              The interview link was emailed directly to the candidate and cannot be re-displayed here for
+                              security reasons. Use "Retry Email" if delivery failed, or regenerate to issue a new link
+                              (this invalidates the current one).
                             </p>
                           )}
                           {canEdit && (
-                            <button onClick={handleRevokeInvitation} disabled={revokingInvitation} className="btn btn-secondary">
-                              {revokingInvitation ? 'Revoking...' : 'Revoke'}
-                            </button>
+                            <div className="flex flex-wrap gap-2">
+                              {(invitation.emailDeliveryStatus === 'queued' || invitation.emailDeliveryStatus === 'failed') && (
+                                <button
+                                  onClick={handleRetryInvitationEmail}
+                                  disabled={retryingInvitationEmail}
+                                  className="btn btn-primary"
+                                >
+                                  {retryingInvitationEmail ? 'Retrying...' : 'Retry Email'}
+                                </button>
+                              )}
+                              <button onClick={handleRevokeInvitation} disabled={revokingInvitation} className="btn btn-secondary">
+                                {revokingInvitation ? 'Revoking...' : 'Revoke'}
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}

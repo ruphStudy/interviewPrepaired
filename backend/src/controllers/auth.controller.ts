@@ -6,6 +6,14 @@ import { successResponse, createdResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
 import { AuthRequest } from '../middleware/auth';
 import { userSubscriptionService } from '../services/UserSubscriptionService';
+import { transactionalEmailService } from '../services/TransactionalEmailService';
+import { renderPasswordResetEmail } from '../emails/templates';
+import { EmailTemplateCode } from '../constants/email';
+import { env } from '../config/environment';
+
+const PASSWORD_RESET_EXPIRY_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_EXPIRY_MINUTES = PASSWORD_RESET_EXPIRY_MS / (60 * 1000);
+const GENERIC_FORGOT_PASSWORD_MESSAGE = 'If an account exists for this email, password reset instructions have been sent.';
 
 const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
   const token = user.generateToken();
@@ -125,32 +133,56 @@ export const updatePassword = catchAsync(
   }
 );
 
+/**
+ * Same generic response for both existing and non-existing accounts —
+ * never reveals whether an account exists. The raw reset token exists in
+ * memory only long enough to build the email link; only its SHA-256 hash
+ * is ever persisted, and it is never logged, returned, or included in the
+ * email delivery's metadata.
+ */
 export const forgotPassword = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    const user = await User.findOne({ email: req.body.email });
+    const email = String(req.body.email).trim().toLowerCase();
+    const user = await User.findOne({ email });
 
-    if (!user) {
-      throw new ApiError(404, 'No user found with that email');
+    if (user) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+      user.resetPasswordToken = resetPasswordToken;
+      user.resetPasswordExpire = new Date(Date.now() + PASSWORD_RESET_EXPIRY_MS);
+      await user.save({ validateBeforeSave: false });
+
+      const resetUrl = `${env.frontendUrl.replace(/\/$/, '')}/reset-password/${resetToken}`;
+      const { subject, html, text } = renderPasswordResetEmail({
+        resetUrl,
+        expiryMinutes: PASSWORD_RESET_EXPIRY_MINUTES,
+      });
+
+      try {
+        await transactionalEmailService.sendTransactionalEmail({
+          to: user.email,
+          templateCode: EmailTemplateCode.PASSWORD_RESET,
+          subject,
+          html,
+          text,
+          // Keyed on the token's own hash (not the raw token) — a NEW
+          // forgot-password request always produces a new hash, so a
+          // deliberate re-request sends a fresh email, while a retried
+          // HTTP call for the SAME request never double-sends.
+          idempotencyKey: `password-reset:${user._id.toString()}:${resetPasswordToken}`,
+          relatedEntityType: 'User',
+          relatedEntityId: user._id.toString(),
+        });
+      } catch (error) {
+        console.error('[auth.forgotPassword] Failed to enqueue password reset email', {
+          userId: user._id.toString(),
+        });
+      }
+      // `resetToken` goes out of scope here — it is never logged or returned.
     }
 
-    const resetToken = crypto.randomBytes(32).toString('hex');
-
-    user.resetPasswordToken = crypto
-      .createHash('sha256')
-      .update(resetToken)
-      .digest('hex');
-
-    user.resetPasswordExpire = new Date(Date.now() + 10 * 60 * 1000);
-
-    await user.save({ validateBeforeSave: false });
-
-    res.status(200).json(
-      successResponse('Password reset token sent', {
-        resetToken,
-        message:
-          'In production, this token would be sent via email. For development, use this token.',
-      })
-    );
+    res.status(200).json(successResponse(GENERIC_FORGOT_PASSWORD_MESSAGE));
   }
 );
 

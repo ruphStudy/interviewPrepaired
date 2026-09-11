@@ -4,6 +4,8 @@ import { OrganizationProvider } from './contexts/OrganizationContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import InterviewSetupPage from './pages/InterviewSetupPage';
 import InterviewScreen from './pages/InterviewScreen';
@@ -76,6 +78,8 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
           {/* Public — mirrors the backend's own public invitation-preview endpoint. Accepting still requires auth (handled inside the page). */}
           <Route path="/accept-invite/:token" element={<AcceptInvitationPage />} />
           {/* Fully public (20D) — no auth at all, unlike /accept-invite above. Candidate interview invitation access + explicit acceptance only; no interview session is created here. */}

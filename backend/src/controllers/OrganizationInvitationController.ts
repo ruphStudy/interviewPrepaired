@@ -7,14 +7,16 @@ import { OrganizationMemberRole } from '../constants/organizationMember';
 import { ApiError } from '../utils/ApiError';
 import { successResponse, createdResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
+import { env } from '../config/environment';
 
 /** Org-scoped methods run behind `requireOrganizationPermission(MEMBERS_MANAGE)` (see organization.routes.ts) — `req.organizationContext` is always present by the time those run. */
 export class OrganizationInvitationController {
   /**
    * POST /api/v1/organizations/:organizationId/invitations
-   * Requires MEMBERS_MANAGE. Returns the raw token exactly once — there is
-   * no email-delivery layer yet, so the caller (an admin UI) is responsible
-   * for relaying the acceptance link to the invitee out of band.
+   * Requires MEMBERS_MANAGE. Sends the invitation email — the raw token is
+   * included in the response ONLY outside production (local/dev testing
+   * convenience); a production deployment never exposes it, so the
+   * invitee's own email is the only path to the acceptance link.
    */
   public createInvitation = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
     const context = req.organizationContext;
@@ -30,7 +32,12 @@ export class OrganizationInvitationController {
       { email, role }
     );
 
-    res.status(201).json(createdResponse('Invitation created successfully', { invitation, token }));
+    const payload: Record<string, unknown> = { invitation };
+    if (env.nodeEnv !== 'production') {
+      payload.token = token;
+    }
+
+    res.status(201).json(createdResponse('Invitation created successfully', payload));
   });
 
   /**

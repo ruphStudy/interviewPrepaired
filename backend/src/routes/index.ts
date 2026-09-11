@@ -10,6 +10,7 @@ import organizationRoutes from './organization.routes';
 import organizationInvitationRoutes from './organizationInvitation.routes';
 import studentPortalRoutes from './studentPortal.routes';
 import publicEmployerInterviewInvitationRoutes from './publicEmployerInterviewInvitation.routes';
+import emailWebhookRoutes from './emailWebhook.routes';
 
 const router = Router();
 
@@ -25,5 +26,6 @@ router.use('/organization-invitations', organizationInvitationRoutes);
 router.use('/student-portal', studentPortalRoutes);
 // Fully public (no `protect`, no organization RBAC) — 20D candidate interview invitation access/acceptance.
 router.use('/public/employer-interview-invitations', publicEmployerInterviewInvitationRoutes);
+router.use('/webhooks/email', emailWebhookRoutes);
 
 export default router;

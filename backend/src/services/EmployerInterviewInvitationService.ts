@@ -22,6 +22,11 @@ import { OrganizationType, OrganizationStatus } from '../constants/organization'
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { employerIntegrationEventService } from './EmployerIntegrationEventService';
+import { transactionalEmailService } from './TransactionalEmailService';
+import { renderEmployerInterviewInvitationEmail } from '../emails/templates';
+import { EmailTemplateCode } from '../constants/email';
+import { EmailDelivery } from '../models/EmailDelivery.model';
+import { env } from '../config/environment';
 import { ApiError } from '../utils/ApiError';
 
 interface CreateInvitationFields {
@@ -82,7 +87,17 @@ export class EmployerInterviewInvitationService {
     }
 
     await this.lazilyExpire(invitation);
-    return this.toDetail(invitation.toObject());
+    const detail = this.toDetail(invitation.toObject());
+    detail.emailDeliveryStatus = await this.getLatestDeliveryStatus(invitation._id.toString());
+    return detail;
+  }
+
+  /** Safe, HR-facing delivery state only (never provider internals) — the most recent EmailDelivery for this invitation, if any. */
+  private async getLatestDeliveryStatus(invitationId: string): Promise<string | null> {
+    const delivery = await EmailDelivery.findOne({ relatedEntityType: 'EmployerInterviewInvitation', relatedEntityId: invitationId })
+      .sort({ createdAt: -1 })
+      .select('status');
+    return delivery?.status ?? null;
   }
 
   /**
@@ -170,6 +185,8 @@ export class EmployerInterviewInvitationService {
         sourceArtifactId: created._id.toString(),
       });
 
+      await this.sendInvitationEmail(organization, created, application.jobId, token);
+
       return { invitation: this.toDetail(created.toObject()), token };
     } catch (error: any) {
       if (error?.code !== 11000) {
@@ -244,9 +261,114 @@ export class EmployerInterviewInvitationService {
     invitation.status = EmployerInterviewInvitationStatus.ACTIVE;
     invitation.acceptedAt = undefined;
     invitation.revokedAt = undefined;
+    invitation.sentAt = undefined;
     await invitation.save();
 
+    await this.sendInvitationEmail(organization, invitation, application.jobId, token);
+
     return { invitation: this.toDetail(invitation.toObject()), token };
+  }
+
+  /**
+   * POST .../interview-invitation/retry-email — re-attempts sending the
+   * CURRENT active invitation's most recent delivery immediately, without
+   * rotating the token or creating a new invitation row. Only meaningful
+   * while that delivery is still retryable (queued, or recently failed
+   * with attempts remaining); the raw token itself is never persisted, so
+   * a delivery that already succeeded or was permanently exhausted cannot
+   * be resent this way — the caller should use regenerate instead.
+   */
+  async retryInvitationEmail(organizationId: string, actingRole: OrganizationMemberRole, applicationId: string): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
+
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsCompany(organization);
+
+    const application = await EmployerJobApplication.findOne({ _id: applicationId, organizationId: organization._id });
+    if (!application) {
+      throw new ApiError(404, 'Application not found');
+    }
+
+    const blueprintDetail = await employerInterviewBlueprintService.getCurrentBlueprint(organizationId, actingRole, applicationId);
+    if (!blueprintDetail) {
+      throw new ApiError(404, 'Interview invitation not found');
+    }
+    const blueprintId = new Types.ObjectId(blueprintDetail.id as string);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ organizationId: organization._id, applicationId: application._id, blueprintId });
+    if (!invitation) {
+      throw new ApiError(404, 'Interview invitation not found');
+    }
+    if (invitation.status !== EmployerInterviewInvitationStatus.ACTIVE) {
+      throw new ApiError(409, `Cannot retry email for an invitation with status "${invitation.status}"`);
+    }
+
+    const delivery = await EmailDelivery.findOne({
+      relatedEntityType: 'EmployerInterviewInvitation',
+      relatedEntityId: invitation._id.toString(),
+    })
+      .sort({ createdAt: -1 })
+      .select('+pendingContent');
+
+    if (!delivery || (delivery.status !== 'queued' && delivery.status !== 'failed') || !delivery.pendingContent) {
+      throw new ApiError(
+        409,
+        'There is no pending email to retry for this invitation — use "Regenerate" to send a new one'
+      );
+    }
+
+    await transactionalEmailService.attemptSend(delivery);
+    return this.toDetail(invitation.toObject());
+  }
+
+  /**
+   * Best-effort — a delivery failure never blocks invitation creation. The
+   * idempotency key is derived from the invitation id + its CURRENT
+   * tokenHash, so a rotation (create-over-expired/revoked, or regenerate)
+   * always sends a fresh email while a retried HTTP request for the exact
+   * same rotation never double-sends. `sentAt` is set on the invitation
+   * itself only after the provider genuinely accepts the message.
+   */
+  private async sendInvitationEmail(
+    organization: IOrganization,
+    invitation: InstanceType<typeof EmployerInterviewInvitation>,
+    jobId: Types.ObjectId,
+    rawToken: string
+  ): Promise<void> {
+    try {
+      const job = await EmployerJob.findOne({ _id: jobId, organizationId: organization._id }).select('title');
+      const interviewUrl = `${env.frontendUrl.replace(/\/$/, '')}/candidate/interview-invite/${rawToken}`;
+      const candidateFirstName = invitation.invitedName ? invitation.invitedName.split(' ')[0] : undefined;
+
+      const { subject, html, text } = renderEmployerInterviewInvitationEmail({
+        candidateFirstName,
+        organizationName: organization.name,
+        jobTitle: job?.title,
+        invitationMessage: invitation.message,
+        interviewUrl,
+        expiresAt: invitation.expiresAt,
+      });
+
+      const delivery = await transactionalEmailService.sendTransactionalEmail({
+        to: invitation.invitedEmail,
+        templateCode: EmailTemplateCode.EMPLOYER_INTERVIEW_INVITATION,
+        subject,
+        html,
+        text,
+        idempotencyKey: `candidate-interview-invite:${invitation._id.toString()}:${invitation.tokenHash}`,
+        relatedEntityType: 'EmployerInterviewInvitation',
+        relatedEntityId: invitation._id.toString(),
+      });
+
+      if (delivery.status === 'sent' || delivery.status === 'delivered') {
+        invitation.sentAt = new Date();
+        await invitation.save();
+      }
+    } catch (error) {
+      console.error('[EmployerInterviewInvitationService] Failed to enqueue interview invitation email', {
+        invitationId: invitation._id.toString(),
+      });
+    }
   }
 
   /** POST .../interview-invitation/revoke — allowed only from ACTIVE. No hard delete, ever. */
