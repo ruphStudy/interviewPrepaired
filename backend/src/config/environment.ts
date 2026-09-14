@@ -46,6 +46,14 @@ interface Environment {
   trustProxy: string;
   /** When 'false', server.ts does NOT start the in-process email/job pollers — a separate `worker` process (src/worker.ts) is expected to run them instead. Defaults to true so single-process deployments/local dev are unchanged. */
   runJobsInProcess: boolean;
+  /** Consent version labels (PR-PRIVACY-4) — just labels, never fabricated legal text. Bump when the actual Terms/Privacy Policy document changes. */
+  termsVersion: string;
+  privacyPolicyVersion: string;
+  /** Real legal document URLs — MUST stay blank unless genuinely configured; never fabricated. The frontend renders "not yet configured" rather than a broken/placeholder link when blank. */
+  termsUrl: string;
+  privacyPolicyUrl: string;
+  /** Hours a completed privacy data-export archive remains downloadable before the cleanup sweep deletes it (PR-PRIVACY-2). */
+  privacyExportRetentionHours: number;
 }
 
 export const env: Environment = {
@@ -108,6 +116,14 @@ export const env: Environment = {
   localStoragePath: process.env.LOCAL_STORAGE_PATH || './storage-dev',
   trustProxy: process.env.TRUST_PROXY || '',
   runJobsInProcess: process.env.RUN_JOBS_IN_PROCESS !== 'false',
+  // Consent/privacy foundation (PR-PRIVACY-4) — versions are just labels
+  // (default '1.0' is fine, it is not legal text); URLs are left blank
+  // unless a real, non-fabricated value is configured.
+  termsVersion: process.env.TERMS_VERSION || '1.0',
+  privacyPolicyVersion: process.env.PRIVACY_POLICY_VERSION || '1.0',
+  termsUrl: process.env.TERMS_URL || '',
+  privacyPolicyUrl: process.env.PRIVACY_POLICY_URL || '',
+  privacyExportRetentionHours: parseInt(process.env.PRIVACY_EXPORT_RETENTION_HOURS || '48', 10),
 };
 
 export const validateEnv = (): void => {

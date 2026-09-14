@@ -14,6 +14,10 @@ export enum OperationalJobType {
   SUBSCRIPTION_EXPIRY = 'SUBSCRIPTION_EXPIRY',
   /** Sweeps a single organization's subscription for currentPeriodEnd expiry via OrganizationSubscriptionService.expire. */
   ORGANIZATION_SUBSCRIPTION_EXPIRY = 'ORGANIZATION_SUBSCRIPTION_EXPIRY',
+  /** Wraps PrivacyExportService.generateExport — builds + uploads a user's data-export archive. */
+  PRIVACY_EXPORT_GENERATION = 'PRIVACY_EXPORT_GENERATION',
+  /** Wraps AccountDeletionService.processAccountDeletion — the slower/cross-collection cleanup after the synchronous delete-account request handler already revoked sessions and anonymized the User row. */
+  ACCOUNT_DELETION = 'ACCOUNT_DELETION',
 }
 
 export type OperationalJobStatus = 'pending' | 'active' | 'completed' | 'dead_letter' | 'cancelled';

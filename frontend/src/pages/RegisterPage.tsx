@@ -1,17 +1,42 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL } from '../config/api.config';
 
 const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
   const { register } = useAuth();
-  
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // PR-PRIVACY-4 — both required, unchecked by default; submit stays
+  // disabled until both are checked. Links render only when a real
+  // Terms/Privacy Policy URL is actually configured — never a broken/
+  // placeholder link.
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [acceptedPrivacyPolicy, setAcceptedPrivacyPolicy] = useState(false);
+  const [policyConfig, setPolicyConfig] = useState<{ termsUrl: string | null; privacyPolicyUrl: string | null }>({
+    termsUrl: null,
+    privacyPolicyUrl: null,
+  });
+
+  useEffect(() => {
+    axios
+      .get(`${API_BASE_URL}/privacy/policy-config`)
+      .then((response) => {
+        const data = response.data?.data;
+        if (data) setPolicyConfig({ termsUrl: data.termsUrl, privacyPolicyUrl: data.privacyPolicyUrl });
+      })
+      .catch(() => {
+        // Non-fatal — the checkboxes still work with plain text if the config lookup fails.
+      });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,10 +53,15 @@ const RegisterPage: React.FC = () => {
       return;
     }
 
+    if (!acceptedTerms || !acceptedPrivacyPolicy) {
+      setError('You must accept the Terms of Service and Privacy Policy to register');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await register(name, email, password);
+      await register(name, email, password, acceptedTerms, acceptedPrivacyPolicy);
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Registration failed. Please try again.');
@@ -138,10 +168,49 @@ const RegisterPage: React.FC = () => {
             </div>
           </div>
 
+          <div className="space-y-2">
+            <label className="flex items-start gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                I agree to the{' '}
+                {policyConfig.termsUrl ? (
+                  <a href={policyConfig.termsUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-600 hover:text-indigo-500">
+                    Terms of Service
+                  </a>
+                ) : (
+                  <span className="font-medium">Terms of Service</span>
+                )}
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={acceptedPrivacyPolicy}
+                onChange={(e) => setAcceptedPrivacyPolicy(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                I agree to the{' '}
+                {policyConfig.privacyPolicyUrl ? (
+                  <a href={policyConfig.privacyPolicyUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-600 hover:text-indigo-500">
+                    Privacy Policy
+                  </a>
+                ) : (
+                  <span className="font-medium">Privacy Policy</span>
+                )}
+              </span>
+            </label>
+          </div>
+
           <div>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !acceptedTerms || !acceptedPrivacyPolicy}
               className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? 'Creating account...' : 'Create account'}

@@ -26,10 +26,29 @@ const passwordValidation = (field: string, label: string) =>
     .isLength({ min: PASSWORD_MIN_LENGTH, max: PASSWORD_MAX_LENGTH })
     .withMessage(`${label} must be between ${PASSWORD_MIN_LENGTH} and ${PASSWORD_MAX_LENGTH} characters`);
 
-const registerValidation = [
+// Exported for focused unit testing of the consent-flag validation rules
+// (PR-PRIVACY-5) without spinning up an HTTP server.
+export const registerValidation = [
   body('name').trim().notEmpty().withMessage('Name is required'),
   body('email').isEmail().withMessage('Please provide a valid email'),
   passwordValidation('password', 'Password'),
+  // PR-PRIVACY-4 — must be the literal boolean `true`, not merely truthy
+  // ("on"/1/"true" strings are rejected), mirroring how other required-
+  // boolean fields are validated elsewhere in this codebase.
+  body('acceptedTerms')
+    .exists({ checkFalsy: false })
+    .withMessage('You must accept the Terms of Service to register')
+    .isBoolean({ strict: true })
+    .withMessage('acceptedTerms must be a boolean')
+    .custom((value) => value === true)
+    .withMessage('You must accept the Terms of Service to register'),
+  body('acceptedPrivacyPolicy')
+    .exists({ checkFalsy: false })
+    .withMessage('You must accept the Privacy Policy to register')
+    .isBoolean({ strict: true })
+    .withMessage('acceptedPrivacyPolicy must be a boolean')
+    .custom((value) => value === true)
+    .withMessage('You must accept the Privacy Policy to register'),
 ];
 
 const loginValidation = [

@@ -27,7 +27,7 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string, acceptedTerms: boolean, acceptedPrivacyPolicy: boolean) => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -119,12 +119,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const register = async (name: string, email: string, password: string) => {
+  const register = async (
+    name: string,
+    email: string,
+    password: string,
+    acceptedTerms: boolean,
+    acceptedPrivacyPolicy: boolean
+  ) => {
     try {
       const response = await axios.post(`${API_BASE_URL}/auth/register`, {
         name,
         email,
         password,
+        acceptedTerms,
+        acceptedPrivacyPolicy,
       });
 
       if (response.data.success) {

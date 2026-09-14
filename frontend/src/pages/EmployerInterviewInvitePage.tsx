@@ -10,6 +10,7 @@ import publicEmployerInterviewInvitationApi, {
   PublicCodingSessionDetail,
   PublicCodingExecutionDetail,
   PublicProctoringEventType,
+  PublicConsentDisclosure,
 } from '../api/publicEmployerInterviewInvitationApi';
 import { Briefcase, AlertCircle, Loader2, CheckCircle2, Clock3 } from 'lucide-react';
 
@@ -34,6 +35,12 @@ const EmployerInterviewInvitePage: React.FC = () => {
 
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
+
+  const [consentDisclosure, setConsentDisclosure] = useState<PublicConsentDisclosure | null>(null);
+  const [consentLoading, setConsentLoading] = useState(false);
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [consenting, setConsenting] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
 
   const [session, setSession] = useState<PublicInterviewSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
@@ -130,6 +137,44 @@ const EmployerInterviewInvitePage: React.FC = () => {
       fetchSession();
     }
   }, [invitation?.status, fetchSession]);
+
+  // Candidate assessment-disclosure consent (PR-PRIVACY-4) — fetched once
+  // accepted, gates the "Prepare Interview" action below. Only needed
+  // before a session exists; once prepared, consent was already required
+  // server-side to get there.
+  const fetchConsentDisclosure = useCallback(async () => {
+    if (!token) return;
+    setConsentLoading(true);
+    setConsentError(null);
+    try {
+      const response = await publicEmployerInterviewInvitationApi.getPublicConsentDisclosure(token);
+      setConsentDisclosure(response.data);
+    } catch (err: any) {
+      setConsentError(err.message || 'Failed to load the assessment disclosure');
+    } finally {
+      setConsentLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (invitation?.status === 'accepted' && !session) {
+      fetchConsentDisclosure();
+    }
+  }, [invitation?.status, session, fetchConsentDisclosure]);
+
+  const handleRecordConsent = async () => {
+    if (!token) return;
+    setConsenting(true);
+    setConsentError(null);
+    try {
+      await publicEmployerInterviewInvitationApi.recordPublicConsent(token);
+      setConsentDisclosure((prev) => (prev ? { ...prev, alreadyConsented: true } : prev));
+    } catch (err: any) {
+      setConsentError(err.message || 'Failed to record your acknowledgement');
+    } finally {
+      setConsenting(false);
+    }
+  };
 
   const fetchQuestions = useCallback(async () => {
     if (!token) return;
@@ -903,6 +948,40 @@ const EmployerInterviewInvitePage: React.FC = () => {
                   </div>
                 )}
               </>
+            ) : consentLoading ? (
+              <Loader2 className="w-6 h-6 text-primary-600 animate-spin mx-auto" />
+            ) : consentDisclosure && !consentDisclosure.alreadyConsented ? (
+              <div className="text-left space-y-3">
+                <h3 className="section-title text-base">Before you begin</h3>
+                <div className="surface-muted p-3 text-sm text-mentor-text-secondary">{consentDisclosure.disclosure}</div>
+                {consentDisclosure.privacyPolicyUrl && (
+                  <a
+                    href={consentDisclosure.privacyPolicyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-primary-600 hover:text-primary-700"
+                  >
+                    Read {consentDisclosure.organizationName}'s privacy notice
+                  </a>
+                )}
+                <label className="flex items-start gap-2 text-sm text-mentor-text cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentChecked}
+                    onChange={(e) => setConsentChecked(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>I have read and understood the above and consent to proceed.</span>
+                </label>
+                {consentError && <p className="text-sm text-mentor-error">{consentError}</p>}
+                <button
+                  onClick={handleRecordConsent}
+                  disabled={!consentChecked || consenting}
+                  className="btn btn-primary w-full justify-center"
+                >
+                  {consenting ? 'Recording...' : 'I Acknowledge & Continue'}
+                </button>
+              </div>
             ) : (
               <>
                 {prepareError && (

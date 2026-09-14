@@ -137,6 +137,10 @@ class OperationalJobService {
         return this.handleSubscriptionExpiry(payload);
       case OperationalJobType.ORGANIZATION_SUBSCRIPTION_EXPIRY:
         return this.handleOrganizationSubscriptionExpiry(payload);
+      case OperationalJobType.PRIVACY_EXPORT_GENERATION:
+        return this.handlePrivacyExportGeneration(payload);
+      case OperationalJobType.ACCOUNT_DELETION:
+        return this.handleAccountDeletion(payload);
       default:
         // Unknown job type — permanent, never retried.
         throw new ApiError(400, `Unknown operational job type: ${jobType}`);
@@ -200,6 +204,27 @@ class OperationalJobService {
       }
       throw new TransientOperationalError(error instanceof Error ? error.message : 'Organization subscription expiry failed');
     }
+  }
+
+  private async handlePrivacyExportGeneration(payload: Record<string, unknown>): Promise<void> {
+    const exportRequestId = String(payload.exportRequestId ?? '');
+    if (!exportRequestId) throw new ApiError(400, 'PRIVACY_EXPORT_GENERATION job payload missing exportRequestId');
+    const { privacyExportService } = await import('./PrivacyExportService');
+    // privacyExportService.generateExport already throws TransientOperationalError
+    // for a plausibly-transient (storage upload) failure and a plain
+    // ApiError/Error for anything permanent — no reclassification needed here.
+    await privacyExportService.generateExport(exportRequestId);
+  }
+
+  private async handleAccountDeletion(payload: Record<string, unknown>): Promise<void> {
+    const userId = String(payload.userId ?? '');
+    if (!userId) throw new ApiError(400, 'ACCOUNT_DELETION job payload missing userId');
+    const originalEmail = typeof payload.originalEmail === 'string' ? payload.originalEmail : undefined;
+    const { accountDeletionService } = await import('./AccountDeletionService');
+    // accountDeletionService.processAccountDeletion already throws
+    // TransientOperationalError for plausibly-transient steps — no
+    // reclassification needed here.
+    await accountDeletionService.processAccountDeletion(userId, originalEmail);
   }
 
   private async recordFailure(job: IOperationalJob, error: unknown): Promise<void> {
@@ -396,6 +421,24 @@ class OperationalJobService {
       }
     } catch (error) {
       logError('[OperationalJobService] scanForExpiredSubscriptions (organization) failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Periodic sweep (PR-PRIVACY-2) — folded into the same lightweight
+   * per-tick pattern as scanForExpiredSubscriptions rather than a
+   * standalone OperationalJobType, since this is a bounded direct-delete
+   * sweep (not a one-row-one-execution retryable unit). Only ever touches
+   * PrivacyExportRequest rows via PrivacyExportService.cleanupExpiredExports.
+   */
+  async cleanupExpiredPrivacyExports(batchSize = 50): Promise<void> {
+    try {
+      const { privacyExportService } = await import('./PrivacyExportService');
+      await privacyExportService.cleanupExpiredExports(batchSize);
+    } catch (error) {
+      logError('[OperationalJobService] cleanupExpiredPrivacyExports failed', {
         error: error instanceof Error ? error.message : String(error),
       });
     }

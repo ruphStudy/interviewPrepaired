@@ -33,9 +33,19 @@ router.get('/:token', ...tokenValidation, validate, publicEmployerInterviewInvit
 // public, no auth, no organization RBAC.
 router.post('/:token/accept', ...tokenValidation, validate, publicEmployerInterviewInvitationController.acceptInvitation);
 
+// GET /api/v1/public/employer-interview-invitations/:token/consent
+// (PR-PRIVACY-4) — candidate-safe assessment disclosure. Fully public.
+router.get('/:token/consent', ...tokenValidation, validate, publicEmployerInterviewInvitationController.getConsentDisclosure);
+
+// POST /api/v1/public/employer-interview-invitations/:token/consent
+// (PR-PRIVACY-4) — records the candidate's explicit acknowledgement.
+// Fully public, no auth, no organization RBAC. Idempotent.
+router.post('/:token/consent', ...tokenValidation, validate, publicEmployerInterviewInvitationController.recordConsent);
+
 // POST /api/v1/public/employer-interview-invitations/:token/session (20E)
 // — creates exactly ONE hiring-assessment interview session for an
 // ACCEPTED invitation. Fully public, no auth, no organization RBAC.
+// Requires consent (PR-PRIVACY-4) to already be recorded — CONSENT_REQUIRED otherwise.
 router.post('/:token/session', ...tokenValidation, validate, publicEmployerInterviewInvitationController.createSession);
 
 // GET /api/v1/public/employer-interview-invitations/:token/session (20E)

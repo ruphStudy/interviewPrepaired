@@ -20,3 +20,6 @@ export const DEFAULT_EXPIRY_DAYS = 7;
 
 export const MAX_INVITATION_MESSAGE_LENGTH = 1000;
 export const MAX_INVITED_NAME_LENGTH = 200;
+
+/** Candidate assessment-disclosure consent version label (PR-PRIVACY-4) — just a label, never legal text. Bump if the disclosure sentence's substance meaningfully changes. */
+export const CANDIDATE_ASSESSMENT_CONSENT_VERSION = '1.0';

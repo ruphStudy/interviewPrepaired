@@ -23,6 +23,20 @@ export class PublicEmployerInterviewInvitationController {
     res.status(200).json(successResponse('Invitation accepted successfully', { invitation }));
   });
 
+  /** GET /api/v1/public/employer-interview-invitations/:token/consent (PR-PRIVACY-4) */
+  public getConsentDisclosure = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token } = req.params;
+    const result = await publicEmployerInterviewInvitationService.getConsentDisclosure(token);
+    res.status(200).json(successResponse('Consent disclosure retrieved successfully', result));
+  });
+
+  /** POST /api/v1/public/employer-interview-invitations/:token/consent (PR-PRIVACY-4) */
+  public recordConsent = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { token } = req.params;
+    const result = await publicEmployerInterviewInvitationService.recordConsent(token);
+    res.status(200).json(successResponse('Consent recorded successfully', result));
+  });
+
   /** POST /api/v1/public/employer-interview-invitations/:token/session */
   public createSession = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
     const { token } = req.params;

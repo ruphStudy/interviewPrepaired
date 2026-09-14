@@ -30,7 +30,10 @@ import { hiringQuestionMaterializationService } from './HiringQuestionMaterializ
 import { employerJobApplicationService } from './EmployerJobApplicationService';
 import { EmployerJobApplicationStatus } from '../constants/employerJobApplication';
 import { OrganizationStatus } from '../constants/organization';
+import { CANDIDATE_ASSESSMENT_CONSENT_VERSION } from '../constants/employerInterviewInvitation';
+import { env } from '../config/environment';
 import { ApiError } from '../utils/ApiError';
+import { PrivacyErrorCode } from '../constants/privacy';
 
 const MAX_ANSWER_LENGTH = 5000; // matches the schema's own answerText cap
 const SCENARIO_SESSION_VERSION = 'scenario-session-v1';
@@ -121,6 +124,63 @@ export class PublicEmployerInterviewInvitationService {
   }
 
   /**
+   * GET /public/employer-interview-invitations/:token/consent (PR-PRIVACY-4)
+   * — candidate-safe assessment disclosure. NEVER reveals any hidden
+   * rubric/scoring criteria — organization identity, purpose, and a
+   * neutral AI-processing note only.
+   */
+  async getConsentDisclosure(rawToken: string): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+    const chain = await this.resolveChain(invitation);
+
+    return {
+      organizationName: chain.organization.name,
+      jobTitle: chain.job.title,
+      disclosure: `${chain.organization.name} is inviting you to complete a hiring assessment for the ${chain.job.title} role. Your responses (including AI-assisted evaluation of your answers) will be used by ${chain.organization.name} to assess your candidacy for this role.`,
+      privacyPolicyUrl: env.privacyPolicyUrl || null,
+      consentVersion: CANDIDATE_ASSESSMENT_CONSENT_VERSION,
+      alreadyConsented: Boolean(invitation.candidateConsentAt),
+      consentedAt: invitation.candidateConsentAt,
+    };
+  }
+
+  /**
+   * POST /public/employer-interview-invitations/:token/consent
+   * (PR-PRIVACY-4) — idempotent: recording consent again (e.g. a retried
+   * request) never overwrites the original `candidateConsentAt`.
+   */
+  async recordConsent(rawToken: string): Promise<Record<string, unknown>> {
+    this.assertTokenFormat(rawToken);
+    const tokenHash = this.hashToken(rawToken);
+
+    const invitation = await EmployerInterviewInvitation.findOne({ tokenHash });
+    if (!invitation) {
+      throw this.notFoundError();
+    }
+    await this.resolveChain(invitation);
+
+    if (!invitation.candidateConsentAt) {
+      await EmployerInterviewInvitation.updateOne(
+        { _id: invitation._id, candidateConsentAt: { $exists: false } },
+        { $set: { candidateConsentAt: new Date(), consentVersion: CANDIDATE_ASSESSMENT_CONSENT_VERSION } }
+      );
+    }
+
+    const finalDoc = await EmployerInterviewInvitation.findOne({ tokenHash });
+    return {
+      alreadyConsented: true,
+      consentedAt: finalDoc?.candidateConsentAt,
+      consentVersion: finalDoc?.consentVersion,
+    };
+  }
+
+  /**
    * POST /public/employer-interview-invitations/:token/session — creates
    * exactly ONE hiring-assessment Interview session for an ACCEPTED
    * invitation (20E). ACTIVE-but-not-yet-accepted is rejected with a
@@ -147,6 +207,13 @@ export class PublicEmployerInterviewInvitationService {
     }
     // resolveChain only ever lets ACTIVE or ACCEPTED through, and ACTIVE is
     // excluded above, so invitation.status is ACCEPTED from here on.
+
+    // Candidate privacy consent gate (PR-PRIVACY-4) — the assessment may
+    // not begin until the candidate has explicitly acknowledged the
+    // disclosure (org identity, purpose, AI-processing note).
+    if (!invitation.candidateConsentAt) {
+      throw new ApiError(400, 'Please acknowledge the assessment disclosure before starting.', undefined, PrivacyErrorCode.CONSENT_REQUIRED);
+    }
 
     // Idempotent fast path — a session already exists for this invitation.
     if (invitation.interviewId) {

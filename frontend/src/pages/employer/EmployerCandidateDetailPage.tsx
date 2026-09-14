@@ -38,6 +38,7 @@ import {
   Plus,
   X,
   Network,
+  Trash2,
 } from 'lucide-react';
 
 const CANDIDATE_APPLICATIONS_PAGE_LIMIT = 20;
@@ -342,6 +343,7 @@ const EmployerCandidateDetailPage: React.FC = () => {
   const [statusActionPending, setStatusActionPending] = useState<EmployerCandidateStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusSuccess, setStatusSuccess] = useState<string | null>(null);
+  const [deletingPrivacy, setDeletingPrivacy] = useState(false);
 
   const [resumeCurrent, setResumeCurrent] = useState<CandidateResume | null>(null);
   const [resumeHistory, setResumeHistory] = useState<CandidateResume[]>([]);
@@ -886,6 +888,32 @@ const EmployerCandidateDetailPage: React.FC = () => {
     }
   };
 
+  const handleDeleteCandidatePrivacy = async () => {
+    if (!organizationId || !candidateId) return;
+    if (
+      !window.confirm(
+        "Delete this candidate's personal data? The resume file will be removed and identifying fields " +
+          '(name, email, phone, notes, links) will be anonymized. Hiring/interview records may remain for audit purposes. This cannot be undone.'
+      )
+    ) {
+      return;
+    }
+    setStatusError(null);
+    setStatusSuccess(null);
+    setDeletingPrivacy(true);
+    try {
+      const response = await employerApi.deleteCandidatePrivacy(organizationId, candidateId);
+      setCandidate(response.data.candidate);
+      setForm(candidateToFormState(response.data.candidate));
+      setStatusSuccess('Candidate data anonymized successfully.');
+      setTimeout(() => setStatusSuccess(null), 3000);
+    } catch (err: any) {
+      setStatusError(err.message || 'Failed to delete candidate data');
+    } finally {
+      setDeletingPrivacy(false);
+    }
+  };
+
   if (isSyncing || contextLoading) {
     return (
       <AuthenticatedLayout>
@@ -1036,6 +1064,24 @@ const EmployerCandidateDetailPage: React.FC = () => {
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {canManage && (
+              <div className="card mb-6">
+                <p className="label mb-2">Privacy</p>
+                <p className="text-sm text-mentor-text-secondary mb-3">
+                  Permanently removes this candidate's resume file and anonymizes identifying fields (name, email,
+                  phone, notes, links). Hiring/interview records may remain for audit purposes.
+                </p>
+                <button
+                  onClick={handleDeleteCandidatePrivacy}
+                  disabled={deletingPrivacy}
+                  className="btn btn-secondary text-mentor-error"
+                >
+                  <Trash2 size={16} />
+                  {deletingPrivacy ? 'Deleting...' : 'Delete Candidate Data'}
+                </button>
               </div>
             )}
 

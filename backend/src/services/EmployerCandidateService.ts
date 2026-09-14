@@ -1,11 +1,14 @@
 import { Types } from 'mongoose';
 import Organization, { IOrganization } from '../models/Organization.model';
 import EmployerCandidate from '../models/EmployerCandidate.model';
+import EmployerCandidateResumeSource from '../models/EmployerCandidateResumeSource.model';
+import { PrivacyActionAudit } from '../models/PrivacyActionAudit.model';
 import { EmployerCandidateSource, EmployerCandidateStatus, EMPLOYER_CANDIDATE_STATUS_TRANSITIONS } from '../constants/employerCandidate';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { ApiError } from '../utils/ApiError';
+import { fileStorageService } from './FileStorageService';
 
 const MAX_TAGS = 20;
 const MAX_TAG_LENGTH = 50;
@@ -280,6 +283,90 @@ export class EmployerCandidateService {
 
     candidate.status = targetStatus;
     await candidate.save();
+    return this.toDetail(candidate.toObject());
+  }
+
+  /**
+   * DELETE .../candidates/:candidateId/privacy — candidate privacy deletion
+   * (PR-PRIVACY-3). Cross-org access is a 404 (candidate is always looked
+   * up scoped to `organizationId`), never a 403 that would confirm the
+   * candidate exists in a different organization. Deletes every resume
+   * file version (best-effort, its own retry) and anonymizes identifying
+   * fields IN PLACE — the candidate row itself is never deleted, and any
+   * `Interview` row referencing `employerCandidateId` is left completely
+   * untouched: that is the organization's own hiring-assessment business
+   * record, not the candidate's personal data to unilaterally erase.
+   * Synchronous (not routed through the async job system) — this is a
+   * small, single-candidate, bounded operation, and the one genuinely
+   * retryable step (resume file delete) already gets its own retry via
+   * `deleteFileBestEffort`.
+   */
+  async deleteCandidatePrivacy(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    actorUserId: string,
+    candidateId: string
+  ): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
+
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsCompany(organization);
+
+    // Tenant-scoped — never findById(candidateId) alone. A cross-org id is
+    // indistinguishable from a nonexistent one (404).
+    const candidate = await EmployerCandidate.findOne({ _id: candidateId, organizationId: organization._id });
+    if (!candidate) {
+      throw new ApiError(404, 'Candidate not found');
+    }
+
+    const requestedAt = new Date();
+    await PrivacyActionAudit.create({
+      action: 'candidate_anonymized',
+      actorUserId,
+      organizationId: organization._id,
+      candidateId: candidate._id,
+      status: 'processing',
+      requestedAt,
+    });
+
+    const resumeSources = await EmployerCandidateResumeSource.find({
+      organizationId: organization._id,
+      candidateId: candidate._id,
+    }).select('_id storedFileName storageProvider');
+
+    for (const source of resumeSources) {
+      if (source.storageProvider) {
+        // Best-effort with its OWN retry (enqueues STORAGE_DELETE_RETRY on
+        // failure) — reused rather than a second retry mechanism.
+        // eslint-disable-next-line no-await-in-loop
+        await fileStorageService.deleteFileBestEffort(source.storedFileName, `candidate privacy deletion (${candidate._id.toString()})`);
+      }
+      // A legacy pre-PR-STORAGE row (no storageProvider) points at local
+      // disk — left as-is here, mirroring the same legacy-compatibility
+      // boundary EmployerCandidateResumeService already draws elsewhere.
+    }
+    if (resumeSources.length > 0) {
+      await EmployerCandidateResumeSource.deleteMany({ organizationId: organization._id, candidateId: candidate._id });
+    }
+
+    candidate.firstName = 'Deleted';
+    candidate.lastName = 'Candidate';
+    // Org-scoped irreversible placeholder — still satisfies the
+    // {organizationId, email} unique index since candidateId is unique.
+    candidate.email = `deleted.${candidate._id.toString()}@deleted.inv`;
+    candidate.phone = undefined;
+    candidate.notes = undefined;
+    candidate.linkedinUrl = undefined;
+    candidate.portfolioUrl = undefined;
+    candidate.githubUrl = undefined;
+    candidate.tags = undefined;
+    await candidate.save();
+
+    await PrivacyActionAudit.updateOne(
+      { organizationId: organization._id, candidateId: candidate._id, action: 'candidate_anonymized', requestedAt },
+      { $set: { status: 'completed', completedAt: new Date() } }
+    );
+
     return this.toDetail(candidate.toObject());
   }
 

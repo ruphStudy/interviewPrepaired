@@ -35,6 +35,9 @@ export interface IUser extends Document {
   failedLoginAttempts: number;
   loginLockedUntil?: Date;
   lastLogin?: Date;
+  /** Account deletion (PR-PRIVACY-3). Once true, the account is permanently disabled — login/session-validation both reject it, and `email`/`name` are irreversibly anonymized. Never set back to false. */
+  isDeleted: boolean;
+  deletedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(enteredPassword: string): Promise<boolean>;
@@ -130,6 +133,12 @@ const userSchema = new Schema<IUser>(
     },
     loginLockedUntil: { type: Date },
     lastLogin: Date,
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    deletedAt: { type: Date },
   },
   {
     timestamps: true,

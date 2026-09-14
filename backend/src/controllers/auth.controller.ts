@@ -14,6 +14,7 @@ import { authSessionService } from '../services/AuthSessionService';
 import { authSecurityEventService } from '../services/AuthSecurityEventService';
 import { emailVerificationService } from '../services/EmailVerificationService';
 import { LOGIN_LOCKOUT_DURATION_MS, shouldLockAccount } from '../constants/authSecurity';
+import { userConsentService } from '../services/UserConsentService';
 
 const PASSWORD_RESET_EXPIRY_MS = 10 * 60 * 1000;
 const PASSWORD_RESET_EXPIRY_MINUTES = PASSWORD_RESET_EXPIRY_MS / (60 * 1000);
@@ -52,6 +53,18 @@ export const register = catchAsync(async (req: AuthRequest, res: Response) => {
     console.error('[auth.register] Failed to initialize FREE subscription for new user:', error);
   }
 
+  // Best-effort (PR-PRIVACY-4) — route validators already require both
+  // flags to be exactly `true`, so this always records an accepted consent
+  // row; a failure here must never destroy the just-created user.
+  try {
+    await Promise.all([
+      userConsentService.recordConsent(user._id.toString(), 'terms', env.termsVersion, true, 'registration'),
+      userConsentService.recordConsent(user._id.toString(), 'privacy_policy', env.privacyPolicyVersion, true, 'registration'),
+    ]);
+  } catch (error) {
+    console.error('[auth.register] Failed to record registration consent:', error);
+  }
+
   // Best-effort — a provider outage must never destroy the just-created
   // user; the email is queued/retried through the existing PR-COMM
   // infrastructure regardless.
@@ -68,7 +81,10 @@ export const login = catchAsync(async (req: AuthRequest, res: Response) => {
 
   const user = await User.findOne({ email }).select('+password +failedLoginAttempts +loginLockedUntil');
 
-  if (!user) {
+  // A deleted account gets the EXACT same response as a nonexistent one —
+  // never a distinct "this account was deleted" message, and its
+  // anonymized email will never match a real login attempt again anyway.
+  if (!user || user.isDeleted) {
     await authSecurityEventService.record('login_failure', { userAgent, metadata: { reason: 'unknown_account' } });
     throw new ApiError(401, GENERIC_INVALID_CREDENTIALS, undefined, 'INVALID_CREDENTIALS');
   }
@@ -206,7 +222,10 @@ export const forgotPassword = catchAsync(
     const email = String(req.body.email).trim().toLowerCase();
     const user = await User.findOne({ email });
 
-    if (user) {
+    // A deleted account's original email will never match its (anonymized)
+    // stored email anyway, but this is an explicit second guard — there is
+    // no account-recovery path for a deleted account, ever.
+    if (user && !user.isDeleted) {
       const resetToken = crypto.randomBytes(32).toString('hex');
       const resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
 

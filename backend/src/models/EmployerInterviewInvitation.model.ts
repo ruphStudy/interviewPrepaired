@@ -34,6 +34,14 @@ export interface IEmployerInterviewInvitation extends Document {
   // only; the Interview's own unique `employerInvitationId` index (not
   // this field) is the authoritative concurrency guard against duplicates.
   interviewId?: Types.ObjectId;
+  // Candidate privacy consent (PR-PRIVACY-4) — recorded the moment the
+  // candidate explicitly acknowledges the assessment disclosure (org
+  // identity, purpose, AI-processing note). Session creation is gated on
+  // this being set; never inferred from `acceptedAt` alone (accepting the
+  // invitation and consenting to the assessment disclosure are distinct
+  // steps).
+  candidateConsentAt?: Date;
+  consentVersion?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -103,6 +111,8 @@ const employerInterviewInvitationSchema = new Schema<IEmployerInterviewInvitatio
     acceptedAt: { type: Date },
     revokedAt: { type: Date },
     interviewId: { type: Schema.Types.ObjectId, ref: 'Interview' },
+    candidateConsentAt: { type: Date },
+    consentVersion: { type: String, trim: true, maxlength: [30, 'consentVersion cannot exceed 30 characters'] },
   },
   {
     timestamps: true,

@@ -2043,6 +2043,21 @@ router.post(
   employerCandidateController.updateCandidateStatus
 );
 
+// DELETE .../candidates/:candidateId/privacy (PR-PRIVACY-3) — candidate
+// privacy deletion: deletes the resume file(s) and anonymizes identifying
+// fields; hiring/interview records referencing the candidate are retained
+// for audit purposes. Reuses INTERVIEWS_MANAGE (no dedicated privacy
+// permission exists in the current permission matrix).
+router.delete(
+  '/:organizationId/candidates/:candidateId/privacy',
+  protect,
+  ...organizationIdValidation,
+  ...candidateIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerCandidateController.deleteCandidatePrivacy
+);
+
 // ============================================================================
 // Employer Candidate Source Attribution (18E) — historical provenance
 // evidence only (e.g. "referred by X", "sourced via agency Y"), NEVER a

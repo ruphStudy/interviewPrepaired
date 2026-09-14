@@ -42,6 +42,7 @@ const start = async (): Promise<void> => {
       operationalJobService
         .runOnce()
         .then(() => operationalJobService.scanForExpiredSubscriptions())
+        .then(() => operationalJobService.cleanupExpiredPrivacyExports())
         .then(() => recordPollSuccess())
         .catch((error) => {
           console.error('[OperationalJobService] runOnce failed', error);

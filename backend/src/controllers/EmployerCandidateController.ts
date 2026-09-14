@@ -222,6 +222,29 @@ export class EmployerCandidateController {
 
     res.status(200).json(successResponse('Candidate status updated successfully', { candidate }));
   });
+
+  /**
+   * DELETE /api/v1/organizations/:organizationId/candidates/:candidateId/privacy
+   * Requires INTERVIEWS_MANAGE (PR-PRIVACY-3). Deletes the candidate's
+   * resume file(s) and anonymizes identifying fields; the candidate row
+   * and any hiring/interview records referencing it are retained.
+   */
+  public deleteCandidatePrivacy = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { candidateId } = req.params;
+    const candidate = await employerCandidateService.deleteCandidatePrivacy(
+      context.organizationId,
+      context.role,
+      req.user!.id,
+      candidateId
+    );
+
+    res.status(200).json(successResponse('Candidate data anonymized successfully', { candidate }));
+  });
 }
 
 export default new EmployerCandidateController();

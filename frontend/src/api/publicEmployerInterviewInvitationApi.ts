@@ -52,6 +52,25 @@ export type GetPublicEmployerInterviewInvitationResponse = ApiEnvelope<{ invitat
 export type AcceptPublicEmployerInterviewInvitationResponse = ApiEnvelope<{ invitation: PublicEmployerInterviewInvitation }>;
 
 // ============================================================================
+// Candidate assessment-disclosure consent (PR-PRIVACY-4). The interview
+// session cannot be prepared until this has been explicitly acknowledged —
+// never any hidden rubric/scoring criteria in this disclosure.
+// ============================================================================
+
+export interface PublicConsentDisclosure {
+  organizationName: string;
+  jobTitle: string;
+  disclosure: string;
+  privacyPolicyUrl: string | null;
+  consentVersion: string;
+  alreadyConsented: boolean;
+  consentedAt?: string;
+}
+
+export type GetPublicConsentDisclosureResponse = ApiEnvelope<PublicConsentDisclosure>;
+export type RecordPublicConsentResponse = ApiEnvelope<{ alreadyConsented: boolean; consentedAt?: string; consentVersion?: string }>;
+
+// ============================================================================
 // Hiring-assessment interview session handoff (Sprint 20E). Only ever
 // created for an ACCEPTED invitation — no AI, no email, no candidate
 // account. Never exposes internal candidate/user/organization/
@@ -407,6 +426,30 @@ class PublicEmployerInterviewInvitationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to accept interview invitation');
+    }
+  }
+
+  /** Candidate-safe assessment disclosure (PR-PRIVACY-4) — never reveals any hidden rubric/scoring criteria. */
+  async getPublicConsentDisclosure(token: string): Promise<GetPublicConsentDisclosureResponse> {
+    try {
+      const response = await this.api.get<GetPublicConsentDisclosureResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/consent`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load the assessment disclosure');
+    }
+  }
+
+  /** Records the candidate's explicit acknowledgement — idempotent, safe to call again. */
+  async recordPublicConsent(token: string): Promise<RecordPublicConsentResponse> {
+    try {
+      const response = await this.api.post<RecordPublicConsentResponse>(
+        `/public/employer-interview-invitations/${encodeURIComponent(token)}/consent`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to record your acknowledgement');
     }
   }
 

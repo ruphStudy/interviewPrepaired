@@ -587,6 +587,7 @@ export type GetCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>
 export type CreateCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
 export type UpdateCandidateResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
 export type UpdateCandidateStatusResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
+export type DeleteCandidatePrivacyResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
 
 // ============================================================================
 // Employer Candidate Resumes (Sprint 18B) — resume FILE storage and
@@ -4931,6 +4932,18 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to update candidate status');
+    }
+  }
+
+  /** PR-PRIVACY-3 — deletes the candidate's resume file(s) and anonymizes identifying fields. Hiring/interview records referencing the candidate are retained for audit purposes. */
+  async deleteCandidatePrivacy(organizationId: string, candidateId: string): Promise<DeleteCandidatePrivacyResponse> {
+    try {
+      const response = await this.api.delete<DeleteCandidatePrivacyResponse>(
+        `/organizations/${organizationId}/candidates/${candidateId}/privacy`
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to delete candidate data');
     }
   }
 

@@ -16,6 +16,7 @@ import { interviewCreditService } from '../services/InterviewCreditService';
 import { billingAdminService } from '../services/BillingAdminService';
 import { emailDeliveryAdminService } from '../services/EmailDeliveryAdminService';
 import { storageDiagnosticsService } from '../services/StorageDiagnosticsService';
+import { PrivacyActionAudit } from '../models/PrivacyActionAudit.model';
 
 /** Shared by the three usage endpoints — malformed from/to must fail clearly rather than silently produce a wrong range. */
 function parseUsageDateRange(query: Record<string, unknown>): UsageDateRange {
@@ -649,4 +650,37 @@ export const getEmailDeliveryAdmin = catchAsync(async (req: AuthRequest, res: Re
 export const runStorageOrphanScanAdmin = catchAsync(async (_req: AuthRequest, res: Response) => {
   const result = await storageDiagnosticsService.runOrphanScan();
   res.status(200).json(successResponse('Storage diagnostics retrieved successfully', result));
+});
+
+/**
+ * Read-only privacy action audit visibility (PR-PRIVACY-5) — safe fields
+ * only; `metadata` is deliberately never returned here even though the
+ * model's own contract already forbids it holding anything sensitive.
+ */
+export const listPrivacyAuditAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+  const limit = Math.min(req.query.limit ? parseInt(req.query.limit as string, 10) : 20, 100);
+  const filter: Record<string, unknown> = {};
+  if (typeof req.query.action === 'string') filter.action = req.query.action;
+  if (typeof req.query.status === 'string') filter.status = req.query.status;
+
+  const [rows, total] = await Promise.all([
+    PrivacyActionAudit.find(filter)
+      .select('action actorUserId subjectUserId organizationId candidateId status requestedAt completedAt retainedCategories failureCode createdAt')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    PrivacyActionAudit.countDocuments(filter),
+  ]);
+
+  res.status(200).json(
+    successResponse('Privacy audit entries retrieved successfully', {
+      entries: rows,
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    })
+  );
 });

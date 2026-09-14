@@ -24,6 +24,7 @@ import {
   listEmailDeliveriesAdmin,
   getEmailDeliveryAdmin,
   runStorageOrphanScanAdmin,
+  listPrivacyAuditAdmin,
 } from '../controllers/admin.controller';
 import {
   listOperationalJobsAdmin,
@@ -375,6 +376,19 @@ router.post(
   [...jobIdParamValidation, body('reason').optional().isString().trim().isLength({ max: 300 })],
   validate,
   retryOperationalJobAdmin
+);
+
+// Read-only privacy action audit visibility (PR-PRIVACY-5) — safe fields only.
+router.get(
+  '/privacy-audit',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('action').optional().isString().trim(),
+    query('status').optional().isString().trim(),
+  ],
+  validate,
+  listPrivacyAuditAdmin
 );
 
 // Deeper ops diagnostics (PR-OPS-4) — DB ping + job-poller health + provider
