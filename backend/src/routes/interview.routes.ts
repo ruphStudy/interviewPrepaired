@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import interviewController from '../controllers/InterviewController';
-import { protect } from '../middleware/auth';
+import { protect, requireVerifiedEmail } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 import { body, param, query } from 'express-validator';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
@@ -172,6 +172,7 @@ const historyQueryValidation = [
 router.post(
   '/start',
   protect,
+  requireVerifiedEmail,
   ...startInterviewValidation,
   validate,
   interviewController.startInterview

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import axios from 'axios';
 import { API_BASE_URL } from '../config/api.config';
 
@@ -8,6 +8,7 @@ interface User {
   email: string;
   role: 'user' | 'admin';
   avatar?: string;
+  isVerified?: boolean;
   preferences?: {
     defaultInterviewType?: string;
     defaultDifficulty?: string;
@@ -27,7 +28,9 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
   isAdmin: boolean;
 }
@@ -51,40 +54,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [token, setToken] = useState<string | null>(localStorage.getItem('authToken'));
   const [loading, setLoading] = useState(true);
 
-  // Fetch user profile on mount if token exists
-  useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!token) {
-        setLoading(false);
-        return;
-      }
+  const fetchUserProfile = useCallback(async (activeToken: string) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${activeToken}`,
+        },
+      });
 
-      try {
-        const response = await axios.get(`${API_BASE_URL}/auth/me`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (response.data.success) {
-          setUser(response.data.data);
-        } else {
-          // Invalid token, clear it
-          localStorage.removeItem('authToken');
-          setToken(null);
-        }
-      } catch (error) {
-        console.error('Error fetching user profile:', error);
+      if (response.data.success) {
+        setUser(response.data.data);
+      } else {
         // Invalid token, clear it
         localStorage.removeItem('authToken');
         setToken(null);
-      } finally {
-        setLoading(false);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      // Invalid/expired/revoked token — clear it.
+      localStorage.removeItem('authToken');
+      setToken(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-    fetchUserProfile();
+  // Fetch user profile on mount if token exists
+  useEffect(() => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    fetchUserProfile(token);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  /** Re-fetches the current user — used after email verification so the unverified banner disappears without a full reload. */
+  const refreshUser = async () => {
+    if (!token) return;
+    await fetchUserProfile(token);
+  };
 
   const login = async (email: string, password: string) => {
     try {
@@ -103,7 +112,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
     } catch (error: any) {
       const message = error.response?.data?.message || error.message || 'Login failed';
-      throw new Error(message);
+      const code = error.response?.data?.code;
+      const wrapped = new Error(message) as Error & { code?: string };
+      if (code) wrapped.code = code;
+      throw wrapped;
     }
   };
 
@@ -129,7 +141,38 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const logout = () => {
+  /** Revokes the session server-side FIRST (best-effort) — frontend local state is always cleared regardless of the API call's outcome. */
+  const logout = async () => {
+    const activeToken = token;
+    setUser(null);
+    setToken(null);
+    localStorage.removeItem('authToken');
+    if (activeToken) {
+      try {
+        await axios.post(
+          `${API_BASE_URL}/auth/logout`,
+          {},
+          { headers: { Authorization: `Bearer ${activeToken}` } }
+        );
+      } catch {
+        // Local state is already cleared — a failed revoke call here is not user-visible.
+      }
+    }
+  };
+
+  const logoutAll = async () => {
+    const activeToken = token;
+    if (activeToken) {
+      try {
+        await axios.post(
+          `${API_BASE_URL}/auth/logout-all`,
+          {},
+          { headers: { Authorization: `Bearer ${activeToken}` } }
+        );
+      } catch {
+        // Even if the call fails, this device's own local state below still clears.
+      }
+    }
     setUser(null);
     setToken(null);
     localStorage.removeItem('authToken');
@@ -142,6 +185,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     login,
     register,
     logout,
+    logoutAll,
+    refreshUser,
     isAuthenticated: !!user && !!token,
     isAdmin: user?.role === 'admin',
   };

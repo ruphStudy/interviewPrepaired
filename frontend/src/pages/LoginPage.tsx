@@ -1,25 +1,37 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { consumeSessionExpiredMessage } from '../utils/authExpiry';
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
-  
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const message = consumeSessionExpiredMessage();
+    if (message) setNotice(message);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setNotice('');
     setLoading(true);
 
     try {
       await login(email, password);
       navigate('/dashboard');
     } catch (err: any) {
+      // The backend always returns a single generic "Invalid credentials"
+      // message for unknown email, wrong password, and a temporarily
+      // locked account alike — displayed exactly as received, never
+      // embellished with account-specific detail.
       setError(err.message || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
@@ -41,6 +53,15 @@ const LoginPage: React.FC = () => {
 
         {/* Login Form */}
         <form className="mt-8 space-y-6 bg-white rounded-2xl shadow-xl p-8" onSubmit={handleSubmit}>
+          {notice && (
+            <div className="rounded-md bg-amber-50 p-4">
+              <div className="flex">
+                <div className="ml-3">
+                  <h3 className="text-sm font-medium text-amber-800">{notice}</h3>
+                </div>
+              </div>
+            </div>
+          )}
           {error && (
             <div className="rounded-md bg-red-50 p-4">
               <div className="flex">

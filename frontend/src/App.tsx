@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
 import DashboardPage from './pages/DashboardPage';
 import InterviewSetupPage from './pages/InterviewSetupPage';
 import InterviewScreen from './pages/InterviewScreen';
@@ -80,6 +81,7 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+          <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
           {/* Public — mirrors the backend's own public invitation-preview endpoint. Accepting still requires auth (handled inside the page). */}
           <Route path="/accept-invite/:token" element={<AcceptInvitationPage />} />
           {/* Fully public (20D) — no auth at all, unlike /accept-invite above. Candidate interview invitation access + explicit acceptance only; no interview session is created here. */}

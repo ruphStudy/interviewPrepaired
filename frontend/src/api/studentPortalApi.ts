@@ -15,6 +15,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
+import { attachAuthExpiryHandler } from '../utils/authExpiry';
 import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
 import { InterviewSession, InterviewReport } from './interviewApi';
 
@@ -150,6 +151,7 @@ class StudentPortalApiService {
       },
       timeout: API_TIMEOUT,
     });
+    attachAuthExpiryHandler(this.api);
 
     this.api.interceptors.request.use(
       (config) => {

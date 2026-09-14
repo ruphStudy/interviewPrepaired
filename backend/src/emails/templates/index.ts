@@ -4,3 +4,4 @@ export {
   renderEmployerInterviewInvitationEmail,
   EmployerInterviewInvitationTemplateParams,
 } from './employerInterviewInvitation';
+export { renderEmailVerificationEmail, EmailVerificationTemplateParams } from './emailVerification';

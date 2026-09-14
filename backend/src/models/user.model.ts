@@ -22,10 +22,18 @@ export interface IUser extends Document {
     lastInterviewDate?: Date;
   };
   isActive: boolean;
+  /** Email-verified flag (PR-AUTH-1) — pre-existing field, now actually enforced. */
   isVerified: boolean;
-  verificationToken?: string;
+  emailVerifiedAt?: Date;
+  /** SHA-256 hash only — the raw verification token is never persisted. */
+  emailVerificationTokenHash?: string;
+  emailVerificationExpire?: Date;
+  emailVerificationSentAt?: Date;
   resetPasswordToken?: string;
   resetPasswordExpire?: Date;
+  /** Login brute-force protection (PR-AUTH-4). */
+  failedLoginAttempts: number;
+  loginLockedUntil?: Date;
   lastLogin?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -109,9 +117,18 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
-    verificationToken: String,
-    resetPasswordToken: String,
+    emailVerifiedAt: { type: Date },
+    emailVerificationTokenHash: { type: String, select: false },
+    emailVerificationExpire: { type: Date },
+    emailVerificationSentAt: { type: Date },
+    resetPasswordToken: { type: String, select: false },
     resetPasswordExpire: Date,
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    loginLockedUntil: { type: Date },
     lastLogin: Date,
   },
   {

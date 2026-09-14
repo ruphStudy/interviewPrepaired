@@ -12,7 +12,7 @@ import {
   scheduleDowngrade,
   cancelScheduledDowngrade,
 } from '../controllers/billing.controller';
-import { protect } from '../middleware/auth';
+import { protect, requireVerifiedEmail } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 
 const router = Router();
@@ -29,6 +29,7 @@ const idempotencyKeyValidation = body('idempotencyKey')
 router.post(
   '/checkout/subscription',
   protect,
+  requireVerifiedEmail,
   [body('planCode').isString().trim().notEmpty().withMessage('planCode is required'), idempotencyKeyValidation],
   validate,
   checkoutSubscription
@@ -37,6 +38,7 @@ router.post(
 router.post(
   '/checkout/credit-pack',
   protect,
+  requireVerifiedEmail,
   [body('creditPackCode').isString().trim().notEmpty().withMessage('creditPackCode is required'), idempotencyKeyValidation],
   validate,
   checkoutCreditPack

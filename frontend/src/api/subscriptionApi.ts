@@ -7,6 +7,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
+import { attachAuthExpiryHandler } from '../utils/authExpiry';
 import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
 
 // ============================================================================
@@ -117,6 +118,7 @@ class SubscriptionApiService {
       },
       timeout: API_TIMEOUT,
     });
+    attachAuthExpiryHandler(this.api);
 
     // Add auth token to requests
     this.api.interceptors.request.use(

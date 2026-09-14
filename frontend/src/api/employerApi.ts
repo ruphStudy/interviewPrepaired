@@ -12,6 +12,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
+import { attachAuthExpiryHandler } from '../utils/authExpiry';
 import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
 
 export const COMPANY_SIZES = [
@@ -4448,6 +4449,7 @@ class EmployerApiService {
       headers: { 'Content-Type': 'application/json' },
       timeout: API_TIMEOUT,
     });
+    attachAuthExpiryHandler(this.api);
 
     this.api.interceptors.request.use(
       (config) => {

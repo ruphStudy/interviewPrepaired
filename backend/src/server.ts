@@ -5,6 +5,7 @@ import { logInfo, logError } from './middleware/logger';
 import { subscriptionPlanService } from './services/SubscriptionPlanService';
 import { creditPackService } from './services/CreditPackService';
 import { emailRetryService } from './services/EmailRetryService';
+import { emailVerificationService } from './services/EmailVerificationService';
 
 const EMAIL_RETRY_INTERVAL_MS = 30 * 1000;
 
@@ -35,6 +36,19 @@ const startServer = async (): Promise<void> => {
       logError('Failed to seed default credit packs', { error: error.message });
       console.error('❌ Failed to seed default credit packs:', error);
       process.exit(1);
+    }
+
+    // Backward-compatibility backfill (PR-AUTH-1) — accounts predating the
+    // email-verification rollout are treated as already verified so this
+    // feature shipping never locks out existing users. Idempotent.
+    try {
+      const backfilled = await emailVerificationService.backfillLegacyUsersAsVerified();
+      logInfo('Legacy user email-verification backfill complete', { backfilled });
+    } catch (error: any) {
+      logError('Failed to backfill legacy user email verification', { error: error.message });
+      console.error('❌ Failed to backfill legacy user email verification:', error);
+      // Non-fatal — the app still starts; legacy users simply remain
+      // unverified until this succeeds on a later restart.
     }
 
     // Minimal persistent email retry/outbox worker (PR-COMM-6) — polls for

@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import AppShell from './AppShell';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import UnverifiedEmailBanner from './UnverifiedEmailBanner';
 
 interface AuthenticatedLayoutProps {
   children: ReactNode;
@@ -46,6 +47,7 @@ export default function AuthenticatedLayout({ children }: AuthenticatedLayoutPro
       </div>
 
       <AppShell sidebar={<Sidebar />} header={<Header onMenuClick={() => setDrawerOpen(true)} />}>
+        <UnverifiedEmailBanner />
         {children}
       </AppShell>
     </>

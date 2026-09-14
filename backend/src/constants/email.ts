@@ -7,8 +7,8 @@ export enum EmailTemplateCode {
   PASSWORD_RESET = 'PASSWORD_RESET',
   ORGANIZATION_INVITATION = 'ORGANIZATION_INVITATION',
   EMPLOYER_INTERVIEW_INVITATION = 'EMPLOYER_INTERVIEW_INVITATION',
-  // Reserved for future PR-COMM/PR-BILL work — architecture only, not implemented here.
-  // EMAIL_VERIFICATION = 'EMAIL_VERIFICATION',
+  EMAIL_VERIFICATION = 'EMAIL_VERIFICATION',
+  // Reserved for future PR-BILL work — architecture only, not implemented here.
   // PAYMENT_RECEIPT = 'PAYMENT_RECEIPT',
   // SUBSCRIPTION_NOTICE = 'SUBSCRIPTION_NOTICE',
 }

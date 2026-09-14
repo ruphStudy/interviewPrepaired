@@ -120,7 +120,7 @@ import employerHiringAssessmentReportController from '../controllers/EmployerHir
 import employerHiringReportReviewController from '../controllers/EmployerHiringReportReviewController';
 import employerHiringAssessmentFinalizationController from '../controllers/EmployerHiringAssessmentFinalizationController';
 import { InstitutePlanCode } from '../constants/institutePlan';
-import { protect } from '../middleware/auth';
+import { protect, requireVerifiedEmail } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
 import {
@@ -1207,7 +1207,7 @@ const listInvitationsValidation = [
 // owner lifecycle action, not covered by ORGANIZATION_UPDATE).
 // ============================================================================
 
-router.post('/', protect, ...createValidation, validate, organizationController.createOrganization);
+router.post('/', protect, requireVerifiedEmail, ...createValidation, validate, organizationController.createOrganization);
 
 router.get('/', protect, ...listValidation, validate, organizationController.getOrganizations);
 
