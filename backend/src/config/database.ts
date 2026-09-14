@@ -12,6 +12,10 @@ export const connectDatabase = async (): Promise<void> => {
       minPoolSize: 5,
       socketTimeoutMS: 45000,
       serverSelectionTimeoutMS: 10000,
+      // The Mongo driver already retries writes/reads internally — this is
+      // observation/logging only below, never a hand-rolled reconnect loop.
+      retryWrites: true,
+      retryReads: true,
       family: 4, // Use IPv4, skip trying IPv6
     };
 
@@ -23,21 +27,24 @@ export const connectDatabase = async (): Promise<void> => {
       name: mongoose.connection.name,
     });
 
-    // Handle connection events
+    // Handle connection events — purely observational; the driver already
+    // retries connectivity internally.
     mongoose.connection.on('error', (err) => {
-      logError('MongoDB connection error:', err);
+      logError('MongoDB connection error', { error: err instanceof Error ? err.message : String(err) });
     });
 
     mongoose.connection.on('disconnected', () => {
       logInfo('MongoDB disconnected');
     });
 
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
-      await mongoose.connection.close();
-      logInfo('MongoDB connection closed through app termination');
-      process.exit(0);
+    mongoose.connection.on('reconnected', () => {
+      logInfo('MongoDB reconnected');
     });
+
+    // NOTE: graceful shutdown (including closing this connection) is owned
+    // centrally by utils/shutdown.ts's gracefulShutdown(), wired up in
+    // server.ts/worker.ts — no SIGINT/SIGTERM handler is registered here to
+    // avoid a second, competing shutdown path.
   } catch (error) {
     logError('Error connecting to MongoDB:', error);
     process.exit(1);

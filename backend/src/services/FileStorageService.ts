@@ -68,7 +68,15 @@ class FileStorageService {
     }
   }
 
-  /** Best-effort — logged, never thrown. Use for compensating cleanup (e.g. an orphaned upload after a DB write failed) where the caller has nothing useful to do with a failure anyway. */
+  /**
+   * Best-effort — logged, never thrown. Use for compensating cleanup (e.g.
+   * an orphaned upload after a DB write failed) where the caller has
+   * nothing useful to do with a failure anyway. On a failed delete, a
+   * STORAGE_DELETE_RETRY operational job is enqueued (PR-OPS-1) so the
+   * orphaned object eventually gets cleaned up instead of staying orphaned
+   * forever — this is still non-throwing/best-effort from the caller's
+   * perspective; control flow here is unchanged.
+   */
   async deleteFileBestEffort(objectKey: string, context?: string): Promise<void> {
     try {
       await this.deleteFile(objectKey);
@@ -77,6 +85,23 @@ class FileStorageService {
         objectKey,
         context,
       });
+      try {
+        // Lazy import to avoid a hard circular dependency at module-load
+        // time (OperationalJobService's STORAGE_DELETE_RETRY handler calls
+        // back into this same file's deleteFile).
+        const { operationalJobService } = await import('./OperationalJobService');
+        const { OperationalJobType } = await import('../constants/operationalJob');
+        await operationalJobService.enqueue({
+          jobType: OperationalJobType.STORAGE_DELETE_RETRY,
+          payload: { objectKey },
+          idempotencyKey: `storage-delete-retry:${objectKey}`,
+        });
+      } catch (enqueueError) {
+        console.error('[FileStorageService] Failed to enqueue STORAGE_DELETE_RETRY job — orphaned object may require manual cleanup', {
+          objectKey,
+          error: enqueueError instanceof Error ? enqueueError.message : String(enqueueError),
+        });
+      }
     }
   }
 

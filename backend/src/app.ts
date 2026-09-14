@@ -6,18 +6,46 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './middleware/logger';
+import { requestId } from './middleware/requestId';
+import healthRoutes from './routes/health.routes';
 import routes from './routes';
 import { env } from './config/environment';
 
 const app: Application = express();
 
+// Only applied when explicitly configured — never forced on unconditionally
+// (accepts 'true'/'false'/a number-of-hops string/a comma-separated subnet
+// list, matching Express's own `trust proxy` setting semantics).
+if (env.trustProxy) {
+  if (env.trustProxy === 'true') {
+    app.set('trust proxy', true);
+  } else if (env.trustProxy === 'false') {
+    app.set('trust proxy', false);
+  } else if (/^\d+$/.test(env.trustProxy)) {
+    app.set('trust proxy', parseInt(env.trustProxy, 10));
+  } else {
+    app.set(
+      'trust proxy',
+      env.trustProxy.split(',').map((entry) => entry.trim()).filter(Boolean)
+    );
+  }
+}
+
 // Security middleware
 app.use(helmet());
 
-// CORS
+// Request correlation ID — mounted before logging/error handling so both can read it.
+app.use(requestId);
+
+// CORS — CORS_ORIGIN stays backward-compatible as a single origin string,
+// but also accepts a comma-separated list of origins.
+const corsOrigins = env.corsOrigin
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 app.use(
   cors({
-    origin: env.corsOrigin,
+    origin: corsOrigins.length > 1 ? corsOrigins : corsOrigins[0],
     credentials: true,
   })
 );
@@ -54,14 +82,22 @@ if (env.nodeEnv === 'development') {
 }
 app.use(logger);
 
-// Health check
-app.get('/health', (_req: Request, res: Response) => {
+// Health check — cheap liveness only (process is alive, no DB/dependency
+// check, always 200 unless the process itself can't respond). `/live` is a
+// plain alias of the same handler.
+const healthCheck = (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'Server is running',
     timestamp: new Date().toISOString(),
   });
-});
+};
+app.get('/health', healthCheck);
+app.get('/live', healthCheck);
+
+// Readiness — reflects real dependency state (DB connection, job poller,
+// provider configuration). See routes/health.routes.ts.
+app.use(healthRoutes);
 
 // API routes
 app.use('/api/v1', routes);

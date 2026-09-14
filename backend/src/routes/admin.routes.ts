@@ -26,6 +26,12 @@ import {
   runStorageOrphanScanAdmin,
 } from '../controllers/admin.controller';
 import {
+  listOperationalJobsAdmin,
+  getOperationalJobAdmin,
+  retryOperationalJobAdmin,
+  getOpsDiagnosticsAdmin,
+} from '../controllers/operationalJob.controller';
+import {
   createContractAdmin,
   listContractsAdmin,
   getContractAdmin,
@@ -38,6 +44,7 @@ import {
 import { protect, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 import { PlanCode } from '../constants/subscription';
+import { OperationalJobType } from '../constants/operationalJob';
 
 const router = Router();
 
@@ -339,5 +346,39 @@ router.get(
   validate,
   listManualPaymentsAdmin
 );
+
+// Generic persistent operational job visibility + manual retry (PR-OPS-1/2)
+// — global-admin-only, mirrors this router's existing guard above. Retry
+// only ever re-runs the SAME job row's existing type/payload — never
+// accepts an arbitrary job type/payload from the request body.
+const jobIdParamValidation = [param('jobId').isMongoId().withMessage('Invalid job ID')];
+
+router.get(
+  '/operational-jobs',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('status')
+      .optional()
+      .isIn(['pending', 'active', 'completed', 'dead_letter', 'cancelled'])
+      .withMessage('Invalid status'),
+    query('jobType').optional().isIn(Object.values(OperationalJobType)).withMessage('Invalid jobType'),
+  ],
+  validate,
+  listOperationalJobsAdmin
+);
+
+router.get('/operational-jobs/:jobId', jobIdParamValidation, validate, getOperationalJobAdmin);
+
+router.post(
+  '/operational-jobs/:jobId/retry',
+  [...jobIdParamValidation, body('reason').optional().isString().trim().isLength({ max: 300 })],
+  validate,
+  retryOperationalJobAdmin
+);
+
+// Deeper ops diagnostics (PR-OPS-4) — DB ping + job-poller health + provider
+// configured/not-configured flags. Never makes a live third-party network call.
+router.get('/ops/diagnostics', getOpsDiagnosticsAdmin);
 
 export default router;

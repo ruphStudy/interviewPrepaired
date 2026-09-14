@@ -35,6 +35,38 @@ services:
       RATE_LIMIT_WINDOW_MS: 900000
       RATE_LIMIT_MAX_REQUESTS: 100
       LOG_LEVEL: info
+      # Local/dev-oriented example only — a real split-process deployment
+      # would set this to 'false' and rely on the `worker` service below
+      # instead. Left at the default ('true'/unset) here so `docker compose
+      # up` keeps working unchanged out of the box.
+      RUN_JOBS_IN_PROCESS: 'true'
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      - mongodb
+    networks:
+      - app-network
+    volumes:
+      - ./logs:/app/logs
+
+  # Optional separate job-poller process (PR-OPS-4) — NOT started by default
+  # (`docker compose up` without `--profile worker` skips it); only useful
+  # once `backend`'s RUN_JOBS_IN_PROCESS is set to 'false'. Runs the exact
+  # same image, just a different entrypoint command.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: interview-coach-worker
+    command: ['node', 'dist/worker.js']
+    restart: unless-stopped
+    profiles:
+      - worker
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/interview-coach?authSource=admin
+      JWT_SECRET: your-secret-key-change-in-production
+      LOG_LEVEL: info
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       - mongodb
     networks:

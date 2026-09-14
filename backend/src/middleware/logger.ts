@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import winston from 'winston';
 import path from 'path';
 import { env } from '../config/environment';
+import { redactSensitive } from '../utils/logRedaction';
 
 // Configure winston logger
 const logFormat = winston.format.combine(
@@ -35,6 +36,10 @@ if (env.nodeEnv === 'development') {
 export const winstonLogger = winston.createLogger({
   level: env.logLevel,
   format: logFormat,
+  defaultMeta: {
+    service: 'entryskill-backend',
+    environment: env.nodeEnv,
+  },
   transports,
 });
 
@@ -44,14 +49,26 @@ export const logger = (req: Request, res: Response, next: NextFunction): void =>
 
   res.on('finish', () => {
     const duration = Date.now() - start;
-    const message = `${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`;
+    const authReq = req as Request & { user?: { id?: string } };
+    const entry = redactSensitive({
+      message: 'request',
+      method: req.method,
+      route: req.originalUrl,
+      statusCode: res.statusCode,
+      durationMs: duration,
+      requestId: req.requestId,
+      ...(authReq.user?.id ? { userId: authReq.user.id } : {}),
+      ...((req.params as Record<string, unknown> | undefined)?.organizationId
+        ? { organizationId: (req.params as Record<string, unknown>).organizationId }
+        : {}),
+    });
 
     if (res.statusCode >= 500) {
-      winstonLogger.error(message);
+      winstonLogger.error(entry);
     } else if (res.statusCode >= 400) {
-      winstonLogger.warn(message);
+      winstonLogger.warn(entry);
     } else {
-      winstonLogger.info(message);
+      winstonLogger.info(entry);
     }
   });
 
@@ -60,17 +77,17 @@ export const logger = (req: Request, res: Response, next: NextFunction): void =>
 
 // Utility functions
 export const logInfo = (message: string, meta?: any): void => {
-  winstonLogger.info(message, meta);
+  winstonLogger.info(message, meta ? redactSensitive(meta) : meta);
 };
 
 export const logError = (message: string, meta?: any): void => {
-  winstonLogger.error(message, meta);
+  winstonLogger.error(message, meta ? redactSensitive(meta) : meta);
 };
 
 export const logWarn = (message: string, meta?: any): void => {
-  winstonLogger.warn(message, meta);
+  winstonLogger.warn(message, meta ? redactSensitive(meta) : meta);
 };
 
 export const logDebug = (message: string, meta?: any): void => {
-  winstonLogger.debug(message, meta);
+  winstonLogger.debug(message, meta ? redactSensitive(meta) : meta);
 };

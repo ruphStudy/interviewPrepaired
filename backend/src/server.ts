@@ -1,16 +1,24 @@
 import app from './app';
 import { connectDatabase } from './config/database';
-import { env, validateEnv } from './config/environment';
+import { env, validateEnv, assertProductionSafety } from './config/environment';
+import { initMonitoring, captureException } from './config/monitoring';
 import { logInfo, logError } from './middleware/logger';
 import { subscriptionPlanService } from './services/SubscriptionPlanService';
 import { creditPackService } from './services/CreditPackService';
 import { emailRetryService } from './services/EmailRetryService';
 import { emailVerificationService } from './services/EmailVerificationService';
-
-const EMAIL_RETRY_INTERVAL_MS = 30 * 1000;
+import { operationalJobService } from './services/OperationalJobService';
+import { recordPollSuccess } from './utils/jobPollerHealth';
+import { createGracefulShutdown } from './utils/shutdown';
+import { JOB_POLL_INTERVAL_MS } from './constants/operationalJob';
 
 // Validate environment variables
 validateEnv();
+assertProductionSafety();
+initMonitoring();
+
+const intervalHandles: NodeJS.Timeout[] = [];
+let httpServer: ReturnType<typeof app.listen> | undefined;
 
 // Start server
 const startServer = async (): Promise<void> => {
@@ -51,17 +59,36 @@ const startServer = async (): Promise<void> => {
       // unverified until this succeeds on a later restart.
     }
 
-    // Minimal persistent email retry/outbox worker (PR-COMM-6) — polls for
-    // queued EmailDelivery rows whose nextAttemptAt has passed. Atomic
-    // per-row claiming makes this safe to run in more than one process.
-    setInterval(() => {
-      emailRetryService.runOnce().catch((error) => {
-        console.error('[EmailRetryService] runOnce failed', error);
-      });
-    }, EMAIL_RETRY_INTERVAL_MS);
+    // In-process email retry + operational job pollers (PR-OPS-1/2/4) — the
+    // DEFAULT so single-process deployments/local dev keep working exactly
+    // as before. Set RUN_JOBS_IN_PROCESS=false to instead rely solely on
+    // the separate `worker` process (src/worker.ts) for a split HTTP/worker
+    // deployment.
+    if (env.runJobsInProcess) {
+      const emailRetryInterval = setInterval(() => {
+        emailRetryService
+          .runOnce()
+          .then(() => recordPollSuccess())
+          .catch((error) => {
+            console.error('[EmailRetryService] runOnce failed', error);
+          });
+      }, JOB_POLL_INTERVAL_MS);
+      intervalHandles.push(emailRetryInterval);
+
+      const operationalJobInterval = setInterval(() => {
+        operationalJobService
+          .runOnce()
+          .then(() => operationalJobService.scanForExpiredSubscriptions())
+          .then(() => recordPollSuccess())
+          .catch((error) => {
+            console.error('[OperationalJobService] runOnce failed', error);
+          });
+      }, JOB_POLL_INTERVAL_MS);
+      intervalHandles.push(operationalJobInterval);
+    }
 
     // Start Express server
-    app.listen(env.port, () => {
+    httpServer = app.listen(env.port, () => {
       logInfo(`Server running on port ${env.port}`, {
         environment: env.nodeEnv,
         port: env.port,
@@ -77,18 +104,37 @@ const startServer = async (): Promise<void> => {
   }
 };
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err: Error) => {
-  logError('Unhandled Promise Rejection', { error: err.message });
-  console.error('Unhandled Promise Rejection:', err);
-  process.exit(1);
+const gracefulShutdown = createGracefulShutdown({
+  get httpServer() {
+    return httpServer;
+  },
+  intervalHandles,
 });
 
-// Handle uncaught exceptions
+process.on('SIGTERM', () => {
+  void gracefulShutdown('SIGTERM', 0);
+});
+process.on('SIGINT', () => {
+  void gracefulShutdown('SIGINT', 0);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err: Error) => {
+  logError('Unhandled Promise Rejection', { error: err.message, stack: err.stack });
+  console.error('Unhandled Promise Rejection:', err);
+  captureException(err instanceof Error ? err : new Error(String(err)));
+  void gracefulShutdown('unhandledRejection', 1);
+});
+
+// Handle uncaught exceptions — never leave a process alive after a truly
+// unsafe uncaught exception, but still attempt a bounded graceful shutdown
+// (DB/HTTP server close) first — createGracefulShutdown's own hard timeout
+// force-exits if that hangs.
 process.on('uncaughtException', (err: Error) => {
-  logError('Uncaught Exception', { error: err.message });
+  logError('Uncaught Exception', { error: err.message, stack: err.stack });
   console.error('Uncaught Exception:', err);
-  process.exit(1);
+  captureException(err instanceof Error ? err : new Error(String(err)));
+  void gracefulShutdown('uncaughtException', 1);
 });
 
 startServer();

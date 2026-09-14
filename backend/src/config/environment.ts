@@ -42,6 +42,10 @@ interface Environment {
   storageForcePathStyle: boolean;
   storageSignedUrlTtlSeconds: number;
   localStoragePath: string;
+  /** Express `trust proxy` setting (PR-OPS-6) — blank means "not set" (Express default: disabled). Only ever applied when explicitly configured; never forced on unconditionally. */
+  trustProxy: string;
+  /** When 'false', server.ts does NOT start the in-process email/job pollers — a separate `worker` process (src/worker.ts) is expected to run them instead. Defaults to true so single-process deployments/local dev are unchanged. */
+  runJobsInProcess: boolean;
 }
 
 export const env: Environment = {
@@ -102,6 +106,8 @@ export const env: Environment = {
   storageForcePathStyle: process.env.STORAGE_FORCE_PATH_STYLE === 'true',
   storageSignedUrlTtlSeconds: parseInt(process.env.STORAGE_SIGNED_URL_TTL_SECONDS || '600', 10),
   localStoragePath: process.env.LOCAL_STORAGE_PATH || './storage-dev',
+  trustProxy: process.env.TRUST_PROXY || '',
+  runJobsInProcess: process.env.RUN_JOBS_IN_PROCESS !== 'false',
 };
 
 export const validateEnv = (): void => {
@@ -122,5 +128,70 @@ export const validateEnv = (): void => {
     if (env.nodeEnv === 'production') {
       process.exit(1);
     }
+  }
+};
+
+/** Known-insecure JWT secret defaults/placeholders that must never be used in production. */
+const WEAK_JWT_SECRETS = new Set(['your-secret-key', 'secret', 'changeme', 'change-me']);
+const MIN_JWT_SECRET_LENGTH = 32;
+
+export interface ProductionSafetyCheckInput {
+  nodeEnv: string;
+  jwtSecret: string;
+  storageProvider: string;
+  emailDevMode: boolean;
+  corsOrigin: string;
+}
+
+/**
+ * Pure validation logic (PR-OPS-6) — extracted from any `process.exit` side
+ * effect so it can be unit tested with a mocked env-shaped object. Returns
+ * an empty array for a safe config (or any non-production nodeEnv, which
+ * this validator never blocks — `npm run dev` must never be affected).
+ */
+export function getProductionConfigProblems(input: ProductionSafetyCheckInput): string[] {
+  const problems: string[] = [];
+  if (input.nodeEnv !== 'production') {
+    return problems;
+  }
+
+  const secret = input.jwtSecret || '';
+  if (!secret || WEAK_JWT_SECRETS.has(secret.toLowerCase()) || secret.length < MIN_JWT_SECRET_LENGTH) {
+    problems.push(
+      `JWT_SECRET is missing, a known-weak default, or shorter than ${MIN_JWT_SECRET_LENGTH} characters`
+    );
+  }
+
+  if (input.storageProvider === 'local') {
+    problems.push('STORAGE_PROVIDER=local is not permitted in production — configure a real object storage provider');
+  }
+
+  if (input.emailDevMode) {
+    problems.push('EMAIL_DEV_MODE must not be true in production');
+  }
+
+  const corsOrigins = (input.corsOrigin || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (corsOrigins.includes('*')) {
+    problems.push('CORS_ORIGIN=* is not permitted in production (invalid combined with credentials:true)');
+  }
+
+  return problems;
+}
+
+/**
+ * Upgrades `validateEnv()`'s baseline "required vars present" check into a
+ * production safety gate — called right after `validateEnv()` from
+ * server.ts/worker.ts, before anything else starts. Never blocks
+ * development/test.
+ */
+export const assertProductionSafety = (input: ProductionSafetyCheckInput = env): void => {
+  const problems = getProductionConfigProblems(input);
+  if (problems.length > 0) {
+    console.error('Refusing to start — unsafe production configuration:');
+    problems.forEach((problem) => console.error(`  - ${problem}`));
+    process.exit(1);
   }
 };
