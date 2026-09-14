@@ -10,8 +10,10 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
  * entitlement), or provider webhook processing (failure/refund markers).
  * Never stores a provider secret or raw webhook payload.
  */
-export type PaymentPurchaseType = 'subscription' | 'credit_pack';
+export type PaymentPurchaseType = 'subscription' | 'credit_pack' | 'organization_credit_pack' | 'organization_subscription';
 export type PaymentProviderName = 'razorpay';
+/** 'user' = B2C (existing, default for every pre-existing row). 'organization' = B2B (PR-B2B-BILL) — userId still stores the ACTING/initiating member's user id, never blank. */
+export type PaymentBuyerType = 'user' | 'organization';
 export type PaymentOrderStatus =
   | 'created'
   | 'provider_created'
@@ -25,6 +27,10 @@ export type PaymentOrderStatus =
 
 export interface IPaymentOrder extends Document {
   userId: Types.ObjectId;
+  /** Defaults to 'user' for every existing/legacy row — see PaymentBuyerType. */
+  buyerType: PaymentBuyerType;
+  /** Set only when buyerType === 'organization'. */
+  organizationId?: Types.ObjectId;
   purchaseType: PaymentPurchaseType;
   planId?: Types.ObjectId;
   planCode?: string;
@@ -58,9 +64,19 @@ const paymentOrderSchema = new Schema<IPaymentOrder>(
       ref: 'User',
       required: true,
     },
+    buyerType: {
+      type: String,
+      enum: ['user', 'organization'],
+      required: true,
+      default: 'user',
+    },
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Organization',
+    },
     purchaseType: {
       type: String,
-      enum: ['subscription', 'credit_pack'],
+      enum: ['subscription', 'credit_pack', 'organization_credit_pack', 'organization_subscription'],
       required: true,
     },
     planId: {
@@ -154,5 +170,15 @@ paymentOrderSchema.index({ provider: 1, providerOrderId: 1 }, { unique: true, sp
 paymentOrderSchema.index({ provider: 1, providerPaymentId: 1 }, { unique: true, sparse: true });
 paymentOrderSchema.index({ userId: 1, createdAt: -1 });
 paymentOrderSchema.index({ status: 1 });
+// Organization purchases are idempotency-scoped by organizationId, not
+// userId — two different admins of the same org using the same key must
+// collide with each other. This is additive/partial: it never touches the
+// existing {userId, idempotencyKey} unique index above, and only applies to
+// rows that actually have an organizationId (organization purchases).
+paymentOrderSchema.index(
+  { organizationId: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { organizationId: { $exists: true } } }
+);
+paymentOrderSchema.index({ organizationId: 1, createdAt: -1 });
 
 export const PaymentOrder = mongoose.model<IPaymentOrder>('PaymentOrder', paymentOrderSchema);

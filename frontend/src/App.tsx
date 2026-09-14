@@ -38,6 +38,7 @@ import InstituteTrainerDetailPage from './pages/institute/InstituteTrainerDetail
 import InstituteTemplatesPage from './pages/institute/InstituteTemplatesPage';
 import InstituteInterviewAssignmentsPage from './pages/institute/InstituteInterviewAssignmentsPage';
 import EmployerProfilePage from './pages/employer/EmployerProfilePage';
+import EmployerBillingPage from './pages/employer/EmployerBillingPage';
 import EmployerJobsPage from './pages/employer/EmployerJobsPage';
 import EmployerJobFormPage from './pages/employer/EmployerJobFormPage';
 import EmployerJobDetailPage from './pages/employer/EmployerJobDetailPage';
@@ -431,6 +432,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerIntegrationsPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Employer Billing & Subscription (PR-B2B-BILL) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/billing"
+            element={
+              <ProtectedRoute>
+                <EmployerBillingPage />
               </ProtectedRoute>
             }
           />

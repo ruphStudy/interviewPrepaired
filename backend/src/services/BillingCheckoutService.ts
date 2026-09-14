@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Types } from 'mongoose';
-import { PaymentOrder, IPaymentOrder, PaymentOrderStatus } from '../models/PaymentOrder.model';
+import { PaymentOrder, IPaymentOrder, PaymentOrderStatus, PaymentPurchaseType } from '../models/PaymentOrder.model';
 import { subscriptionPlanService } from './SubscriptionPlanService';
 import { userSubscriptionService } from './UserSubscriptionService';
 import { creditPackService } from './CreditPackService';
@@ -16,7 +16,10 @@ export interface CheckoutPayload {
   providerOrderId?: string;
   amountPaise: number;
   currency: string;
-  purchaseType: 'subscription' | 'credit_pack';
+  // Widened to the full PaymentOrder purchaseType union for type
+  // compatibility with the shared model — this service only ever creates
+  // 'subscription' | 'credit_pack' orders at runtime.
+  purchaseType: PaymentPurchaseType;
   planCode?: string;
   creditPackCode?: string;
   keyId: string;

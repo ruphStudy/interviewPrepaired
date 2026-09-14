@@ -25,6 +25,16 @@ import {
   getEmailDeliveryAdmin,
   runStorageOrphanScanAdmin,
 } from '../controllers/admin.controller';
+import {
+  createContractAdmin,
+  listContractsAdmin,
+  getContractAdmin,
+  activateContractAdmin,
+  expireContractAdmin,
+  cancelContractAdmin,
+  recordManualPaymentAdmin,
+  listManualPaymentsAdmin,
+} from '../controllers/organizationContract.controller';
 import { protect, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 import { PlanCode } from '../constants/subscription';
@@ -240,5 +250,94 @@ router.get('/email-deliveries/:deliveryId', deliveryIdParamValidation, validate,
 
 // Object storage orphan-metadata diagnostic (PR-STORAGE-5) — read-only, bounded, never deletes.
 router.get('/storage/orphan-scan', runStorageOrphanScanAdmin);
+
+// Organization (B2B) enterprise contracts + manual payments (PR-B2B-BILL-5) — global-admin-only, mirrors this
+// router's existing `protect, authorize('admin')` guard above. Never deletes a contract/manual-payment row — status
+// only ever flips (draft -> active -> expired/cancelled). Contract activation is idempotent: activating an
+// already-active contract is rejected (CONTRACT_ALREADY_ACTIVE) rather than double-granting credits/subscription.
+const orgIdParamValidation = [param('organizationId').isMongoId().withMessage('Invalid organization ID')];
+const contractIdParamValidation = [param('contractId').isMongoId().withMessage('Invalid contract ID')];
+
+router.post(
+  '/organizations/:organizationId/contracts',
+  [
+    ...orgIdParamValidation,
+    body('startDate').isISO8601().withMessage('startDate must be a valid date'),
+    body('endDate').optional().isISO8601().withMessage('endDate must be a valid date'),
+    body('billingModel').isIn(['prepaid', 'monthly', 'annual', 'custom']).withMessage('Invalid billingModel'),
+    body('planCode').optional().isString().trim(),
+    body('contractValueInrPaise').optional().isInt({ min: 0 }),
+    body('creditAllowance').optional().isInt({ min: 0 }),
+    body('renewalTerms').optional().isString().trim().isLength({ max: 1000 }),
+    body('externalReference').optional().isString().trim().isLength({ max: 200 }),
+  ],
+  validate,
+  createContractAdmin
+);
+
+router.get(
+  '/organizations/:organizationId/contracts',
+  [
+    ...orgIdParamValidation,
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+  ],
+  validate,
+  listContractsAdmin
+);
+
+router.get(
+  '/organizations/:organizationId/contracts/:contractId',
+  [...orgIdParamValidation, ...contractIdParamValidation],
+  validate,
+  getContractAdmin
+);
+
+router.post(
+  '/organizations/:organizationId/contracts/:contractId/activate',
+  [...orgIdParamValidation, ...contractIdParamValidation],
+  validate,
+  activateContractAdmin
+);
+
+router.post(
+  '/organizations/:organizationId/contracts/:contractId/expire',
+  [...orgIdParamValidation, ...contractIdParamValidation],
+  validate,
+  expireContractAdmin
+);
+
+router.post(
+  '/organizations/:organizationId/contracts/:contractId/cancel',
+  [...orgIdParamValidation, ...contractIdParamValidation],
+  validate,
+  cancelContractAdmin
+);
+
+router.post(
+  '/organizations/:organizationId/manual-payments',
+  [
+    ...orgIdParamValidation,
+    body('method').isIn(['bank_transfer', 'invoice', 'offline', 'other']).withMessage('Invalid method'),
+    body('amountPaise').isInt({ min: 1 }).withMessage('amountPaise must be a positive integer'),
+    body('referenceNote').optional().isString().trim().isLength({ max: 300 }),
+    body('paymentDate').isISO8601().withMessage('paymentDate must be a valid date'),
+    body('contractId').optional().isMongoId().withMessage('Invalid contract ID'),
+    body('notes').optional().isString().trim().isLength({ max: 1000 }),
+  ],
+  validate,
+  recordManualPaymentAdmin
+);
+
+router.get(
+  '/organizations/:organizationId/manual-payments',
+  [
+    ...orgIdParamValidation,
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+  ],
+  validate,
+  listManualPaymentsAdmin
+);
 
 export default router;

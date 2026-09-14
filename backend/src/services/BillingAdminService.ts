@@ -1,9 +1,10 @@
 import { Types } from 'mongoose';
-import { PaymentOrder, IPaymentOrder } from '../models/PaymentOrder.model';
+import { PaymentOrder, IPaymentOrder, PaymentPurchaseType } from '../models/PaymentOrder.model';
 import { User } from '../models/user.model';
 import { getPaymentProvider } from '../payments';
 import { interviewCreditService } from './InterviewCreditService';
 import { creditPackService } from './CreditPackService';
+import { organizationInterviewCreditService } from './OrganizationInterviewCreditService';
 import { ApiError } from '../utils/ApiError';
 import { BillingErrorCode } from '../constants/billing';
 
@@ -11,7 +12,9 @@ export interface AdminSafeOrder {
   id: string;
   userId: string;
   userEmail?: string;
-  purchaseType: 'subscription' | 'credit_pack';
+  purchaseType: PaymentPurchaseType;
+  buyerType?: string;
+  organizationId?: string;
   planCode?: string;
   creditPackCode?: string;
   amountPaise: number;
@@ -41,6 +44,8 @@ class BillingAdminService {
       id: (order._id as Types.ObjectId).toString(),
       userId: order.userId.toString(),
       userEmail,
+      buyerType: order.buyerType,
+      organizationId: order.organizationId ? order.organizationId.toString() : undefined,
       purchaseType: order.purchaseType,
       planCode: order.planCode,
       creditPackCode: order.creditPackCode,
@@ -203,6 +208,35 @@ class BillingAdminService {
         }
       }
     }
+
+    // Organization (B2B) credit-pack refund — same "flag for manual review
+    // rather than ever go negative" behavior, via the organization credit
+    // ledger's own negative-safe adjustCredits (never the B2C credit
+    // service, so B2C/B2B balances are never mixed).
+    if (order.buyerType === 'organization' && order.purchaseType === 'organization_credit_pack' && isFullRefund && order.organizationId) {
+      const creditsGranted = order.metadata?.creditsGranted as number | undefined;
+      if (typeof creditsGranted === 'number' && creditsGranted > 0) {
+        try {
+          await organizationInterviewCreditService.adjustCredits({
+            organizationId: order.organizationId.toString(),
+            amount: -creditsGranted,
+            reason: `Refund for organization credit purchase (order ${(order._id as Types.ObjectId).toString()})`,
+            adminUserId,
+            idempotencyKey: `org-refund-credit-removal:${(order._id as Types.ObjectId).toString()}`,
+          });
+          order.metadata.creditRefundStatus = 'removed';
+        } catch (error) {
+          order.metadata.creditRefundStatus = 'manual_review_required';
+          console.error('[BillingAdminService] Could not safely remove refunded organization credits — flagged for manual review', {
+            orderId,
+            error,
+          });
+        }
+      }
+    }
+    // Organization subscription refunds are a follow-up — no automatic
+    // subscription rollback is performed here; an admin can separately
+    // cancel via OrganizationSubscriptionService if needed.
 
     await order.save();
     const user = await User.findById(order.userId).select('email');

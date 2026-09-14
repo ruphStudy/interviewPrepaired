@@ -2,7 +2,7 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
 
 export type OrganizationCreditLedgerType = 'GRANT' | 'CONSUME' | 'REFUND' | 'ADMIN_ADJUSTMENT' | 'EXPIRE';
 
-export type OrganizationCreditLedgerReferenceType = 'plan' | 'interview' | 'admin' | 'system';
+export type OrganizationCreditLedgerReferenceType = 'plan' | 'interview' | 'admin' | 'system' | 'payment' | 'contract';
 
 /**
  * One immutable institute-organization interview-credit transaction (15D).
@@ -62,7 +62,7 @@ const organizationInterviewCreditLedgerSchema = new Schema<IOrganizationIntervie
     },
     referenceType: {
       type: String,
-      enum: ['plan', 'interview', 'admin', 'system'],
+      enum: ['plan', 'interview', 'admin', 'system', 'payment', 'contract'],
     },
     referenceId: {
       type: String,

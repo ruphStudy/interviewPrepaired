@@ -1,8 +1,10 @@
 import { Types } from 'mongoose';
-import { PaymentOrder, IPaymentOrder, PaymentOrderStatus } from '../models/PaymentOrder.model';
+import { PaymentOrder, IPaymentOrder, PaymentOrderStatus, PaymentPurchaseType } from '../models/PaymentOrder.model';
 import { userSubscriptionService } from './UserSubscriptionService';
 import { interviewCreditService } from './InterviewCreditService';
 import { creditPackService } from './CreditPackService';
+import { organizationInterviewCreditService } from './OrganizationInterviewCreditService';
+import { organizationSubscriptionService } from './OrganizationSubscriptionService';
 import { ApiError } from '../utils/ApiError';
 import { BillingErrorCode } from '../constants/billing';
 
@@ -15,10 +17,11 @@ export interface SettlementReference {
 
 export interface SettlementResult {
   paymentOrderId: string;
-  purchaseType: 'subscription' | 'credit_pack';
+  purchaseType: PaymentPurchaseType;
   status: PaymentOrderStatus;
   planCode?: string;
   creditPackCode?: string;
+  organizationId?: string;
   plan?: { code: string; name: string };
   subscription?: { status: string; currentPeriodEnd?: Date };
   credits: { balance: number };
@@ -76,6 +79,24 @@ class BillingSettlementService {
   }
 
   private async grantEntitlement(order: IPaymentOrder): Promise<void> {
+    const buyerType = order.buyerType ?? 'user';
+
+    if (buyerType === 'user') {
+      await this.grantUserEntitlement(order);
+      return;
+    }
+
+    if (buyerType === 'organization') {
+      await this.grantOrganizationEntitlement(order);
+      return;
+    }
+
+    // Fail closed — an unrecognized buyerType must never silently grant
+    // anything, and must never fall through to either entitlement path.
+    throw new ApiError(500, `Unknown purchase type (buyerType="${buyerType}")`);
+  }
+
+  private async grantUserEntitlement(order: IPaymentOrder): Promise<void> {
     const userId = order.userId.toString();
     const orderId = (order._id as Types.ObjectId).toString();
 
@@ -85,6 +106,10 @@ class BillingSettlementService {
       }
       await userSubscriptionService.changePlan(userId, order.planCode, 'payment', 'upgrade', order.providerPaymentId);
       return;
+    }
+
+    if (order.purchaseType !== 'credit_pack') {
+      throw new ApiError(500, `Unknown purchase type for a user order: ${order.purchaseType}`);
     }
 
     if (!order.creditPackCode) {
@@ -108,7 +133,53 @@ class BillingSettlementService {
     });
   }
 
+  private async grantOrganizationEntitlement(order: IPaymentOrder): Promise<void> {
+    const orderId = (order._id as Types.ObjectId).toString();
+    if (!order.organizationId) {
+      throw new ApiError(500, 'Organization payment order is missing an organizationId');
+    }
+    const organizationId = order.organizationId.toString();
+
+    if (order.purchaseType === 'organization_credit_pack') {
+      const creditsGranted = order.metadata?.creditsGranted;
+      if (typeof creditsGranted !== 'number' || !Number.isInteger(creditsGranted) || creditsGranted <= 0) {
+        throw new ApiError(500, 'Organization payment order is missing a valid creditsGranted amount');
+      }
+      await organizationInterviewCreditService.grantCredits({
+        organizationId,
+        amount: creditsGranted,
+        referenceType: 'payment',
+        referenceId: orderId,
+        // Tied to the payment order id — exactly one PaymentOrder per
+        // checkout attempt, so this can never double-grant on retry/replay.
+        idempotencyKey: `org-credit-grant:${orderId}`,
+        description: `${creditsGranted} interview credit(s) — plan ${order.planCode}`,
+      });
+      return;
+    }
+
+    if (order.purchaseType === 'organization_subscription') {
+      if (!order.planCode) {
+        throw new ApiError(500, 'Organization payment order is missing a plan code');
+      }
+      await organizationSubscriptionService.activateFromPayment(organizationId, order.planCode, order.providerPaymentId);
+      return;
+    }
+
+    throw new ApiError(500, `Unknown purchase type for an organization order: ${order.purchaseType}`);
+  }
+
   private async buildResult(order: IPaymentOrder): Promise<SettlementResult> {
+    const buyerType = order.buyerType ?? 'user';
+
+    if (buyerType === 'organization') {
+      return this.buildOrganizationResult(order);
+    }
+
+    return this.buildUserResult(order);
+  }
+
+  private async buildUserResult(order: IPaymentOrder): Promise<SettlementResult> {
     const userId = order.userId.toString();
 
     if (order.purchaseType === 'subscription') {
@@ -131,6 +202,33 @@ class BillingSettlementService {
       purchaseType: order.purchaseType,
       status: order.status,
       creditPackCode: order.creditPackCode,
+      credits: { balance },
+    };
+  }
+
+  private async buildOrganizationResult(order: IPaymentOrder): Promise<SettlementResult> {
+    const organizationId = order.organizationId ? order.organizationId.toString() : undefined;
+    const balance = organizationId ? await organizationInterviewCreditService.getBalance(organizationId) : 0;
+
+    if (order.purchaseType === 'organization_subscription' && organizationId) {
+      const subscription = await organizationSubscriptionService.getCurrentSubscription(organizationId);
+      return {
+        paymentOrderId: (order._id as Types.ObjectId).toString(),
+        purchaseType: order.purchaseType,
+        status: order.status,
+        planCode: order.planCode,
+        organizationId,
+        subscription: subscription ? { status: subscription.status, currentPeriodEnd: subscription.currentPeriodEnd } : undefined,
+        credits: { balance },
+      };
+    }
+
+    return {
+      paymentOrderId: (order._id as Types.ObjectId).toString(),
+      purchaseType: order.purchaseType,
+      status: order.status,
+      planCode: order.planCode,
+      organizationId,
       credits: { balance },
     };
   }

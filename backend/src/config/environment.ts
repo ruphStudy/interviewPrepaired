@@ -19,6 +19,10 @@ interface Environment {
   razorpayKeyId: string;
   razorpayKeySecret: string;
   razorpayWebhookSecret: string;
+  /** Optional merchant display fields for receipts (PR-B2B-BILL) — never fabricated; blank unless genuinely configured. */
+  billingLegalName: string;
+  billingAddress: string;
+  billingGstin: string;
   appBaseUrl: string;
   frontendUrl: string;
   emailProvider: string;
@@ -66,6 +70,11 @@ export const env: Environment = {
   razorpayKeyId: process.env.RAZORPAY_KEY_ID || '',
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || '',
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+  // Optional merchant display fields for organization billing receipts —
+  // left blank unless a real, non-fabricated value is configured.
+  billingLegalName: process.env.BILLING_LEGAL_NAME || '',
+  billingAddress: process.env.BILLING_ADDRESS || '',
+  billingGstin: process.env.BILLING_GSTIN || '',
   appBaseUrl: process.env.APP_BASE_URL || '',
   frontendUrl: process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000',
   // Transactional email foundation (PR-COMM) — leave RESEND_API_KEY blank in

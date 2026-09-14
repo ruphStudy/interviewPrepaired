@@ -191,6 +191,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
                   icon: Bell,
                   badge: unreadNotificationCount,
                 },
+                { to: `/organizations/${activeOrganizationId}/employer/billing`, label: 'Billing & Subscription', icon: Wallet },
               ]
             : []),
         ]

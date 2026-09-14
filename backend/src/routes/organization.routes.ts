@@ -21,6 +21,7 @@ import instituteTrainerBatchAnalyticsController from '../controllers/InstituteTr
 import instituteTrainerSkillGapController from '../controllers/InstituteTrainerSkillGapController';
 import instituteTrainerBatchReadinessController from '../controllers/InstituteTrainerBatchReadinessController';
 import instituteInterviewCreditController from '../controllers/InstituteInterviewCreditController';
+import organizationBillingController from '../controllers/OrganizationBillingController';
 import instituteBatchReadinessController from '../controllers/InstituteBatchReadinessController';
 import employerJobController from '../controllers/EmployerJobController';
 import employerJobHiringTeamController from '../controllers/EmployerJobHiringTeamController';
@@ -5319,6 +5320,158 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
   instituteInterviewCreditController.grantCredits
+);
+
+// ---- Organization (B2B) Billing (PR-B2B-BILL) — institute prepaid-credit checkout, company subscription checkout,
+// billing profile, subscription status, order history/receipts. organizationId is ALWAYS taken from the trusted route
+// param, never the body. Reads => ORGANIZATION_VIEW (readable even for an archived org — history must stay visible);
+// mutations (checkout/profile update/subscription changes) => ORGANIZATION_UPDATE, and checkout additionally rejects
+// an archived/suspended organization inside the service layer. Amount/currency/credit-quantity are NEVER accepted from
+// the client body — only planCode + idempotencyKey. Settlement itself is verified via the EXISTING
+// POST /billing/payments/verify + POST /billing/webhooks/razorpay endpoints (billing.routes.ts) — no second
+// verification/settlement path is introduced here. ----
+
+const billingIdempotencyKeyValidation = body('idempotencyKey')
+  .isString()
+  .trim()
+  .isLength({ min: 8, max: 200 })
+  .withMessage('idempotencyKey is required (8-200 characters)');
+
+const billingPlanCodeValidation = body('planCode').isString().trim().notEmpty().withMessage('planCode is required');
+
+const billingOrderIdValidation = [param('orderId').isMongoId().withMessage('Invalid order ID')];
+
+const billingProfileUpdateValidation = [
+  body('billingEmail').optional({ nullable: true }).isString().trim().isLength({ max: 254 }),
+  body('legalName').optional({ nullable: true }).isString().trim().isLength({ max: 200 }),
+  body('billingAddress').optional({ nullable: true }).isString().trim().isLength({ max: 500 }),
+  body('taxId').optional({ nullable: true }).isString().trim().isLength({ max: 50 }),
+  body('gstin').optional({ nullable: true }).isString().trim().isLength({ max: 15 }),
+];
+
+router.get(
+  '/:organizationId/billing/plans',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationBillingController.getPlans
+);
+
+router.get(
+  '/:organizationId/billing/profile',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationBillingController.getBillingProfile
+);
+
+router.patch(
+  '/:organizationId/billing/profile',
+  protect,
+  ...organizationIdValidation,
+  ...billingProfileUpdateValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationBillingController.updateBillingProfile
+);
+
+router.post(
+  '/:organizationId/billing/checkout/credits',
+  protect,
+  ...organizationIdValidation,
+  [billingPlanCodeValidation, billingIdempotencyKeyValidation],
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationBillingController.checkoutCredits
+);
+
+router.post(
+  '/:organizationId/billing/checkout/subscription',
+  protect,
+  ...organizationIdValidation,
+  [billingPlanCodeValidation, billingIdempotencyKeyValidation],
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationBillingController.checkoutSubscription
+);
+
+router.get(
+  '/:organizationId/billing/subscription',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationBillingController.getSubscriptionStatus
+);
+
+router.post(
+  '/:organizationId/billing/subscription/downgrade',
+  protect,
+  ...organizationIdValidation,
+  [billingPlanCodeValidation],
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationBillingController.scheduleDowngrade
+);
+
+router.post(
+  '/:organizationId/billing/subscription/downgrade/cancel',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationBillingController.cancelScheduledDowngrade
+);
+
+router.post(
+  '/:organizationId/billing/subscription/cancel',
+  protect,
+  ...organizationIdValidation,
+  [body('cancelAtPeriodEnd').optional().isBoolean()],
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  organizationBillingController.cancelSubscription
+);
+
+router.get(
+  '/:organizationId/billing/contract',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationBillingController.getActiveContract
+);
+
+router.get(
+  '/:organizationId/billing/orders',
+  protect,
+  ...organizationIdValidation,
+  ...listInterviewCreditLedgerValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationBillingController.listOrders
+);
+
+router.get(
+  '/:organizationId/billing/orders/:orderId',
+  protect,
+  ...organizationIdValidation,
+  ...billingOrderIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationBillingController.getOrder
+);
+
+router.get(
+  '/:organizationId/billing/orders/:orderId/receipt',
+  protect,
+  ...organizationIdValidation,
+  ...billingOrderIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_VIEW),
+  organizationBillingController.getReceipt
 );
 
 // ---- Members (8B API, 8D RBAC) ----

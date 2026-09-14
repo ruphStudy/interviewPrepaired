@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { PaymentOrder, IPaymentOrder } from '../models/PaymentOrder.model';
+import { PaymentOrder, IPaymentOrder, PaymentPurchaseType } from '../models/PaymentOrder.model';
 import { User } from '../models/user.model';
 import { ApiError } from '../utils/ApiError';
 import { BillingErrorCode } from '../constants/billing';
@@ -7,7 +7,10 @@ import { BILLING_MERCHANT_DISPLAY_NAME, BILLING_RECEIPT_DOCUMENT_LABEL, BILLING_
 
 export interface SafePaymentOrder {
   id: string;
-  purchaseType: 'subscription' | 'credit_pack';
+  // Widened to the full PaymentOrder purchaseType union for type
+  // compatibility with the shared model — B2C rows (this service only ever
+  // queries by userId) are always 'subscription' | 'credit_pack' at runtime.
+  purchaseType: PaymentPurchaseType;
   planCode?: string;
   creditPackCode?: string;
   amountPaise: number;
