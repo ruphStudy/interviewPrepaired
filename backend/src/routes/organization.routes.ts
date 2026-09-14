@@ -2264,9 +2264,10 @@ const listApplicationsValidation = [
 
 const APPLICATION_UPDATE_FIELD_KEYS = ['notes', 'source'];
 
-const rejectApplicationImmutableFieldsValidation = [
-  body('jobId').not().exists().withMessage('jobId cannot be changed'),
-  body('candidateId').not().exists().withMessage('candidateId cannot be changed'),
+// Shared by both create and update — fields that are never client-settable
+// at all. jobId/candidateId are handled separately below: required on
+// create, but immutable (rejected) on update — see rejectApplicationImmutableFieldsValidation.
+const rejectApplicationServerOwnedFieldsValidation = [
   body('organizationId').not().exists().withMessage('organizationId cannot be set'),
   body('createdByMembershipId').not().exists().withMessage('createdByMembershipId cannot be set'),
   body('status').not().exists().withMessage('status cannot be changed directly — use POST .../status'),
@@ -2274,8 +2275,16 @@ const rejectApplicationImmutableFieldsValidation = [
   body('updatedAt').not().exists().withMessage('updatedAt cannot be set'),
 ];
 
+// Update-only: jobId/candidateId are required at creation time (see
+// createApplicationValidation) but immutable afterwards.
+const rejectApplicationImmutableFieldsValidation = [
+  body('jobId').not().exists().withMessage('jobId cannot be changed'),
+  body('candidateId').not().exists().withMessage('candidateId cannot be changed'),
+  ...rejectApplicationServerOwnedFieldsValidation,
+];
+
 const createApplicationValidation = [
-  ...rejectApplicationImmutableFieldsValidation,
+  ...rejectApplicationServerOwnedFieldsValidation,
   body('jobId').isMongoId().withMessage('A valid jobId is required'),
   body('candidateId').isMongoId().withMessage('A valid candidateId is required'),
   body('source').optional().isIn(Object.values(EmployerJobApplicationSource)).withMessage('Invalid source'),

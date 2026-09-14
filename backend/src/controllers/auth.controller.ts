@@ -70,7 +70,14 @@ export const register = catchAsync(async (req: AuthRequest, res: Response) => {
   // infrastructure regardless.
   await emailVerificationService.sendVerificationEmail(user);
 
+  // `sendVerificationEmail` mutates this same in-memory document with the
+  // verification token's hash/expiry — `select: false` on the schema only
+  // suppresses these fields from future queries, not from a document
+  // instance already held in memory, so they must be stripped explicitly
+  // before the response is serialized (same reason `password` is stripped
+  // below).
   user.password = undefined as any;
+  user.emailVerificationTokenHash = undefined as any;
   await sendTokenResponse(user, 201, res, req.headers['user-agent']);
 });
 

@@ -166,8 +166,24 @@ const paymentOrderSchema = new Schema<IPaymentOrder>(
 );
 
 paymentOrderSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true });
-paymentOrderSchema.index({ provider: 1, providerOrderId: 1 }, { unique: true, sparse: true });
-paymentOrderSchema.index({ provider: 1, providerPaymentId: 1 }, { unique: true, sparse: true });
+// `sparse: true` on a COMPOUND index only skips a document when ALL of the
+// index's fields are missing — since `provider` is `required` (always
+// present), these two indexes were effectively NON-sparse in practice: every
+// order created before a provider order/payment id is assigned (i.e. every
+// single checkout attempt, and always when the payment provider is
+// unconfigured) indexes as `providerOrderId: null`/`providerPaymentId:
+// null`, so the second such order from ANY user collided with the first and
+// crashed checkout with a raw E11000 500. A partial index (matching the
+// `organizationId` index below) only indexes documents where the field
+// genuinely exists, which is what was actually intended here.
+paymentOrderSchema.index(
+  { provider: 1, providerOrderId: 1 },
+  { unique: true, partialFilterExpression: { providerOrderId: { $exists: true } } }
+);
+paymentOrderSchema.index(
+  { provider: 1, providerPaymentId: 1 },
+  { unique: true, partialFilterExpression: { providerPaymentId: { $exists: true } } }
+);
 paymentOrderSchema.index({ userId: 1, createdAt: -1 });
 paymentOrderSchema.index({ status: 1 });
 // Organization purchases are idempotency-scoped by organizationId, not

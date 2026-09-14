@@ -40,17 +40,21 @@ export const protect = catchAsync(
       throw new ApiError(401, 'Not authorized to access this route');
     }
 
-    if (!user.isActive) {
-      throw new ApiError(401, 'Your account has been deactivated', undefined, 'ACCOUNT_INACTIVE');
-    }
-
     // Belt-and-suspenders (PR-PRIVACY-3): account deletion already revokes
     // every AuthSession directly, but this is a second, independent guard
     // so ANY session/JWT belonging to a deleted user is rejected here too
     // — same generic message as a revoked session, never a distinct
-    // "this account was deleted" message.
+    // "this account was deleted" message. Deletion also sets `isActive:
+    // false`, so this MUST be checked before the `isActive` guard below —
+    // otherwise a deleted account would surface the distinct
+    // ACCOUNT_INACTIVE message instead, leaking deletion status to anyone
+    // holding a stale JWT.
     if (user.isDeleted) {
       throw new ApiError(401, 'Your session has expired or was signed out. Please sign in again.', undefined, 'AUTH_SESSION_REVOKED');
+    }
+
+    if (!user.isActive) {
+      throw new ApiError(401, 'Your account has been deactivated', undefined, 'ACCOUNT_INACTIVE');
     }
 
     // A token minted before PR-AUTH-3 carries no sessionId — let it through

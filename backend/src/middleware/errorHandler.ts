@@ -33,6 +33,20 @@ export const errorHandler = (
     return;
   }
 
+  // Mongoose validation/cast errors are client input errors (bad shape/type,
+  // or a value that fails a schema `match`/`enum`/length rule) — never a
+  // server fault, so they must not surface as a 500. Logged at warn, same as
+  // any other expected 4xx.
+  if (err.name === 'ValidationError' || err.name === 'CastError') {
+    logWarn(err.message, { requestId, route: req.originalUrl, errorName: err.name });
+    res.status(400).json({
+      success: false,
+      message: err.message,
+      ...(requestId ? { requestId } : {}),
+    });
+    return;
+  }
+
   // Unexpected error — full stack logged server-side only, never in the
   // production JSON response.
   logError('Unhandled error', { requestId, route: req.originalUrl, message: err.message, stack: err.stack });

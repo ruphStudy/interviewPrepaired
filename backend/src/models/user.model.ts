@@ -59,7 +59,12 @@ const userSchema = new Schema<IUser>(
       lowercase: true,
       trim: true,
       match: [
-        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+        // Local part allows the standard \w set plus '.', '+' and '-'
+        // (e.g. Gmail/Outlook "+" plus-addressing) — kept in sync with the
+        // looser express-validator `isEmail()` check already run on
+        // /auth/register so a request that passes route validation never
+        // then fails here with a confusing 500.
+        /^[\w.+-]+@\w+([.-]?\w+)*(\.\w{2,3})+$/,
         'Please add a valid email',
       ],
       index: true,

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { getObjectStorageProvider, ObjectStorageProvider, HeadObjectResult } from '../storage';
+import fs from 'fs';
+import { getObjectStorageProvider, getLocalObjectStorageProvider, ObjectStorageProvider, HeadObjectResult } from '../storage';
 import { StoredFileCategory, MAX_SIGNED_URL_TTL_SECONDS } from '../constants/storage';
 import { env } from '../config/environment';
 import { ApiError } from '../utils/ApiError';
@@ -130,9 +131,29 @@ class FileStorageService {
    * every ObjectStorageProvider without growing the interface.
    */
   async downloadFile(objectKey: string): Promise<Buffer> {
+    // The LOCAL provider's "signed read URL" points back at THIS SAME
+    // process's own /dev-storage/read route (see LocalObjectStorageProvider)
+    // — going through `fetch()` for it means a self-referential HTTP round
+    // trip that has proven unreliable in some environments (sandboxed/
+    // constrained loopback networking) even though the signature/route
+    // logic itself is correct. Reading the file directly from disk avoids
+    // that entirely and is equivalent (same containment-checked path
+    // resolution the read route itself uses). Any other provider (S3) still
+    // goes through the genuine external presigned-URL fetch below.
+    const localProvider = getLocalObjectStorageProvider();
+    if (localProvider) {
+      try {
+        return await fs.promises.readFile(localProvider.resolveAbsolutePath(objectKey));
+      } catch (error) {
+        console.error('[FileStorageService] Local downloadFile failed', { objectKey, error: error instanceof Error ? error.message : String(error) });
+        throw new ApiError(502, 'Failed to retrieve the stored file', undefined, 'FILE_NOT_AVAILABLE');
+      }
+    }
+
     const { url } = await this.getSignedReadUrl(objectKey, 60);
     const response = await fetch(url);
     if (!response.ok) {
+      console.error('[FileStorageService] downloadFile received a non-OK response', { objectKey, status: response.status, statusText: response.statusText });
       throw new ApiError(502, 'Failed to retrieve the stored file', undefined, 'FILE_NOT_AVAILABLE');
     }
     const arrayBuffer = await response.arrayBuffer();
