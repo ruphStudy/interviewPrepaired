@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { OrganizationAuthRequest } from '../middleware/organizationAccess';
 import { employerCandidateResumeService } from '../services/EmployerCandidateResumeService';
 import { getResumeFileExtension } from '../constants/employerCandidateResume';
+import { sanitizeContentDispositionFileName } from '../utils/contentDisposition';
 import { ApiError } from '../utils/ApiError';
 import { successResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
@@ -80,9 +81,12 @@ export class EmployerCandidateResumeController {
 
   /**
    * GET /api/v1/organizations/:organizationId/candidates/:candidateId/resumes/:resumeSourceId/file
-   * Requires ORGANIZATION_VIEW. Streams the stored file — the path is
-   * resolved entirely server-side from the tenant-scoped DB row, never from
-   * client input.
+   * Requires ORGANIZATION_VIEW. The storage location is resolved entirely
+   * server-side from the tenant-scoped DB row (never a client-controlled
+   * key). An object-storage row is fetched server-side and proxied back —
+   * this avoids depending on bucket CORS configuration for the frontend's
+   * authenticated blob fetch (see employerApi.ts). A legacy pre-migration
+   * row still streams directly from local disk, exactly as before.
    */
   public getResumeFile = catchAsync(async (req: OrganizationAuthRequest, res: Response, next: NextFunction) => {
     const context = req.organizationContext;
@@ -91,19 +95,27 @@ export class EmployerCandidateResumeController {
     }
 
     const { candidateId, resumeSourceId } = req.params;
-    const { absolutePath, originalFileName } = await employerCandidateResumeService.getResumeFileForDownload(
+    const access = await employerCandidateResumeService.getResumeFileForDownload(
       context.organizationId,
       context.role,
       candidateId,
       resumeSourceId
     );
 
-    res.download(absolutePath, originalFileName, (error) => {
+    if (access.mode === 'buffer') {
+      res.setHeader('Content-Type', access.mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${sanitizeContentDispositionFileName(access.originalFileName)}"`);
+      res.setHeader('Content-Length', access.buffer.length);
+      res.send(access.buffer);
+      return;
+    }
+
+    res.download(access.absolutePath, access.originalFileName, (error) => {
       // Express's content-disposition handling has already run by the time
       // this callback can fire for a "file not found" case; guard against a
       // double-send if headers somehow already went out.
       if (error && !res.headersSent) {
-        next(new ApiError(404, 'Resume file not found'));
+        next(new ApiError(404, 'Resume file not found', undefined, 'FILE_NOT_FOUND'));
       }
     });
   });

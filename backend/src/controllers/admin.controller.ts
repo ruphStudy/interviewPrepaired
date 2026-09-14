@@ -15,6 +15,7 @@ import { userSubscriptionService } from '../services/UserSubscriptionService';
 import { interviewCreditService } from '../services/InterviewCreditService';
 import { billingAdminService } from '../services/BillingAdminService';
 import { emailDeliveryAdminService } from '../services/EmailDeliveryAdminService';
+import { storageDiagnosticsService } from '../services/StorageDiagnosticsService';
 
 /** Shared by the three usage endpoints — malformed from/to must fail clearly rather than silently produce a wrong range. */
 function parseUsageDateRange(query: Record<string, unknown>): UsageDateRange {
@@ -638,4 +639,14 @@ export const listEmailDeliveriesAdmin = catchAsync(async (req: AuthRequest, res:
 export const getEmailDeliveryAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
   const delivery = await emailDeliveryAdminService.getDelivery(req.params.deliveryId);
   res.status(200).json(successResponse('Email delivery retrieved successfully', delivery));
+});
+
+/**
+ * Read-only orphan-metadata diagnostic (PR-STORAGE-5) — checks a bounded,
+ * recent sample of this application's own tracked object-storage rows for
+ * "DB metadata → missing object" drift. Never deletes anything.
+ */
+export const runStorageOrphanScanAdmin = catchAsync(async (_req: AuthRequest, res: Response) => {
+  const result = await storageDiagnosticsService.runOrphanScan();
+  res.status(200).json(successResponse('Storage diagnostics retrieved successfully', result));
 });

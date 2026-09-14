@@ -27,8 +27,16 @@ export interface IOrganizationKnowledgeDocument extends Document {
   originalFileName?: string;
   mimeType?: string;
   fileSizeBytes?: number;
-  /** Relative path under the knowledge-document storage root — server-internal only, never returned by the API. Present only for `sourceType: 'file'`. */
+  /**
+   * Storage locator — server-internal only, never returned by the API.
+   * Present only for `sourceType: 'file'`. A row created before
+   * PR-STORAGE (`storageProvider` absent) is a relative path under the
+   * legacy local knowledge-document storage root; a row created after is
+   * an object-storage key, with `storageProvider` saying which.
+   */
   storedFileName?: string;
+  storageProvider?: 's3' | 'local';
+  checksumSha256?: string;
   status: OrganizationKnowledgeDocumentStatus;
   parsingVersion?: string;
   characterCount?: number;
@@ -61,6 +69,8 @@ const organizationKnowledgeDocumentSchema = new Schema<IOrganizationKnowledgeDoc
     mimeType: { type: String, trim: true },
     fileSizeBytes: { type: Number, min: 0 },
     storedFileName: { type: String },
+    storageProvider: { type: String, enum: ['s3', 'local'] },
+    checksumSha256: { type: String },
     status: {
       type: String,
       enum: { values: ['draft', 'processing', 'ready', 'failed', 'archived'], message: '{VALUE} is not a valid document status' },

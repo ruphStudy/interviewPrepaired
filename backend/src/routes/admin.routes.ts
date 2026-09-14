@@ -23,6 +23,7 @@ import {
   refundPaymentOrderAdmin,
   listEmailDeliveriesAdmin,
   getEmailDeliveryAdmin,
+  runStorageOrphanScanAdmin,
 } from '../controllers/admin.controller';
 import { protect, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validation';
@@ -236,5 +237,8 @@ router.get(
 );
 
 router.get('/email-deliveries/:deliveryId', deliveryIdParamValidation, validate, getEmailDeliveryAdmin);
+
+// Object storage orphan-metadata diagnostic (PR-STORAGE-5) — read-only, bounded, never deletes.
+router.get('/storage/orphan-scan', runStorageOrphanScanAdmin);
 
 export default router;

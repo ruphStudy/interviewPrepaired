@@ -11,12 +11,9 @@ import {
   getKnowledgeDocumentFileExtension,
 } from '../constants/organizationKnowledgeDocument';
 import { resumeTextExtractionService } from './ResumeTextExtractionService';
-import {
-  buildStoredKnowledgeDocumentLocation,
-  resolveStoredKnowledgeDocumentAbsolutePath,
-  writeKnowledgeDocumentFile,
-  deleteKnowledgeDocumentFileIfExists,
-} from '../utils/organizationKnowledgeDocumentStorage';
+import { resolveStoredKnowledgeDocumentAbsolutePath } from '../utils/organizationKnowledgeDocumentStorage';
+import { fileStorageService } from './FileStorageService';
+import { StoredFileCategory } from '../constants/storage';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
@@ -118,12 +115,13 @@ export class OrganizationKnowledgeDocumentService {
     const title = this.validateTitle(input.title || sanitizedFileName.replace(/\.[^.]+$/, '') || sanitizedFileName);
     const description = this.validateDescription(input.description);
 
-    const { relativePath, absolutePath } = buildStoredKnowledgeDocumentLocation(
-      organization._id.toString(),
-      knowledgeBase._id.toString(),
-      input.fileExtension
-    );
-    await writeKnowledgeDocumentFile(absolutePath, input.buffer);
+    const uploadResult = await fileStorageService.uploadFile({
+      category: StoredFileCategory.KNOWLEDGE_BASE,
+      scope: [organization._id.toString(), knowledgeBase._id.toString()],
+      buffer: input.buffer,
+      extension: input.fileExtension,
+      contentType: input.mimeType,
+    });
 
     let doc: IOrganizationKnowledgeDocument;
     try {
@@ -136,13 +134,15 @@ export class OrganizationKnowledgeDocumentService {
         originalFileName: sanitizedFileName,
         mimeType: input.mimeType,
         fileSizeBytes: input.fileSize,
-        storedFileName: relativePath,
+        storedFileName: uploadResult.objectKey,
+        storageProvider: uploadResult.provider,
+        checksumSha256: uploadResult.checksumSha256,
         status: 'processing',
         createdByMembershipId: membershipId,
       });
     } catch (error) {
-      // The DB row never got created — this file is orphaned, so (and only so) it's safe to delete.
-      await deleteKnowledgeDocumentFileIfExists(absolutePath);
+      // The DB row never got created — this object is orphaned, so (and only so) it's safe to delete.
+      await fileStorageService.deleteFileBestEffort(uploadResult.objectKey, 'uploadDocument compensating delete');
       throw error;
     }
 
@@ -215,13 +215,7 @@ export class OrganizationKnowledgeDocumentService {
       throw new ApiError(400, 'Only file-based documents with a retained original file can be reprocessed');
     }
 
-    let buffer: Buffer;
-    try {
-      const absolutePath = resolveStoredKnowledgeDocumentAbsolutePath(doc.storedFileName);
-      buffer = await fs.promises.readFile(absolutePath);
-    } catch {
-      throw new ApiError(409, 'The original file could not be located for reprocessing');
-    }
+    const buffer = await this.readStoredDocumentBuffer(doc);
 
     const fileExtension = getKnowledgeDocumentFileExtension(doc.originalFileName || '');
     doc.status = 'processing';
@@ -249,6 +243,27 @@ export class OrganizationKnowledgeDocumentService {
       await doc.save();
     }
     return this.toDetail(doc);
+  }
+
+  /**
+   * Reads a `file`-sourced document's original bytes back for
+   * reprocessing. A legacy pre-migration row (`storageProvider` absent) is
+   * read from the original local storage root exactly as before; a row
+   * created after PR-STORAGE is fetched from object storage.
+   */
+  private async readStoredDocumentBuffer(doc: IOrganizationKnowledgeDocument): Promise<Buffer> {
+    if (!doc.storedFileName) {
+      throw new ApiError(409, 'The original file could not be located for reprocessing');
+    }
+    try {
+      if (!doc.storageProvider) {
+        const absolutePath = resolveStoredKnowledgeDocumentAbsolutePath(doc.storedFileName);
+        return await fs.promises.readFile(absolutePath);
+      }
+      return await fileStorageService.downloadFile(doc.storedFileName);
+    } catch {
+      throw new ApiError(409, 'The original file could not be located for reprocessing');
+    }
   }
 
   /** Extracts text with the SAME safe primitives resumes already use, then applies deterministic, non-destructive whitespace normalization only — never AI, never a summary. */

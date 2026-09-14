@@ -8,12 +8,9 @@ import { OrganizationType, OrganizationStatus } from '../constants/organization'
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { ApiError } from '../utils/ApiError';
-import {
-  buildStoredResumeLocation,
-  resolveStoredResumeAbsolutePath,
-  writeResumeFile,
-  deleteResumeFileIfExists,
-} from '../utils/candidateResumeStorage';
+import { fileStorageService } from './FileStorageService';
+import { StoredFileCategory } from '../constants/storage';
+import { resolveStoredResumeAbsolutePath } from '../utils/candidateResumeStorage';
 
 const MAX_VERSION_CREATE_ATTEMPTS = 3;
 
@@ -30,13 +27,24 @@ interface ResumeUploadInput {
   buffer: Buffer;
 }
 
+export type ResumeAccess =
+  | { mode: 'buffer'; buffer: Buffer; originalFileName: string; mimeType: string }
+  | { mode: 'local_stream'; absolutePath: string; originalFileName: string; mimeType: string };
+
 /**
- * Candidate resume file storage and versioning (18B) — NO AI parsing/text
- * extraction happens here (18C). Every operation verifies the organization
- * exists, is a COMPANY, and that the candidate belongs to that EXACT
- * organization before touching any resume row. Reads use ORGANIZATION_VIEW;
- * the upload mutation uses INTERVIEWS_MANAGE. Mirrors
- * EmployerJobDescriptionService's versioning pattern exactly (17A).
+ * Candidate resume file storage and versioning (18B, migrated to object
+ * storage in PR-STORAGE-3) — NO AI parsing/text extraction happens here
+ * (18C). Every operation verifies the organization exists, is a COMPANY,
+ * and that the candidate belongs to that EXACT organization before
+ * touching any resume row. Reads use ORGANIZATION_VIEW; the upload
+ * mutation uses INTERVIEWS_MANAGE. Mirrors EmployerJobDescriptionService's
+ * versioning pattern exactly (17A).
+ *
+ * Backward compatibility: a resume row created before this migration has
+ * no `storageProvider` and its `storedFileName` is a relative path under
+ * the legacy local resume-storage root — still fully readable via the
+ * original local-disk resolver. Every NEW upload goes straight to object
+ * storage.
  */
 export class EmployerCandidateResumeService {
   /**
@@ -82,36 +90,51 @@ export class EmployerCandidateResumeService {
     return this.toDetail(source);
   }
 
-  /** GET .../resumes/:resumeSourceId/file — same tenant scoping; returns only what the controller needs to stream the file, never a raw client-controlled path. */
+  /**
+   * GET .../resumes/:resumeSourceId/file — same tenant scoping. Proxied
+   * through the backend rather than redirecting the browser to a signed
+   * URL — the frontend already fetches this as an authenticated blob
+   * (see employerApi.ts), and streaming it ourselves avoids depending on
+   * bucket CORS configuration for a private object-storage read. An
+   * object-storage row is fetched via a short-lived, server-side-only
+   * signed URL (never exposed to the client); a legacy pre-migration row
+   * returns the local absolute path for the controller to stream
+   * directly, exactly as before.
+   */
   async getResumeFileForDownload(
     organizationId: string,
     actingRole: OrganizationMemberRole,
     candidateId: string,
     resumeSourceId: string
-  ): Promise<{ absolutePath: string; originalFileName: string; mimeType: string }> {
+  ): Promise<ResumeAccess> {
     this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_VIEW);
     const organization = await this.getOrganizationById(organizationId);
     this.assertIsCompany(organization);
     const candidate = await this.getCandidateInOrganization(organization._id, candidateId);
 
     const source = await this.getResumeSourceInScope(organization._id, candidate._id, resumeSourceId);
-    return {
-      absolutePath: resolveStoredResumeAbsolutePath(source.storedFileName),
-      originalFileName: source.originalFileName,
-      mimeType: source.mimeType,
-    };
+
+    if (!source.storageProvider) {
+      // Legacy row — pre-migration local storage, resolved the original way.
+      return {
+        mode: 'local_stream',
+        absolutePath: resolveStoredResumeAbsolutePath(source.storedFileName),
+        originalFileName: source.originalFileName,
+        mimeType: source.mimeType,
+      };
+    }
+
+    const buffer = await fileStorageService.downloadFile(source.storedFileName);
+    return { mode: 'buffer', buffer, originalFileName: source.originalFileName, mimeType: source.mimeType };
   }
 
   /**
-   * Creates the NEXT resume version for this candidate and makes it current
-   * — never overwrites an existing version or deletes a previous file.
-   * `version` is computed as (highest existing version for this candidate)
-   * + 1; the unique {organizationId, candidateId, version} index is the
-   * actual concurrency guard, with the same retry-on-E11000 pattern as
-   * EmployerJobDescriptionService (17A). The file is written to disk first;
-   * if the DB row then fails to create (including after exhausting
-   * retries), that orphaned file is deleted — a previous version's file is
-   * never touched.
+   * Creates the NEXT resume version for this candidate and makes it
+   * current — never overwrites an existing version or deletes a previous
+   * file (every version is immutable/append-only, by design — 18B). The
+   * file is uploaded to object storage first; if the DB row then fails to
+   * create (including after exhausting retries), that orphaned object is
+   * deleted — a previous version's object is never touched.
    */
   async uploadResume(
     organizationId: string,
@@ -126,7 +149,7 @@ export class EmployerCandidateResumeService {
       throw new ApiError(400, 'Uploaded file is empty');
     }
     if (input.fileSize > MAX_RESUME_FILE_SIZE_BYTES) {
-      throw new ApiError(400, `Resume file exceeds the maximum size of ${Math.floor(MAX_RESUME_FILE_SIZE_BYTES / (1024 * 1024))}MB`);
+      throw new ApiError(400, `Resume file exceeds the maximum size of ${Math.floor(MAX_RESUME_FILE_SIZE_BYTES / (1024 * 1024))}MB`, undefined, 'FILE_TOO_LARGE');
     }
 
     const organization = await this.getOrganizationById(organizationId);
@@ -135,12 +158,13 @@ export class EmployerCandidateResumeService {
     const candidate = await this.getCandidateInOrganization(organization._id, candidateId);
     this.assertCandidateMutable(candidate);
 
-    const { relativePath, absolutePath } = buildStoredResumeLocation(
-      organization._id.toString(),
-      candidate._id.toString(),
-      input.fileExtension
-    );
-    await writeResumeFile(absolutePath, input.buffer);
+    const uploadResult = await fileStorageService.uploadFile({
+      category: StoredFileCategory.RESUME,
+      scope: [organization._id.toString(), candidate._id.toString()],
+      buffer: input.buffer,
+      extension: input.fileExtension,
+      contentType: input.mimeType,
+    });
 
     let created: InstanceType<typeof EmployerCandidateResumeSource> | undefined;
     try {
@@ -153,7 +177,9 @@ export class EmployerCandidateResumeService {
             version: nextVersion,
             isCurrent: true,
             originalFileName: this.sanitizeOriginalFileName(input.originalFileName),
-            storedFileName: relativePath,
+            storedFileName: uploadResult.objectKey,
+            storageProvider: uploadResult.provider,
+            checksumSha256: uploadResult.checksumSha256,
             mimeType: input.mimeType,
             fileSize: input.fileSize,
             fileExtension: input.fileExtension,
@@ -170,13 +196,13 @@ export class EmployerCandidateResumeService {
         }
       }
     } catch (error) {
-      // The DB row never got created — this file is orphaned, so (and only so) it's safe to delete.
-      await deleteResumeFileIfExists(absolutePath);
+      // The DB row never got created — this object is orphaned, so (and only so) it's safe to delete.
+      await fileStorageService.deleteFileBestEffort(uploadResult.objectKey, 'uploadResume compensating delete');
       throw error;
     }
 
     if (!created) {
-      await deleteResumeFileIfExists(absolutePath);
+      await fileStorageService.deleteFileBestEffort(uploadResult.objectKey, 'uploadResume compensating delete');
       throw new ApiError(500, 'Failed to create resume version — please try again');
     }
 
@@ -215,7 +241,7 @@ export class EmployerCandidateResumeService {
       candidateId,
     }).lean();
     if (!source) {
-      throw new ApiError(404, 'Resume not found');
+      throw new ApiError(404, 'Resume not found', undefined, 'FILE_NOT_FOUND');
     }
     return source;
   }

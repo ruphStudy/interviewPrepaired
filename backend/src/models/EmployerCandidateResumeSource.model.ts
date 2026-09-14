@@ -18,8 +18,17 @@ export interface IEmployerCandidateResumeSource extends Document {
   version: number;
   isCurrent: boolean;
   originalFileName: string;
-  /** Relative path under the resume storage root — server-internal only, never returned by the API. */
+  /**
+   * Storage locator — server-internal only, never returned by the API.
+   * For a row created before PR-STORAGE (`storageProvider` absent), this is
+   * a relative path under the LOCAL resume storage root (see
+   * candidateResumeStorage.ts) — still fully readable. For a row created
+   * after, it is the object-storage key and `storageProvider` says which
+   * provider/root to resolve it against.
+   */
   storedFileName: string;
+  storageProvider?: 's3' | 'local';
+  checksumSha256?: string;
   mimeType: string;
   fileSize: number;
   fileExtension: string;
@@ -59,6 +68,13 @@ const employerCandidateResumeSourceSchema = new Schema<IEmployerCandidateResumeS
     storedFileName: {
       type: String,
       required: true,
+    },
+    storageProvider: {
+      type: String,
+      enum: ['s3', 'local'],
+    },
+    checksumSha256: {
+      type: String,
     },
     mimeType: {
       type: String,

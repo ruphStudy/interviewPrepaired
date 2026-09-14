@@ -29,6 +29,15 @@ interface Environment {
   emailWebhookSecret: string;
   /** Explicit, non-production-only opt-in for the console/dev email provider — see emails/index.ts. */
   emailDevMode: boolean;
+  storageProvider: string;
+  storageBucket: string;
+  awsRegion: string;
+  awsAccessKeyId: string;
+  awsSecretAccessKey: string;
+  storageEndpoint: string;
+  storageForcePathStyle: boolean;
+  storageSignedUrlTtlSeconds: number;
+  localStoragePath: string;
 }
 
 export const env: Environment = {
@@ -70,6 +79,20 @@ export const env: Environment = {
   resendApiKey: process.env.RESEND_API_KEY || '',
   emailWebhookSecret: process.env.EMAIL_WEBHOOK_SECRET || '',
   emailDevMode: process.env.EMAIL_DEV_MODE === 'true',
+  // Object storage foundation (PR-STORAGE) — 'local' writes under
+  // LOCAL_STORAGE_PATH and is refused outright in production (see
+  // storage/index.ts); a real deployment must set STORAGE_PROVIDER=s3 with
+  // genuine bucket/credentials, or durable-file endpoints return
+  // STORAGE_PROVIDER_UNAVAILABLE rather than silently falling back to disk.
+  storageProvider: process.env.STORAGE_PROVIDER || 'local',
+  storageBucket: process.env.STORAGE_BUCKET || '',
+  awsRegion: process.env.AWS_REGION || '',
+  awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+  awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+  storageEndpoint: process.env.STORAGE_ENDPOINT || '',
+  storageForcePathStyle: process.env.STORAGE_FORCE_PATH_STYLE === 'true',
+  storageSignedUrlTtlSeconds: parseInt(process.env.STORAGE_SIGNED_URL_TTL_SECONDS || '600', 10),
+  localStoragePath: process.env.LOCAL_STORAGE_PATH || './storage-dev',
 };
 
 export const validateEnv = (): void => {
