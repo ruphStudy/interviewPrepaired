@@ -1,32 +1,27 @@
 /**
  * Interview API Service
- * 
- * Handles all API calls to the backend interview endpoints
+ *
+ * Handles all API calls to the backend interview endpoints.
  */
 
 import axios, { AxiosInstance } from 'axios';
 import { attachAuthExpiryHandler } from '../utils/authExpiry';
 import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
 
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
-
-// Generic topic interface - can be ANY field or domain
 export interface InterviewTopic {
   value: string;
   label: string;
 }
 
 export interface StartInterviewRequest {
-  topic: string; // Can be any field: "Banking", "Sales", "Node.js", "Marketing", etc.
+  topic: string;
   difficulty: string;
   experienceYears: number;
   totalQuestions?: number;
   interviewStyle?: string;
   experienceLevel?: string;
   interviewMode?: 'ai-generated' | 'uploaded';
-  questions?: Array<{ questionText: string; referenceAnswer?: string }>; // Required when interviewMode is 'uploaded'
+  questions?: Array<{ questionText: string; referenceAnswer?: string }>;
   shuffleQuestions?: boolean;
   interviewLanguage?: string;
 }
@@ -74,6 +69,8 @@ export interface SubmitAnswerRequest {
   interviewId: string;
   answer: string;
   duration: number;
+  /** 1-based displayed question number. Makes retries/response-loss idempotent instead of applying an old answer to the next question. */
+  questionNumber?: number;
 }
 
 export interface EvaluationDimension {
@@ -92,16 +89,12 @@ export interface PointComparison {
 }
 
 export interface EvaluationResult {
-  // New dynamic format
   dimensions?: EvaluationDimension[];
-  
-  // Old fixed format (backward compatibility)
   technicalScore?: number;
   communicationScore?: number;
   leadershipScore?: number;
   problemSolvingScore?: number;
   confidenceScore?: number;
-  
   overallScore: number;
   strengths: string[];
   weaknesses: string[];
@@ -146,7 +139,7 @@ export interface InterviewReport {
   questions: Array<{
     questionText: string;
     expectedPoints?: string[];
-    modelAnswer?: string; // Complete ideal answer for learning
+    modelAnswer?: string;
     answerText?: string;
     answeredAt?: string;
     duration?: number;
@@ -168,7 +161,6 @@ export interface InterviewReport {
     strengthsCount: number;
     weaknessesCount: number;
   };
-  // null for interviews that predate AI usage tracking — never a fabricated/estimated cost.
   aiCost: AICostReport | null;
 }
 
@@ -197,12 +189,9 @@ export interface AICostReport {
 export interface GetReportResponse {
   success: boolean;
   message: string;
-  data: {
-    report: InterviewReport;
-  };
+  data: { report: InterviewReport };
 }
 
-/** Matches backend InterviewService.getInterviewSession() — recovery-only, display fields only (no answer/evaluation data). */
 export interface InterviewSession {
   interviewId: string;
   status: string;
@@ -272,51 +261,37 @@ function preserveInterviewApiError(error: any, fallbackMessage: string): Intervi
   return new Error(fallbackMessage) as InterviewApiError;
 }
 
-// ============================================================================
-// API Configuration
-// ============================================================================
-
 class InterviewApiService {
   private api: AxiosInstance;
 
   constructor() {
     this.api = axios.create({
       baseURL: API_BASE_URL,
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       timeout: API_TIMEOUT,
     });
     attachAuthExpiryHandler(this.api);
 
-    // Add auth token to requests
     this.api.interceptors.request.use(
       (config) => {
         const token = localStorage.getItem('authToken');
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
+        if (token) config.headers.Authorization = `Bearer ${token}`;
         return config;
       },
       (error) => Promise.reject(error)
     );
 
-    // Handle response errors
     this.api.interceptors.response.use(
       (response) => response,
       (error) => {
         if (error.response) {
-          // Preserve structured backend fields so callers can offer the right
-          // recovery action (for example the zero-credit upgrade/top-up CTA).
           const message = error.response.data?.message || 'An error occurred';
           const err = new Error(message) as InterviewApiError;
           if (error.response.data?.code) err.code = error.response.data.code;
           if (typeof error.response.data?.balance === 'number') err.balance = error.response.data.balance;
           throw err;
         }
-        if (error.request) {
-          throw new Error('No response from server. Please check your connection.');
-        }
+        if (error.request) throw new Error('No response from server. Please check your connection.');
         throw new Error(error.message || 'Failed to make request');
       }
     );
@@ -411,10 +386,10 @@ export const POPULAR_TOPICS: InterviewTopic[] = [
 export const ALL_TOPICS_EXAMPLES = [
   'Node.js', 'React', 'Angular', 'Python', 'Java', 'TypeScript', 'MongoDB', 'SQL',
   'System Design', 'DevOps', 'Cloud Computing', 'Manual Testing', 'Automation Testing',
-  'QA Engineering', 'Team Lead', 'Engineering Manager', 'Project Management', 
+  'QA Engineering', 'Team Lead', 'Engineering Manager', 'Project Management',
   'Product Management', 'Banking', 'Accounting', 'Financial Analysis', 'Investment Banking',
   'Sales', 'Digital Marketing', 'Content Marketing', 'SEO', 'HR Interview', 'Recruitment',
-  'Customer Support', 'Data Analysis', 'Business Analysis', 'UX Design', 'Healthcare', 'Legal'
+  'Customer Support', 'Data Analysis', 'Business Analysis', 'UX Design', 'Healthcare', 'Legal',
 ];
 
 export const DIFFICULTY_LEVELS = [
