@@ -5,6 +5,7 @@ import { ApiError } from '../utils/ApiError';
 import { successResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
 import { AuthRequest } from '../middleware/auth';
+import { accountDeletionService } from '../services/AccountDeletionService';
 
 export const getUsers = catchAsync(async (req: AuthRequest, res: Response) => {
   const page = parseInt(req.query.page as string) || 1;
@@ -54,8 +55,7 @@ export const updateUser = catchAsync(async (req: AuthRequest, res: Response) => 
 
   if (req.user!.role === 'admin') {
     if (req.body.role) fieldsToUpdate.role = req.body.role;
-    if (typeof req.body.isActive !== 'undefined')
-      fieldsToUpdate.isActive = req.body.isActive;
+    if (typeof req.body.isActive !== 'undefined') fieldsToUpdate.isActive = req.body.isActive;
   }
 
   const user = await User.findByIdAndUpdate(req.params.id, fieldsToUpdate, {
@@ -70,16 +70,17 @@ export const updateUser = catchAsync(async (req: AuthRequest, res: Response) => 
   res.status(200).json(successResponse('User updated successfully', user));
 });
 
+/**
+ * Legacy admin-only DELETE /users/:id compatibility path. Never hard-delete
+ * the User row: route through the same privacy-safe lifecycle used by the
+ * main admin endpoint so sessions are revoked, PII is anonymized, cleanup is
+ * queued, and financial/audit records remain intact.
+ */
 export const deleteUser = catchAsync(async (req: AuthRequest, res: Response) => {
-  const user = await User.findById(req.params.id);
-
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-
-  await user.deleteOne();
-
-  res.status(200).json(successResponse('User deleted successfully'));
+  await accountDeletionService.requestDeletionByAdmin(req.params.id, req.user!.id);
+  res.status(202).json(
+    successResponse('User account deletion is processing. Access has been revoked and personal data cleanup is queued.')
+  );
 });
 
 export const getUserStats = catchAsync(async (req: AuthRequest, res: Response) => {
@@ -127,10 +128,7 @@ export const getUserStats = catchAsync(async (req: AuthRequest, res: Response) =
     completedInterviews: completedInterviews.length,
     evaluatedInterviews: evaluatedInterviews.length,
     averageScore: parseFloat(averageScore.toFixed(2)),
-    lastInterviewDate:
-      interviews.length > 0
-        ? interviews[interviews.length - 1].createdAt
-        : null,
+    lastInterviewDate: interviews.length > 0 ? interviews[interviews.length - 1].createdAt : null,
     typeBreakdown,
     difficultyBreakdown,
     recentInterviews,
