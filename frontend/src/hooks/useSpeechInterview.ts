@@ -6,7 +6,7 @@ import { DEFAULT_LANGUAGE_CODE } from '../config/languages';
 interface UseSpeechInterviewProps {
   onAnswerComplete: (answer: string, duration: number) => void;
   onQuestionSpoken: () => void;
-  language?: string; // e.g. 'en-IN' | 'hi-IN' | 'mr-IN' — falls back to English when missing
+  language?: string;
 }
 
 export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, language }: UseSpeechInterviewProps) => {
@@ -14,104 +14,137 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
   const [isListening, setIsListening] = useState(false);
   const [currentAnswer, setCurrentAnswer] = useState('');
   const [avatarState, setAvatarState] = useState<AvatarState>(AvatarState.IDLE);
+  const [speechSupported, setSpeechSupported] = useState(true);
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
   const startTimeRef = useRef<number>(0);
   const resolvedLanguage = language || DEFAULT_LANGUAGE_CODE;
 
-  // Initialize Speech Recognition in the selected interview language
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const hasRecognition = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+    setSpeechSupported(hasRecognition);
+    setSpeechError(hasRecognition ? null : 'Speech recognition is not supported in this browser. You can type your answer instead.');
+
+    if (hasRecognition) {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = resolvedLanguage;
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = resolvedLanguage;
+      recognitionRef.current = recognition;
 
-      console.log(`🎤 Speech Recognition initialized with language (${resolvedLanguage})`);
-
-      recognitionRef.current.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript + ' ';
-          } else {
-            interimTranscript += transcript;
-          }
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += `${event.results[i][0].transcript} `;
         }
-
-        setCurrentAnswer(finalTranscript || interimTranscript);
+        setCurrentAnswer(transcript.trim());
       };
 
-      recognitionRef.current.onerror = (event: any) => {
-        console.error('🔴 Speech recognition error:', event.error);
-      };
-
-      recognitionRef.current.onend = () => {
+      recognition.onerror = (event: any) => {
+        const error = event?.error;
+        let message = 'We could not capture your answer. Please try the microphone again or type your answer.';
+        if (error === 'not-allowed' || error === 'service-not-allowed') {
+          message = 'Microphone permission is blocked. Allow microphone access or type your answer instead.';
+        } else if (error === 'no-speech') {
+          message = 'No speech was detected. Please try again or type your answer.';
+        } else if (error === 'network') {
+          message = 'Speech recognition is temporarily unavailable. You can type your answer instead.';
+        }
+        setSpeechError(message);
         setIsListening(false);
+        setAvatarState(AvatarState.IDLE);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setAvatarState(AvatarState.IDLE);
       };
     }
 
     return () => {
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // Already stopped.
+        }
+        recognitionRef.current = null;
       }
       voiceService.stopSpeaking();
     };
   }, [resolvedLanguage]);
 
-  // Speak text using Voice Service, matching the selected interview language
   const speak = useCallback((text: string, onEnd?: () => void) => {
-    console.log('[Speech] Speaking:', text);
     return new Promise<void>((resolve) => {
       setIsSpeaking(true);
       setAvatarState(AvatarState.SPEAKING);
 
       voiceService.speak(text, () => {
-        console.log('[Speech] Finished speaking');
         setIsSpeaking(false);
         setAvatarState(AvatarState.IDLE);
         if (onEnd) onEnd();
+        onQuestionSpoken();
         resolve();
       }, resolvedLanguage);
-
-      console.log('[Speech] Started speaking');
     });
-  }, [resolvedLanguage]);
+  }, [resolvedLanguage, onQuestionSpoken]);
 
-  // Start listening to user's answer
   const startListening = useCallback(() => {
-    if (recognitionRef.current && !isListening) {
-      setCurrentAnswer('');
-      startTimeRef.current = Date.now();
+    setSpeechError(null);
+    if (!recognitionRef.current) {
+      setSpeechSupported(false);
+      setSpeechError('Speech recognition is not supported in this browser. You can type your answer instead.');
+      return;
+    }
+    if (isListening) return;
+
+    setCurrentAnswer('');
+    startTimeRef.current = Date.now();
+    try {
       setIsListening(true);
       setAvatarState(AvatarState.LISTENING);
       recognitionRef.current.start();
+    } catch {
+      setIsListening(false);
+      setAvatarState(AvatarState.IDLE);
+      setSpeechError('The microphone could not start. Please try again or type your answer instead.');
     }
   }, [isListening]);
 
-  // Stop listening and return answer
   const stopListening = useCallback(() => {
-    if (recognitionRef.current && isListening) {
+    if (!recognitionRef.current || !isListening) return;
+
+    try {
       recognitionRef.current.stop();
-      setIsListening(false);
-      setAvatarState(AvatarState.THINKING);
-      
-      const duration = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      onAnswerComplete(currentAnswer || 'No answer provided', duration);
-      setCurrentAnswer('');
+    } catch {
+      // A browser can auto-stop recognition first; the captured transcript is
+      // still valid and handled below.
     }
+    setIsListening(false);
+    setAvatarState(AvatarState.THINKING);
+
+    const answer = currentAnswer.trim();
+    if (answer.length < 3) {
+      setAvatarState(AvatarState.IDLE);
+      setSpeechError('We did not capture enough of your answer. Please try again or type it instead.');
+      return;
+    }
+
+    const duration = Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000));
+    setSpeechError(null);
+    onAnswerComplete(answer, duration);
+    setCurrentAnswer('');
   }, [isListening, currentAnswer, onAnswerComplete]);
 
-  // Stop speaking
   const stopSpeaking = useCallback(() => {
     voiceService.stopSpeaking();
     setIsSpeaking(false);
     setAvatarState(AvatarState.IDLE);
   }, []);
+
+  const clearSpeechError = useCallback(() => setSpeechError(null), []);
 
   return {
     isSpeaking,
@@ -119,6 +152,9 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
     currentAnswer,
     avatarState,
     setAvatarState,
+    speechSupported,
+    speechError,
+    clearSpeechError,
     speak,
     startListening,
     stopListening,
