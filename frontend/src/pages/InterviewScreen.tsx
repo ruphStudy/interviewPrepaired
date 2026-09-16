@@ -172,6 +172,7 @@ export const InterviewScreen: React.FC = () => {
         interviewId,
         answer: normalizedAnswer,
         duration,
+        questionNumber: currentQuestionNumber,
       });
 
       setTypedAnswer('');
@@ -209,8 +210,6 @@ export const InterviewScreen: React.FC = () => {
         setCurrentQuestionNumber(response.data.interview.currentQuestion);
         await askCurrentQuestion(nextQ);
       } else {
-        // A successful response without completion or a next question is an
-        // inconsistent server state; do not invite a duplicate answer.
         setSubmissionError('Your answer was saved, but the next question is not ready. Reload this interview to recover safely.');
         setPhase('LISTENING');
       }
