@@ -91,14 +91,14 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
     });
   }, [resolvedLanguage, onQuestionSpoken]);
 
-  const startListening = useCallback(() => {
+  const startListening = useCallback((): boolean => {
     setSpeechError(null);
     if (!recognitionRef.current) {
       setSpeechSupported(false);
       setSpeechError('Speech recognition is not supported in this browser. You can type your answer instead.');
-      return;
+      return false;
     }
-    if (isListening) return;
+    if (isListening) return false;
 
     setCurrentAnswer('');
     startTimeRef.current = Date.now();
@@ -106,15 +106,17 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
       setIsListening(true);
       setAvatarState(AvatarState.LISTENING);
       recognitionRef.current.start();
+      return true;
     } catch {
       setIsListening(false);
       setAvatarState(AvatarState.IDLE);
       setSpeechError('The microphone could not start. Please try again or type your answer instead.');
+      return false;
     }
   }, [isListening]);
 
-  const stopListening = useCallback(() => {
-    if (!recognitionRef.current || !isListening) return;
+  const stopListening = useCallback((): boolean => {
+    if (!recognitionRef.current || !isListening) return false;
 
     try {
       recognitionRef.current.stop();
@@ -129,13 +131,14 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
     if (answer.length < 3) {
       setAvatarState(AvatarState.IDLE);
       setSpeechError('We did not capture enough of your answer. Please try again or type it instead.');
-      return;
+      return false;
     }
 
     const duration = Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000));
     setSpeechError(null);
     onAnswerComplete(answer, duration);
     setCurrentAnswer('');
+    return true;
   }, [isListening, currentAnswer, onAnswerComplete]);
 
   const stopSpeaking = useCallback(() => {
