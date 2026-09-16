@@ -261,6 +261,17 @@ export interface GetInterviewHistoryResponse {
   };
 }
 
+type InterviewApiError = Error & { code?: string; balance?: number };
+
+function preserveInterviewApiError(error: any, fallbackMessage: string): InterviewApiError {
+  if (error instanceof Error) {
+    const existing = error as InterviewApiError;
+    if (!existing.message) existing.message = fallbackMessage;
+    return existing;
+  }
+  return new Error(fallbackMessage) as InterviewApiError;
+}
+
 // ============================================================================
 // API Configuration
 // ============================================================================
@@ -287,9 +298,7 @@ class InterviewApiService {
         }
         return config;
       },
-      (error) => {
-        return Promise.reject(error);
-      }
+      (error) => Promise.reject(error)
     );
 
     // Handle response errors
@@ -297,54 +306,40 @@ class InterviewApiService {
       (response) => response,
       (error) => {
         if (error.response) {
-          // Server responded with error — preserve a structured `code`
-          // (e.g. INSUFFICIENT_INTERVIEW_CREDITS) and `balance` when the
-          // backend includes them, so callers can show a specific recovery
-          // CTA instead of just a generic message.
+          // Preserve structured backend fields so callers can offer the right
+          // recovery action (for example the zero-credit upgrade/top-up CTA).
           const message = error.response.data?.message || 'An error occurred';
-          const err = new Error(message) as Error & { code?: string; balance?: number };
+          const err = new Error(message) as InterviewApiError;
           if (error.response.data?.code) err.code = error.response.data.code;
           if (typeof error.response.data?.balance === 'number') err.balance = error.response.data.balance;
           throw err;
-        } else if (error.request) {
-          // No response received
-          throw new Error('No response from server. Please check your connection.');
-        } else {
-          // Request setup error
-          throw new Error(error.message || 'Failed to make request');
         }
+        if (error.request) {
+          throw new Error('No response from server. Please check your connection.');
+        }
+        throw new Error(error.message || 'Failed to make request');
       }
     );
   }
 
-  /**
-   * Start a new interview
-   */
   async startInterview(data: StartInterviewRequest): Promise<StartInterviewResponse> {
     try {
       const response = await this.api.post<StartInterviewResponse>('/interview/start', data);
       return response.data;
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to start interview');
+      throw preserveInterviewApiError(error, 'Failed to start interview');
     }
   }
 
-  /**
-   * Submit answer for current question
-   */
   async submitAnswer(data: SubmitAnswerRequest): Promise<SubmitAnswerResponse> {
     try {
       const response = await this.api.post<SubmitAnswerResponse>('/interview/answer', data);
       return response.data;
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to submit answer');
+      throw preserveInterviewApiError(error, 'Failed to submit answer');
     }
   }
 
-  /**
-   * Parse an uploaded question file (TXT/CSV/DOCX/PDF) into a preview list.
-   * Preview only — does not create an interview.
-   */
   async parseQuestionFile(file: File): Promise<ParseQuestionFileResponse> {
     try {
       const formData = new FormData();
@@ -352,74 +347,52 @@ class InterviewApiService {
       const response = await this.api.post<ParseQuestionFileResponse>(
         '/interview/parse-question-file',
         formData,
-        { headers: { 'Content-Type': undefined } } // let the browser set the multipart boundary
+        { headers: { 'Content-Type': undefined } }
       );
       return response.data;
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to parse question file');
+      throw preserveInterviewApiError(error, 'Failed to parse question file');
     }
   }
 
-  /**
-   * Recovery only — resume state (incl. persisted interviewLanguage and the
-   * current question) after a refresh/reopen with no navigation state. Reads
-   * only; makes no AI call and starts no interview.
-   */
   async getInterviewSession(interviewId: string): Promise<GetInterviewSessionResponse> {
     try {
       const response = await this.api.get<GetInterviewSessionResponse>(`/interview/${interviewId}/session`);
       return response.data;
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to load interview session');
+      throw preserveInterviewApiError(error, 'Failed to load interview session');
     }
   }
 
-  /**
-   * Get interview report
-   */
   async getReport(interviewId: string): Promise<GetReportResponse> {
     try {
       const response = await this.api.get<GetReportResponse>(`/interview/report/${interviewId}`);
       return response.data;
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to get interview report');
+      throw preserveInterviewApiError(error, 'Failed to get interview report');
     }
   }
 
-  /**
-   * Delete interview
-   */
   async deleteInterview(interviewId: string): Promise<void> {
     try {
       await this.api.delete(`/interview/${interviewId}`);
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to delete interview');
+      throw preserveInterviewApiError(error, 'Failed to delete interview');
     }
   }
 
-  /**
-   * Paginated interview history
-   */
   async getHistory(params: { page?: number; limit?: number } = {}): Promise<GetInterviewHistoryResponse> {
     try {
       const response = await this.api.get<GetInterviewHistoryResponse>('/interview/history', { params });
       return response.data;
     } catch (error: any) {
-      throw new Error(error.message || 'Failed to load interview history');
+      throw preserveInterviewApiError(error, 'Failed to load interview history');
     }
   }
 }
 
-// ============================================================================
-// Export Singleton Instance
-// ============================================================================
-
 export const interviewApi = new InterviewApiService();
 export default interviewApi;
-
-// ============================================================================
-// Popular Topics (Top 10 + Other option)
-// ============================================================================
 
 export const POPULAR_TOPICS: InterviewTopic[] = [
   { value: 'Node.js', label: 'Node.js' },
@@ -435,7 +408,6 @@ export const POPULAR_TOPICS: InterviewTopic[] = [
   { value: 'Other', label: 'Other (Enter Custom Topic)' },
 ];
 
-// Full list of suggested topics for reference
 export const ALL_TOPICS_EXAMPLES = [
   'Node.js', 'React', 'Angular', 'Python', 'Java', 'TypeScript', 'MongoDB', 'SQL',
   'System Design', 'DevOps', 'Cloud Computing', 'Manual Testing', 'Automation Testing',
