@@ -17,6 +17,7 @@ import {
   Plus,
   ClipboardCheck,
   Wallet,
+  AlertCircle,
 } from 'lucide-react';
 
 interface RecentInterview {
@@ -43,23 +44,26 @@ interface AccountSummary {
   balance: number;
 }
 
+const RESUMABLE_STATUSES = new Set(['created', 'in-progress', 'paused']);
+const REPORT_READY_STATUSES = new Set(['completed', 'evaluated']);
+
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, token } = useAuth();
   const [recentInterviews, setRecentInterviews] = useState<RecentInterview[]>([]);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
 
   useEffect(() => {
     fetchDashboardData();
     fetchAccountSummary();
+    // token is stable for the authenticated page lifetime; if it changes the
+    // AuthProvider redirects/re-renders the protected app.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Independent of the interview stats fetch above — a failure here (e.g.
-  // subscription service hiccup) must never block or blank out the rest of
-  // the dashboard, so it's a separate effect with its own try/catch and no
-  // shared loading/error state.
   const fetchAccountSummary = async () => {
     try {
       const [subscriptionResponse, creditsResponse] = await Promise.all([
@@ -76,6 +80,8 @@ const DashboardPage: React.FC = () => {
   };
 
   const fetchDashboardData = async () => {
+    setLoading(true);
+    setDashboardError(null);
     try {
       const [interviewsResponse, statsResponse] = await Promise.all([
         axios.get(
@@ -90,11 +96,24 @@ const DashboardPage: React.FC = () => {
 
       setRecentInterviews(interviewsResponse.data.data.interviews);
       setStats(statsResponse.data.data.stats);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch dashboard data:', error);
+      setDashboardError(error?.response?.data?.message || 'We could not load your interview activity.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const openInterview = (interview: RecentInterview) => {
+    if (REPORT_READY_STATUSES.has(interview.status)) {
+      navigate(`/report/${interview.id}`);
+      return;
+    }
+    if (RESUMABLE_STATUSES.has(interview.status)) {
+      navigate(`/interview/${interview.id}`);
+      return;
+    }
+    navigate('/history');
   };
 
   const getStatusBadgeClass = (status: string) => {
@@ -130,13 +149,11 @@ const DashboardPage: React.FC = () => {
   return (
     <AuthenticatedLayout>
       <main className="page-container py-8">
-        {/* Welcome Section */}
         <div className="page-header">
           <h1 className="page-title">Welcome back, {user?.name?.split(' ')[0]}</h1>
           <p className="page-subtitle">Let's keep building your interview confidence.</p>
         </div>
 
-        {/* Quick Actions */}
         <div className="flex flex-wrap gap-3 mb-6">
           <button onClick={() => navigate('/setup')} className="btn btn-secondary">
             <Plus size={16} />
@@ -148,68 +165,54 @@ const DashboardPage: React.FC = () => {
           </button>
         </div>
 
-        {/* Progress + AI Coach */}
+        {dashboardError && (
+          <div className="mb-6 flex items-start justify-between gap-4 rounded-lg border border-mentor-error/30 bg-mentor-error/10 p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={18} className="text-mentor-error mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-mentor-error">Some dashboard data could not be loaded</p>
+                <p className="text-sm text-mentor-error mt-0.5">{dashboardError}</p>
+              </div>
+            </div>
+            <button onClick={fetchDashboardData} className="btn btn-secondary px-3 py-1.5 text-xs shrink-0">Retry</button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          {/* Preparation Score */}
           <div className="card lg:col-span-2">
             <h2 className="section-title mb-4">Preparation Score</h2>
-
             {hasProgress && stats ? (
               <>
                 <div className="flex items-baseline gap-1.5 mb-4">
                   <span className="text-4xl font-bold text-mentor-text">{stats.averageScore.toFixed(1)}</span>
                   <span className="text-sm text-mentor-text-muted">/ 10</span>
                 </div>
-
                 <div className="h-2.5 rounded-full bg-mentor-surface overflow-hidden mb-6">
                   <div
                     className="h-full rounded-full bg-primary-600 transition-all"
                     style={{ width: `${Math.min(100, Math.max(0, (stats.averageScore / 10) * 100))}%` }}
                   />
                 </div>
-
                 <div className="grid grid-cols-3 gap-4 pt-4 border-t border-mentor-border">
-                  <div>
-                    <p className="text-xs text-mentor-text-muted mb-1">Completed</p>
-                    <p className="text-lg font-semibold text-mentor-text">{stats.completedInterviews}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-mentor-text-muted mb-1">Highest Score</p>
-                    <p className="text-lg font-semibold text-mentor-text">{stats.highestScore.toFixed(1)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-mentor-text-muted mb-1">Last Score</p>
-                    <p className="text-lg font-semibold text-mentor-text">{stats.lastInterviewScore.toFixed(1)}</p>
-                  </div>
+                  <div><p className="text-xs text-mentor-text-muted mb-1">Completed</p><p className="text-lg font-semibold text-mentor-text">{stats.completedInterviews}</p></div>
+                  <div><p className="text-xs text-mentor-text-muted mb-1">Highest Score</p><p className="text-lg font-semibold text-mentor-text">{stats.highestScore.toFixed(1)}</p></div>
+                  <div><p className="text-xs text-mentor-text-muted mb-1">Last Score</p><p className="text-lg font-semibold text-mentor-text">{stats.lastInterviewScore.toFixed(1)}</p></div>
                 </div>
               </>
             ) : (
-              <div className="py-4">
-                <p className="text-sm text-mentor-text-secondary">
-                  Complete your first interview to start tracking progress.
-                </p>
-              </div>
+              <div className="py-4"><p className="text-sm text-mentor-text-secondary">Complete your first interview to start tracking progress.</p></div>
             )}
           </div>
 
-          {/* AI Coach / Next Action */}
           <div className="card bg-mentor-mint dark:bg-future-card lg:col-span-1 flex flex-col">
             <div className="w-10 h-10 rounded-lg bg-white dark:bg-future-elevated flex items-center justify-center mb-4">
               <Sparkles size={20} className="text-primary-600 dark:text-future-violet" />
             </div>
-            <h3 className="section-title mb-1.5">
-              {hasCompletedInterview ? 'Keep your momentum going' : 'Start your first practice interview'}
-            </h3>
+            <h3 className="section-title mb-1.5">{hasCompletedInterview ? 'Keep your momentum going' : 'Start your first practice interview'}</h3>
             <p className="text-sm text-mentor-text-secondary mb-4 flex-1">
-              {hasCompletedInterview
-                ? 'Review your latest feedback or start another practice session.'
-                : 'Choose a role or topic and get personalized feedback.'}
+              {hasCompletedInterview ? 'Review your latest feedback or start another practice session.' : 'Choose a role or topic and get personalized feedback.'}
             </p>
-            {hasCompletedInterview && stats && stats.lastInterviewScore > 0 && (
-              <p className="text-xs text-mentor-text-muted mb-4">
-                Last score: {stats.lastInterviewScore.toFixed(1)} / 10
-              </p>
-            )}
+            {hasCompletedInterview && stats && stats.lastInterviewScore > 0 && <p className="text-xs text-mentor-text-muted mb-4">Last score: {stats.lastInterviewScore.toFixed(1)} / 10</p>}
             <button onClick={() => navigate('/setup')} className="btn btn-primary w-full justify-center">
               {hasCompletedInterview ? 'Practice Again' : 'Start Interview'}
               <ArrowRight size={16} />
@@ -217,136 +220,76 @@ const DashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Account Summary (small, only rendered once loaded — never blocks the rest of the dashboard) */}
         {accountSummary && (
           <div className="surface-muted flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 px-5 py-4 mb-6">
-            <div className="w-10 h-10 rounded-lg bg-white dark:bg-future-elevated flex items-center justify-center shrink-0">
-              <Wallet size={18} className="text-primary-600 dark:text-future-violet" />
-            </div>
+            <div className="w-10 h-10 rounded-lg bg-white dark:bg-future-elevated flex items-center justify-center shrink-0"><Wallet size={18} className="text-primary-600 dark:text-future-violet" /></div>
             <div className="flex-1 flex flex-wrap items-center gap-x-5 gap-y-1">
-              <p className="text-sm text-mentor-text-secondary">
-                <span className="font-semibold text-mentor-text">{accountSummary.planName} Plan</span>
-              </p>
-              <p className="text-sm text-mentor-text-secondary">
-                <span className="font-semibold text-mentor-text">{accountSummary.balance}</span> credit
-                {accountSummary.balance === 1 ? '' : 's'} remaining
-              </p>
+              <p className="text-sm text-mentor-text-secondary"><span className="font-semibold text-mentor-text">{accountSummary.planName} Plan</span></p>
+              <p className="text-sm text-mentor-text-secondary"><span className="font-semibold text-mentor-text">{accountSummary.balance}</span> credit{accountSummary.balance === 1 ? '' : 's'} remaining</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => navigate('/account')} className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-                View Account
-              </button>
+              <button onClick={() => navigate('/account')} className="text-sm text-primary-600 hover:text-primary-700 font-medium">View Account</button>
               <span className="text-mentor-border">&middot;</span>
-              <button onClick={() => navigate('/pricing')} className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-                Pricing
-              </button>
+              <button onClick={() => navigate('/pricing')} className="text-sm text-primary-600 hover:text-primary-700 font-medium">Pricing</button>
             </div>
           </div>
         )}
 
-        {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {statCards.map(({ label, value, icon: Icon, iconBg }) => (
             <div key={label} className="card-flat flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-mentor-text-muted mb-1">{label}</p>
-                <p className="text-2xl font-bold text-mentor-text">{value}</p>
-              </div>
-              <div className={`w-11 h-11 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}>
-                <Icon size={20} className="text-primary-600" />
-              </div>
+              <div><p className="text-xs font-medium text-mentor-text-muted mb-1">{label}</p><p className="text-2xl font-bold text-mentor-text">{value}</p></div>
+              <div className={`w-11 h-11 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}><Icon size={20} className="text-primary-600" /></div>
             </div>
           ))}
         </div>
 
-        {/* Recent Interviews */}
         <div className="card p-0 overflow-hidden">
           <div className="px-6 py-4 border-b border-mentor-border flex items-center justify-between">
             <h2 className="section-title">Recent Interviews</h2>
-            <button
-              onClick={() => navigate('/history')}
-              className="text-sm text-primary-600 hover:text-primary-700 font-medium"
-            >
-              View All
-            </button>
+            <button onClick={() => navigate('/history')} className="text-sm text-primary-600 hover:text-primary-700 font-medium">View All</button>
           </div>
 
           {loading ? (
-            <div className="p-10 text-center">
-              <div className="inline-block h-8 w-8 rounded-full border-2 border-mentor-border border-t-primary-600 animate-spin"></div>
-              <p className="text-mentor-text-muted text-sm mt-3">Loading...</p>
-            </div>
+            <div className="p-10 text-center"><div className="inline-block h-8 w-8 rounded-full border-2 border-mentor-border border-t-primary-600 animate-spin"></div><p className="text-mentor-text-muted text-sm mt-3">Loading...</p></div>
           ) : recentInterviews.length === 0 ? (
             <div className="p-10 text-center">
-              <div className="w-12 h-12 rounded-full bg-mentor-aqua flex items-center justify-center mx-auto mb-4">
-                <MessagesSquare size={22} className="text-primary-600" />
-              </div>
+              <div className="w-12 h-12 rounded-full bg-mentor-aqua flex items-center justify-center mx-auto mb-4"><MessagesSquare size={22} className="text-primary-600" /></div>
               <h3 className="section-title mb-1.5">No interviews yet</h3>
-              <p className="text-sm text-mentor-text-secondary mb-5">
-                Start your first mock interview and begin tracking your progress.
-              </p>
-              <button onClick={() => navigate('/setup')} className="btn btn-primary">
-                Start Interview
-              </button>
+              <p className="text-sm text-mentor-text-secondary mb-5">Start your first mock interview and begin tracking your progress.</p>
+              <button onClick={() => navigate('/setup')} className="btn btn-primary">Start Interview</button>
             </div>
           ) : (
             <div className="divide-y divide-mentor-border">
               {recentInterviews.map((interview) => (
-                <div
+                <button
+                  type="button"
                   key={interview.id}
-                  className="flex items-center gap-4 px-6 py-4 hover:bg-mentor-surface cursor-pointer transition-colors"
-                  onClick={() => navigate(`/report/${interview.id}`)}
+                  className="w-full text-left flex items-center gap-4 px-6 py-4 hover:bg-mentor-surface transition-colors"
+                  onClick={() => openInterview(interview)}
                 >
-                  <div className="w-10 h-10 rounded-lg bg-mentor-aqua flex items-center justify-center shrink-0">
-                    <ClipboardCheck size={18} className="text-primary-600" />
-                  </div>
-
+                  <div className="w-10 h-10 rounded-lg bg-mentor-aqua flex items-center justify-center shrink-0"><ClipboardCheck size={18} className="text-primary-600" /></div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <h3 className="text-sm font-semibold text-mentor-text truncate">{interview.topic}</h3>
-                      <span className={`badge ${getStatusBadgeClass(interview.status)}`}>{interview.status}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-mentor-text-muted flex-wrap">
-                      <span className="capitalize">{interview.difficulty}</span>
-                      <span>&middot;</span>
-                      <span>{interview.answeredQuestions}/{interview.totalQuestions} questions</span>
-                      <span>&middot;</span>
-                      <span>{new Date(interview.createdAt).toLocaleDateString()}</span>
-                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mb-1"><h3 className="text-sm font-semibold text-mentor-text truncate">{interview.topic}</h3><span className={`badge ${getStatusBadgeClass(interview.status)}`}>{interview.status}</span></div>
+                    <div className="flex items-center gap-2 text-xs text-mentor-text-muted flex-wrap"><span className="capitalize">{interview.difficulty}</span><span>&middot;</span><span>{interview.answeredQuestions}/{interview.totalQuestions} questions</span><span>&middot;</span><span>{new Date(interview.createdAt).toLocaleDateString()}</span></div>
                   </div>
-
-                  {interview.overallScore !== undefined && (
-                    <div className="text-right shrink-0">
-                      <div className={`text-lg font-bold ${getScoreColorClass(interview.overallScore)}`}>
-                        {interview.overallScore.toFixed(1)}
-                      </div>
-                      <div className="text-[11px] text-mentor-text-muted">/ 10.0</div>
-                    </div>
-                  )}
-
-                  <ChevronRight size={18} className="text-mentor-text-muted shrink-0" />
-                </div>
+                  {interview.overallScore !== undefined && <div className="text-right shrink-0"><div className={`text-lg font-bold ${getScoreColorClass(interview.overallScore)}`}>{interview.overallScore.toFixed(1)}</div><div className="text-[11px] text-mentor-text-muted">/ 10.0</div></div>}
+                  <div className="flex items-center gap-1 text-xs font-medium text-primary-600 shrink-0">
+                    <span className="hidden sm:inline">{REPORT_READY_STATUSES.has(interview.status) ? 'Report' : RESUMABLE_STATUSES.has(interview.status) ? 'Resume' : 'Details'}</span>
+                    <ChevronRight size={18} className="text-mentor-text-muted" />
+                  </div>
+                </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* Tips Section */}
         <div className="mt-6 surface-muted p-6">
           <h3 className="section-title mb-3">Small habits, better interviews</h3>
           <ul className="space-y-2.5 text-sm text-mentor-text-secondary">
-            <li className="flex items-start gap-2.5">
-              <CheckCircle2 size={16} className="text-primary-600 mt-0.5 shrink-0" />
-              <span>Practice regularly to improve your communication skills</span>
-            </li>
-            <li className="flex items-start gap-2.5">
-              <CheckCircle2 size={16} className="text-primary-600 mt-0.5 shrink-0" />
-              <span>Review your feedback to identify areas for improvement</span>
-            </li>
-            <li className="flex items-start gap-2.5">
-              <CheckCircle2 size={16} className="text-primary-600 mt-0.5 shrink-0" />
-              <span>Try different difficulty levels to challenge yourself</span>
-            </li>
+            <li className="flex items-start gap-2.5"><CheckCircle2 size={16} className="text-primary-600 mt-0.5 shrink-0" /><span>Practice regularly to improve your communication skills</span></li>
+            <li className="flex items-start gap-2.5"><CheckCircle2 size={16} className="text-primary-600 mt-0.5 shrink-0" /><span>Review your feedback to identify areas for improvement</span></li>
+            <li className="flex items-start gap-2.5"><CheckCircle2 size={16} className="text-primary-600 mt-0.5 shrink-0" /><span>Try different difficulty levels to challenge yourself</span></li>
           </ul>
         </div>
       </main>
