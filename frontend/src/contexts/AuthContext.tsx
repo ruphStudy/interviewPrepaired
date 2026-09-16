@@ -26,11 +26,13 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   loading: boolean;
+  authError: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string, acceptedTerms: boolean, acceptedPrivacyPolicy: boolean) => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  retryAuth: () => Promise<void>;
   isAuthenticated: boolean;
   isAdmin: boolean;
 }
@@ -53,8 +55,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('authToken'));
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const clearAuth = useCallback(() => {
+    localStorage.removeItem('authToken');
+    setToken(null);
+    setUser(null);
+    setAuthError(null);
+  }, []);
 
   const fetchUserProfile = useCallback(async (activeToken: string) => {
+    setAuthError(null);
     try {
       const response = await axios.get(`${API_BASE_URL}/auth/me`, {
         headers: {
@@ -65,19 +76,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (response.data.success) {
         setUser(response.data.data);
       } else {
-        // Invalid token, clear it
-        localStorage.removeItem('authToken');
-        setToken(null);
+        // A syntactically successful response that explicitly says auth is
+        // invalid is safe to treat as an invalid session.
+        clearAuth();
       }
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      // Invalid/expired/revoked token — clear it.
-      localStorage.removeItem('authToken');
-      setToken(null);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      if (status === 401) {
+        // Only a real authentication rejection should destroy the local
+        // session. Network outages/5xx responses must not log users out.
+        clearAuth();
+      } else {
+        console.error('Error fetching user profile:', error);
+        setAuthError('We could not verify your session right now. Check your connection and try again.');
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [clearAuth]);
 
   // Fetch user profile on mount if token exists
   useEffect(() => {
@@ -85,13 +101,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setLoading(false);
       return;
     }
+    setLoading(true);
     fetchUserProfile(token);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, fetchUserProfile]);
 
   /** Re-fetches the current user — used after email verification so the unverified banner disappears without a full reload. */
   const refreshUser = async () => {
     if (!token) return;
+    await fetchUserProfile(token);
+  };
+
+  /** Explicit retry used by ProtectedRoute after a transient auth/bootstrap failure. */
+  const retryAuth = async () => {
+    if (!token) return;
+    setLoading(true);
     await fetchUserProfile(token);
   };
 
@@ -106,6 +129,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const { token: newToken, user: userData } = response.data.data;
         setToken(newToken);
         setUser(userData);
+        setAuthError(null);
         localStorage.setItem('authToken', newToken);
       } else {
         throw new Error(response.data.message || 'Login failed');
@@ -139,6 +163,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const { token: newToken, user: userData } = response.data.data;
         setToken(newToken);
         setUser(userData);
+        setAuthError(null);
         localStorage.setItem('authToken', newToken);
       } else {
         throw new Error(response.data.message || 'Registration failed');
@@ -154,6 +179,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const activeToken = token;
     setUser(null);
     setToken(null);
+    setAuthError(null);
     localStorage.removeItem('authToken');
     if (activeToken) {
       try {
@@ -168,33 +194,39 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  /**
+   * "Sign out of all devices" is a security action, so unlike ordinary
+   * logout it must not pretend success if the server-side revocation failed.
+   * Keep this device signed in and let the caller show the error so the user
+   * can retry.
+   */
   const logoutAll = async () => {
     const activeToken = token;
-    if (activeToken) {
-      try {
-        await axios.post(
-          `${API_BASE_URL}/auth/logout-all`,
-          {},
-          { headers: { Authorization: `Bearer ${activeToken}` } }
-        );
-      } catch {
-        // Even if the call fails, this device's own local state below still clears.
-      }
+    if (!activeToken) {
+      clearAuth();
+      return;
     }
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem('authToken');
+
+    await axios.post(
+      `${API_BASE_URL}/auth/logout-all`,
+      {},
+      { headers: { Authorization: `Bearer ${activeToken}` } }
+    );
+
+    clearAuth();
   };
 
   const value: AuthContextType = {
     user,
     token,
     loading,
+    authError,
     login,
     register,
     logout,
     logoutAll,
     refreshUser,
+    retryAuth,
     isAuthenticated: !!user && !!token,
     isAdmin: user?.role === 'admin',
   };
