@@ -121,7 +121,7 @@ import employerHiringAssessmentReportController from '../controllers/EmployerHir
 import employerHiringReportReviewController from '../controllers/EmployerHiringReportReviewController';
 import employerHiringAssessmentFinalizationController from '../controllers/EmployerHiringAssessmentFinalizationController';
 import { InstitutePlanCode } from '../constants/institutePlan';
-import { protect, requireVerifiedEmail } from '../middleware/auth';
+import { protect, requireVerifiedEmail, authorize } from '../middleware/auth';
 import { requireOrganizationPermission } from '../middleware/organizationAccess';
 import { validate } from '../middleware/validation';
 import {
@@ -5336,9 +5336,25 @@ router.get(
   instituteInterviewCreditController.getLedger
 );
 
+// SECURITY FIX (institute/employer journey audit): this is a raw
+// ledger-writing primitive with no payment reference — org-scoped
+// `ORGANIZATION_UPDATE` (granted to every institute's own OWNER/ADMIN, see
+// constants/organizationPermissions.ts) let ANY institute self-grant
+// unlimited free interview credits, completely bypassing the real
+// self-service Razorpay checkout added by PR-B2B-BILL
+// (OrganizationBillingCheckoutService). `authorize('admin')` restricts this
+// to genuine EnterSkill platform staff (User.role==='admin'), matching the
+// existing convention for real administrative billing mutations
+// (admin.routes.ts's `protect, authorize('admin')` + BillingAdminService).
+// A platform admin must also hold organization:update on the target org
+// (i.e. be an actual member) for this to succeed — there is currently no
+// membership-free admin path for this specific action, same as every other
+// org-scoped route in this file; that is a separate, smaller gap than the
+// unauthenticated-institute self-grant this closes.
 router.post(
   '/:organizationId/interview-credits/grant',
   protect,
+  authorize('admin'),
   ...organizationIdValidation,
   ...grantInterviewCreditsValidation,
   validate,

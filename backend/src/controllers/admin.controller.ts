@@ -16,6 +16,7 @@ import { interviewCreditService } from '../services/InterviewCreditService';
 import { billingAdminService } from '../services/BillingAdminService';
 import { emailDeliveryAdminService } from '../services/EmailDeliveryAdminService';
 import { storageDiagnosticsService } from '../services/StorageDiagnosticsService';
+import { accountDeletionService } from '../services/AccountDeletionService';
 import { PrivacyActionAudit } from '../models/PrivacyActionAudit.model';
 
 /** Shared by the three usage endpoints — malformed from/to must fail clearly rather than silently produce a wrong range. */
@@ -226,21 +227,23 @@ export const updateUser = catchAsync(async (req: AuthRequest, res: Response) => 
 });
 
 /**
- * Delete User
+ * Delete User (privacy-safe — PR-PRIVACY admin lifecycle)
  * DELETE /api/admin/users/:id
+ *
+ * Never hard-deletes the User row. Routes through the same
+ * AccountDeletionService lifecycle as self-service deletion: revokes every
+ * session, anonymizes PII in place, clears reset/verification tokens, queues
+ * the existing OperationalJob-based interview cleanup + email suppression,
+ * and records a PrivacyActionAudit row with the acting admin as actor
+ * (distinct from the subject). Financial/audit records are never touched.
+ * requestDeletionByAdmin itself rejects an admin attempting to delete their
+ * own currently-authenticated account through this route.
  */
 export const deleteUser = catchAsync(async (req: AuthRequest, res: Response) => {
-  const user = await User.findByIdAndDelete(req.params.id);
-  
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-  
-  // Also delete all user's interviews
-  await Interview.deleteMany({ userId: user._id });
-  
-  res.status(200).json(
-    successResponse('User and associated interviews deleted successfully')
+  await accountDeletionService.requestDeletionByAdmin(req.params.id, req.user!.id);
+
+  res.status(202).json(
+    successResponse('User account deletion is processing. Access has been revoked and personal data cleanup is queued.')
   );
 });
 

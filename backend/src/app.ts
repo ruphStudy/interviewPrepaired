@@ -7,8 +7,6 @@ import rateLimit from 'express-rate-limit';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './middleware/logger';
 import { requestId } from './middleware/requestId';
-import { protect, authorize } from './middleware/auth';
-import { privacySafeAdminDeleteUser } from './controllers/privacyAdmin.controller';
 import healthRoutes from './routes/health.routes';
 import routes from './routes';
 import { env } from './config/environment';
@@ -75,16 +73,6 @@ const healthCheck = (_req: Request, res: Response) => {
 app.get('/health', healthCheck);
 app.get('/live', healthCheck);
 app.use(healthRoutes);
-
-/**
- * Privacy safety shim for the existing admin contract. The historical
- * admin.routes delete handler hard-deletes users; mount the same public path
- * first so every request reaches the privacy-safe anonymization/cleanup
- * lifecycle. Keeping the URL stable avoids breaking the current admin UI.
- * The obsolete controller implementation can be removed in a later cleanup
- * after all clients have been confirmed against this route.
- */
-app.delete('/api/v1/admin/users/:id', protect, authorize('admin'), privacySafeAdminDeleteUser);
 
 app.use('/api/v1', routes);
 

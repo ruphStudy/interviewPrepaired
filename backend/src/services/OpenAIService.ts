@@ -989,7 +989,20 @@ Create a comprehensive final report including:
 - Interview Readiness Score (0-10)
 - Actionable Next Steps (3-5 specific actions)
 
-Be encouraging yet honest. Make feedback specific to ${config.topic}.`;
+Be encouraging yet honest. Make feedback specific to ${config.topic}.
+
+Respond with a single JSON object (this call uses the OpenAI API's JSON
+response mode, which requires the response to be valid JSON) with exactly
+these keys:
+- overallScore (number, 0-10)
+- interviewReadinessScore (number, 0-10)
+- summary (string, 2-3 paragraphs)
+- recommendations (string[], 3-5 items)
+- strengthsOverview (string[], 3-5 items)
+- weaknessesOverview (string[], 3-5 items)
+- suggestedLearningPath (string[], 3-5 items)
+- recommendedNextTopics (string[], 2-4 items)
+- nextSteps (string[], 3-5 items)`;
   }
 
   // ==========================================================================

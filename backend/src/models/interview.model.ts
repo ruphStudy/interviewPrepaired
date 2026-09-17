@@ -851,12 +851,25 @@ interviewSchema.index({ topic: 'text' });
 // Virtual Fields
 // ============================================================================
 
+// BUG FIX (institute/employer journey audit): the `post('init')` hook below
+// calls `doc.toObject()` on EVERY Interview document load, unconditionally
+// — including loads that used `.select(...)` to exclude `questions` (e.g.
+// PublicEmployerInterviewInvitationService.getReadyScenarios does
+// `Interview.findById(id).select('_id purpose')`). `this.questions` is then
+// `undefined` rather than `[]`, and `.filter()` on it threw a 500
+// ("Cannot read properties of undefined (reading 'filter')"), live-
+// reproduced during this audit on the public candidate assessment's
+// scenario-check endpoint — a crash on a fully public, unauthenticated
+// route reachable by any candidate whose job has no scenario configured.
+// `(this.questions || [])` keeps every fully-loaded-document caller
+// byte-identical while making a partial-projection load return 0 instead
+// of throwing.
 interviewSchema.virtual('completedQuestions').get(function (this: IInterview) {
-  return this.questions.filter((q) => q.answerText && q.answerText.length > 0).length;
+  return (this.questions || []).filter((q) => q.answerText && q.answerText.length > 0).length;
 });
 
 interviewSchema.virtual('averageScore').get(function (this: IInterview) {
-  const evaluatedQuestions = this.questions.filter((q) => q.evaluation);
+  const evaluatedQuestions = (this.questions || []).filter((q) => q.evaluation);
   if (evaluatedQuestions.length === 0) return 0;
 
   const totalScore = evaluatedQuestions.reduce(
@@ -868,7 +881,7 @@ interviewSchema.virtual('averageScore').get(function (this: IInterview) {
 
 interviewSchema.virtual('progressPercentage').get(function (this: IInterview) {
   if (this.totalQuestions === 0) return 0;
-  const completed = this.questions.filter((q) => q.answerText).length;
+  const completed = (this.questions || []).filter((q) => q.answerText).length;
   return parseFloat(((completed / this.totalQuestions) * 100).toFixed(2));
 });
 

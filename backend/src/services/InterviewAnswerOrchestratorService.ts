@@ -18,6 +18,12 @@ import { inferInterviewStyle, mapExperienceYearsToLevel } from './OpenAIAdapter'
 import { InterviewService } from './InterviewService';
 
 const RECOVERY_CLAIM_STALE_MS = 2 * 60 * 1000;
+// Wraps the entire legacy submission chain (evaluation + memory/claim/
+// contradiction/coverage/difficulty updates + next-question generation) —
+// several sequential AI calls — so it needs a longer stale-lease window than
+// the single-AI-call recovery path below to avoid reclaiming a still-alive
+// first submission as abandoned.
+const FIRST_SUBMISSION_CLAIM_STALE_MS = 5 * 60 * 1000;
 
 interface SubmitAnswerParams {
   interviewId: string;
@@ -64,6 +70,7 @@ export class InterviewAnswerOrchestratorService {
       // Backward-compatible legacy caller: preserve existing behavior.
       return this.core.submitAnswer(params);
     }
+    const questionNumber = params.questionNumber;
 
     const interview = await Interview.findOne({
       _id: new Types.ObjectId(params.interviewId),
@@ -72,17 +79,50 @@ export class InterviewAnswerOrchestratorService {
 
     if (!interview) throw new ApiError(404, 'Interview not found');
 
-    const targetIndex = params.questionNumber - 1;
+    const targetIndex = questionNumber - 1;
     const target = interview.questions[targetIndex];
     if (!target) {
       throw new ApiError(409, 'This question is no longer the active interview question', undefined, 'INTERVIEW_QUESTION_STALE');
     }
 
     if (!target.answerText) {
-      if (interview.currentQuestion !== params.questionNumber) {
+      if (interview.currentQuestion !== questionNumber) {
         throw new ApiError(409, 'The interview has moved to a different question. Reload to continue.', undefined, 'INTERVIEW_QUESTION_STALE');
       }
-      return this.core.submitAnswer(params);
+      // Two concurrent first-time submissions for the exact same question
+      // (a double-click, or a client retry racing the still-in-flight
+      // original) would otherwise both pass the in-memory checks above and
+      // both reach the legacy service below, which persists via plain
+      // document `.save()` calls with no optimistic-concurrency guard —
+      // each would independently call the AI evaluator AND independently
+      // append a "next question"/increment `currentQuestion`, doubling AI
+      // cost and corrupting progression. Serialize on the SAME atomic claim
+      // the post-persistence recovery path already uses below, so only one
+      // caller ever runs the legacy submission for this question at a time.
+      // A longer staleness window than the recovery path's is used here
+      // because this wraps the ENTIRE legacy call (evaluation, memory/claim/
+      // contradiction/coverage/difficulty updates, and next-question
+      // generation — several sequential AI calls), not just one.
+      await this.acquireRecoveryClaim(interview._id.toString(), targetIndex, FIRST_SUBMISSION_CLAIM_STALE_MS);
+      try {
+        const result = await this.core.submitAnswer(params);
+        await InterviewAnswerRecoveryClaim.updateOne(
+          { interviewId: interview._id, questionIndex: targetIndex },
+          { $set: { status: 'completed', completedAt: new Date(), failureMessage: undefined } }
+        ).catch(() => undefined);
+        return result;
+      } catch (error) {
+        await InterviewAnswerRecoveryClaim.updateOne(
+          { interviewId: interview._id, questionIndex: targetIndex },
+          {
+            $set: {
+              status: 'failed',
+              failureMessage: error instanceof Error ? error.message.slice(0, 500) : 'Answer submission failed',
+            },
+          }
+        ).catch(() => undefined);
+        throw error;
+      }
     }
 
     // A repeated request may only be treated as idempotent if it represents
@@ -99,11 +139,11 @@ export class InterviewAnswerOrchestratorService {
 
     // If the first request completed the mutation but its HTTP response was
     // lost, simply replay persisted state — zero additional AI cost.
-    if (target.evaluation && (interview.currentQuestion > params.questionNumber || this.isTerminal(interview))) {
+    if (target.evaluation && (interview.currentQuestion > questionNumber || this.isTerminal(interview))) {
       return this.replayPersistedResult(interview, targetIndex);
     }
 
-    return this.recoverInterruptedSubmission(interview, targetIndex, params);
+    return this.recoverInterruptedSubmission(interview, targetIndex, { ...params, questionNumber });
   }
 
   private isTerminal(interview: IInterview): boolean {
@@ -133,7 +173,7 @@ export class InterviewAnswerOrchestratorService {
   private async recoverInterruptedSubmission(
     interview: IInterview,
     targetIndex: number,
-    params: SubmitAnswerParams
+    params: SubmitAnswerParams & { questionNumber: number }
   ): Promise<SubmitAnswerResult> {
     let evaluation = interview.questions[targetIndex].evaluation as DynamicEvaluationResponse | undefined;
 
@@ -346,7 +386,11 @@ export class InterviewAnswerOrchestratorService {
     };
   }
 
-  private async acquireRecoveryClaim(interviewId: string, questionIndex: number): Promise<void> {
+  private async acquireRecoveryClaim(
+    interviewId: string,
+    questionIndex: number,
+    staleMs: number = RECOVERY_CLAIM_STALE_MS
+  ): Promise<void> {
     try {
       await InterviewAnswerRecoveryClaim.create({
         interviewId: new Types.ObjectId(interviewId),
@@ -359,7 +403,7 @@ export class InterviewAnswerOrchestratorService {
       if (error?.code !== 11000) throw error;
     }
 
-    const staleBefore = new Date(Date.now() - RECOVERY_CLAIM_STALE_MS);
+    const staleBefore = new Date(Date.now() - staleMs);
     const claim = await InterviewAnswerRecoveryClaim.findOneAndUpdate(
       {
         interviewId: new Types.ObjectId(interviewId),

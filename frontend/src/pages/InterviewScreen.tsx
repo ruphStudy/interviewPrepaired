@@ -167,56 +167,77 @@ export const InterviewScreen: React.FC = () => {
     setPhase('PROCESSING');
     setAvatarState(AvatarState.THINKING);
 
-    try {
-      const response = await interviewApi.submitAnswer({
-        interviewId,
-        answer: normalizedAnswer,
-        duration,
-        questionNumber: currentQuestionNumber,
-      });
+    // A concurrent submission for the same question (double-click, or a retry
+    // racing the still-in-flight original) is rejected server-side with a
+    // transient 409 ANSWER_PROCESSING_IN_PROGRESS rather than a hard failure.
+    // Automatically retry a few times with a short delay so the user sees a
+    // brief "still processing" state instead of an alarming error.
+    const MAX_PROCESSING_RETRIES = 3;
+    const PROCESSING_RETRY_DELAY_MS = 1500;
 
-      setTypedAnswer('');
-      clearSpeechError();
-      setPhase('NEXT_QUESTION');
-      setAvatarState(AvatarState.SPEAKING);
-      const lang = interviewData?.interviewLanguage;
+    const attemptSubmit = async (attempt: number): Promise<void> => {
       try {
-        await speak(getInterviewPhrase('thankYou', lang));
-      } catch {
-        // Keep progressing even if voice output fails.
-      }
+        const response = await interviewApi.submitAnswer({
+          interviewId,
+          answer: normalizedAnswer,
+          duration,
+          questionNumber: currentQuestionNumber,
+        });
 
-      if (response.data.interview.isCompleted) {
+        setTypedAnswer('');
+        clearSpeechError();
+        setPhase('NEXT_QUESTION');
+        setAvatarState(AvatarState.SPEAKING);
+        const lang = interviewData?.interviewLanguage;
         try {
-          await speak(getInterviewPhrase('congratulations', lang));
-          await speak(getInterviewPhrase('reportReady', lang));
+          await speak(getInterviewPhrase('thankYou', lang));
         } catch {
-          // Navigation to the report is the important part.
+          // Keep progressing even if voice output fails.
         }
-        setPhase('COMPLETED');
-        setAvatarState(AvatarState.COMPLETED);
-        window.setTimeout(() => navigate(`/report/${interviewId}`), 800);
-        return;
-      }
 
-      if (response.data.nextQuestion) {
-        try {
-          await speak(getInterviewPhrase('nextQuestion', lang));
-        } catch {
-          // Non-blocking.
+        if (response.data.interview.isCompleted) {
+          try {
+            await speak(getInterviewPhrase('congratulations', lang));
+            await speak(getInterviewPhrase('reportReady', lang));
+          } catch {
+            // Navigation to the report is the important part.
+          }
+          setPhase('COMPLETED');
+          setAvatarState(AvatarState.COMPLETED);
+          window.setTimeout(() => navigate(`/report/${interviewId}`), 800);
+          return;
         }
-        const nextQ = response.data.nextQuestion.question;
-        setCurrentQuestion(nextQ);
-        setCurrentQuestionNumber(response.data.interview.currentQuestion);
-        await askCurrentQuestion(nextQ);
-      } else {
-        setSubmissionError('Your answer was saved, but the next question is not ready. Reload this interview to recover safely.');
+
+        if (response.data.nextQuestion) {
+          try {
+            await speak(getInterviewPhrase('nextQuestion', lang));
+          } catch {
+            // Non-blocking.
+          }
+          const nextQ = response.data.nextQuestion.question;
+          setCurrentQuestion(nextQ);
+          setCurrentQuestionNumber(response.data.interview.currentQuestion);
+          await askCurrentQuestion(nextQ);
+        } else {
+          setSubmissionError('Your answer was saved, but the next question is not ready. Reload this interview to recover safely.');
+          setPhase('LISTENING');
+        }
+      } catch (error: any) {
+        if (error?.code === 'ANSWER_PROCESSING_IN_PROGRESS' && attempt < MAX_PROCESSING_RETRIES) {
+          // Stay in the PROCESSING phase — this is not a failure, just a
+          // brief wait for the in-flight submission to finish.
+          await new Promise((resolve) => window.setTimeout(resolve, PROCESSING_RETRY_DELAY_MS));
+          await attemptSubmit(attempt + 1);
+          return;
+        }
+        setSubmissionError(error?.message || 'We could not process your answer. Please try again.');
+        setAvatarState(AvatarState.IDLE);
         setPhase('LISTENING');
       }
-    } catch (error: any) {
-      setSubmissionError(error?.message || 'We could not process your answer. Please try again.');
-      setAvatarState(AvatarState.IDLE);
-      setPhase('LISTENING');
+    };
+
+    try {
+      await attemptSubmit(1);
     } finally {
       setIsProcessing(false);
     }

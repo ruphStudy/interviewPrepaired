@@ -29,9 +29,17 @@ interface LedgerRow {
  * — adds RBAC, institute-only scoping, and the plan-code/manual-amount
  * grant policy on top of the pure ledger primitives. This is the ONLY
  * place plan codes are resolved to a credit amount; the underlying ledger
- * service knows nothing about plans. No payment gateway/subscription
- * billing model — grantCredits() here is a temporary admin/owner-style
- * foundation endpoint, not a purchase flow.
+ * service knows nothing about plans.
+ *
+ * grantCredits() is a raw, unpaid ledger-writing primitive — never a
+ * purchase flow (real purchases go through
+ * OrganizationBillingCheckoutService/PR-B2B-BILL's Razorpay checkout). The
+ * route (organization.routes.ts) additionally requires
+ * `authorize('admin')` — genuine EnterSkill platform-staff, not merely an
+ * institute's own OWNER/ADMIN — specifically so an institute can never
+ * self-grant free credits by calling this instead of paying. Only the
+ * caller's `ORGANIZATION_UPDATE` permission is asserted here; the
+ * platform-admin check lives at the route layer.
  */
 export class InstituteInterviewCreditService {
   /** GET /interview-credits — balance + safe public plan catalog. Read-only, so an archived organization remains readable. */

@@ -52,10 +52,54 @@ interface Interview {
   createdAt: string;
 }
 
+interface PaymentOrder {
+  id: string;
+  userId: string;
+  userEmail?: string;
+  purchaseType: string;
+  planCode?: string;
+  creditPackCode?: string;
+  amountPaise: number;
+  currency: string;
+  status: string;
+  providerOrderId?: string;
+  providerPaymentId?: string;
+  failureCode?: string;
+  createdAt: string;
+  paidAt?: string;
+  refundedAt?: string;
+  refundedAmountPaise?: number;
+}
+
+interface OperationalJob {
+  id: string;
+  jobType: string;
+  status: string;
+  attemptCount: number;
+  maxAttempts: number;
+  nextAttemptAt: string;
+  failureCode?: string;
+  failureMessage?: string;
+  manualRetryCount: number;
+  createdAt: string;
+}
+
+interface PrivacyAuditEntry {
+  action: string;
+  actorUserId?: string;
+  subjectUserId?: string;
+  status: string;
+  requestedAt: string;
+  completedAt?: string;
+  failureCode?: string;
+}
+
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { token, isAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'interviews' | 'analytics'>('dashboard');
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'users' | 'interviews' | 'analytics' | 'payments' | 'jobs' | 'privacy'
+  >('dashboard');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -79,6 +123,23 @@ const AdminDashboard: React.FC = () => {
   const [interviewTrend, setInterviewTrend] = useState<any[]>([]);
   const [scoresByDifficulty, setScoresByDifficulty] = useState<any[]>([]);
 
+  // Payment orders data (PR-BILL-8 — support troubleshooting: stuck/failed payments, refunds)
+  const [paymentOrders, setPaymentOrders] = useState<PaymentOrder[]>([]);
+  const [paymentOrdersPage, setPaymentOrdersPage] = useState(1);
+  const [paymentOrdersTotal, setPaymentOrdersTotal] = useState(0);
+  const [paymentOrdersStatus, setPaymentOrdersStatus] = useState('');
+
+  // Operational jobs data (PR-OPS-1/2 — support/ops visibility into dead-lettered/failed jobs)
+  const [operationalJobs, setOperationalJobs] = useState<OperationalJob[]>([]);
+  const [jobsPage, setJobsPage] = useState(1);
+  const [jobsTotal, setJobsTotal] = useState(0);
+  const [jobsStatus, setJobsStatus] = useState('');
+
+  // Privacy audit data (PR-PRIVACY-5 — read-only trail for support tickets)
+  const [privacyAudit, setPrivacyAudit] = useState<PrivacyAuditEntry[]>([]);
+  const [privacyPage, setPrivacyPage] = useState(1);
+  const [privacyTotal, setPrivacyTotal] = useState(0);
+
   // Redirect if not admin
   useEffect(() => {
     if (!isAdmin) {
@@ -96,8 +157,24 @@ const AdminDashboard: React.FC = () => {
       fetchInterviews();
     } else if (activeTab === 'analytics') {
       fetchAnalytics();
+    } else if (activeTab === 'payments') {
+      fetchPaymentOrders();
+    } else if (activeTab === 'jobs') {
+      fetchOperationalJobs();
+    } else if (activeTab === 'privacy') {
+      fetchPrivacyAudit();
     }
-  }, [activeTab, usersPage, usersSearch, interviewsPage]);
+  }, [
+    activeTab,
+    usersPage,
+    usersSearch,
+    interviewsPage,
+    paymentOrdersPage,
+    paymentOrdersStatus,
+    jobsPage,
+    jobsStatus,
+    privacyPage,
+  ]);
 
   const fetchDashboard = async () => {
     setLoading(true);
@@ -162,8 +239,105 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  const fetchPaymentOrders = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(
+        `${API_BASE_URL}/admin/payment-orders?page=${paymentOrdersPage}&limit=10${
+          paymentOrdersStatus ? `&status=${paymentOrdersStatus}` : ''
+        }`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setPaymentOrders(response.data.data.orders);
+      setPaymentOrdersTotal(response.data.data.total);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load payment orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reconcilePaymentOrder = async (orderId: string) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/admin/payment-orders/${orderId}/reconcile`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      alert(`Reconciliation result:\n${JSON.stringify(response.data.data, null, 2)}`);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to reconcile payment order');
+    }
+  };
+
+  const refundPaymentOrder = async (order: PaymentOrder) => {
+    const reason = window.prompt(
+      `Refund reason for order ${order.id} (₹${(order.amountPaise / 100).toFixed(2)}):`
+    );
+    if (!reason) return;
+    try {
+      await axios.post(
+        `${API_BASE_URL}/admin/payment-orders/${order.id}/refund`,
+        { reason },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      fetchPaymentOrders();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to refund payment order');
+    }
+  };
+
+  const fetchOperationalJobs = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(
+        `${API_BASE_URL}/admin/operational-jobs?page=${jobsPage}&limit=10${
+          jobsStatus ? `&status=${jobsStatus}` : ''
+        }`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setOperationalJobs(response.data.data.jobs);
+      setJobsTotal(response.data.data.total);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load operational jobs');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const retryOperationalJob = async (jobId: string) => {
+    if (!confirm('Retry this job now?')) return;
+    try {
+      await axios.post(
+        `${API_BASE_URL}/admin/operational-jobs/${jobId}/retry`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      fetchOperationalJobs();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to retry job');
+    }
+  };
+
+  const fetchPrivacyAudit = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE_URL}/admin/privacy-audit?page=${privacyPage}&limit=10`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setPrivacyAudit(response.data.data.entries);
+      setPrivacyTotal(response.data.data.total);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load privacy audit trail');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const deleteUser = async (userId: string) => {
-    if (!confirm('Are you sure you want to delete this user? This will also delete all their interviews.')) {
+    if (
+      !confirm(
+        'Delete this user? Access is revoked immediately and personal data (name/email/interviews) is anonymized and cleaned up shortly after. Billing history is preserved. This cannot be undone.'
+      )
+    ) {
       return;
     }
     try {
@@ -209,7 +383,7 @@ const AdminDashboard: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="border-b border-gray-200 mb-6">
           <nav className="-mb-px flex space-x-8">
-            {['dashboard', 'users', 'interviews', 'analytics'].map((tab) => (
+            {['dashboard', 'users', 'interviews', 'analytics', 'payments', 'jobs', 'privacy'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab as any)}
@@ -494,6 +668,260 @@ const AdminDashboard: React.FC = () => {
                       <Bar dataKey="averageScore" fill="#4F46E5" />
                     </BarChart>
                   </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* Payment Orders Tab (PR-BILL-8) — troubleshoot stuck/failed payments, refund */}
+            {activeTab === 'payments' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <select
+                    value={paymentOrdersStatus}
+                    onChange={(e) => {
+                      setPaymentOrdersPage(1);
+                      setPaymentOrdersStatus(e.target.value);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="">All statuses</option>
+                    <option value="created">created</option>
+                    <option value="provider_created">provider_created</option>
+                    <option value="payment_pending">payment_pending</option>
+                    <option value="paid">paid</option>
+                    <option value="failed">failed</option>
+                    <option value="cancelled">cancelled</option>
+                    <option value="expired">expired</option>
+                    <option value="refunded">refunded</option>
+                    <option value="partially_refunded">partially_refunded</option>
+                  </select>
+                  <div className="text-sm text-gray-600">Total: {paymentOrdersTotal} orders</div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {paymentOrders.map((order) => (
+                        <tr key={order.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{order.userEmail || order.userId}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">{order.planCode || order.creditPackCode || order.purchaseType}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            {(order.amountPaise / 100).toFixed(2)} {order.currency}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              order.status === 'paid' ? 'bg-green-100 text-green-800' :
+                              order.status === 'failed' ? 'bg-red-100 text-red-800' :
+                              order.status.includes('refund') ? 'bg-purple-100 text-purple-800' :
+                              'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {order.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(order.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm space-x-2">
+                            <button
+                              onClick={() => reconcilePaymentOrder(order.id)}
+                              className="text-indigo-600 hover:text-indigo-900"
+                            >
+                              Reconcile
+                            </button>
+                            {order.status === 'paid' && (
+                              <button
+                                onClick={() => refundPaymentOrder(order)}
+                                className="text-red-600 hover:text-red-900"
+                              >
+                                Refund
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <button
+                    onClick={() => setPaymentOrdersPage(p => Math.max(1, p - 1))}
+                    disabled={paymentOrdersPage === 1}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-gray-600">Page {paymentOrdersPage} of {Math.max(1, Math.ceil(paymentOrdersTotal / 10))}</span>
+                  <button
+                    onClick={() => setPaymentOrdersPage(p => p + 1)}
+                    disabled={paymentOrdersPage >= Math.ceil(paymentOrdersTotal / 10)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Operational Jobs Tab (PR-OPS-1/2) — dead-lettered/failed async job visibility + manual retry */}
+            {activeTab === 'jobs' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <select
+                    value={jobsStatus}
+                    onChange={(e) => {
+                      setJobsPage(1);
+                      setJobsStatus(e.target.value);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="">All statuses</option>
+                    <option value="pending">pending</option>
+                    <option value="active">active</option>
+                    <option value="completed">completed</option>
+                    <option value="dead_letter">dead_letter</option>
+                    <option value="cancelled">cancelled</option>
+                  </select>
+                  <div className="text-sm text-gray-600">Total: {jobsTotal} jobs</div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Attempts</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Failure</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {operationalJobs.map((job) => (
+                        <tr key={job.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">{job.jobType}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              job.status === 'completed' ? 'bg-green-100 text-green-800' :
+                              job.status === 'dead_letter' ? 'bg-red-100 text-red-800' :
+                              job.status === 'active' ? 'bg-blue-100 text-blue-800' :
+                              'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {job.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">{job.attemptCount}/{job.maxAttempts}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{job.failureCode || '—'}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(job.createdAt).toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            {(job.status === 'dead_letter' || job.status === 'pending') && (
+                              <button
+                                onClick={() => retryOperationalJob(job.id)}
+                                className="text-indigo-600 hover:text-indigo-900"
+                              >
+                                Retry
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <button
+                    onClick={() => setJobsPage(p => Math.max(1, p - 1))}
+                    disabled={jobsPage === 1}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-gray-600">Page {jobsPage} of {Math.max(1, Math.ceil(jobsTotal / 10))}</span>
+                  <button
+                    onClick={() => setJobsPage(p => p + 1)}
+                    disabled={jobsPage >= Math.ceil(jobsTotal / 10)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Privacy Audit Tab (PR-PRIVACY-5) — read-only trail for support tickets / deletion proof */}
+            {activeTab === 'privacy' && (
+              <div className="space-y-4">
+                <div className="text-sm text-gray-600">Total: {privacyTotal} entries</div>
+
+                <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actor</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Requested</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Completed</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {privacyAudit.map((entry, idx) => (
+                        <tr key={idx}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">{entry.action}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.actorUserId || '—'}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.subjectUserId || '—'}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              entry.status === 'completed' ? 'bg-green-100 text-green-800' :
+                              entry.status === 'failed' ? 'bg-red-100 text-red-800' :
+                              'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {entry.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(entry.requestedAt).toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {entry.completedAt ? new Date(entry.completedAt).toLocaleString() : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <button
+                    onClick={() => setPrivacyPage(p => Math.max(1, p - 1))}
+                    disabled={privacyPage === 1}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-gray-600">Page {privacyPage} of {Math.max(1, Math.ceil(privacyTotal / 10))}</span>
+                  <button
+                    onClick={() => setPrivacyPage(p => p + 1)}
+                    disabled={privacyPage >= Math.ceil(privacyTotal / 10)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
                 </div>
               </div>
             )}

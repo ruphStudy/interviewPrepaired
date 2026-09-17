@@ -27,6 +27,7 @@ import { getAIService } from '../ai';
 import type { AIResponseMetadata } from '../ai';
 import { resolveStoredResumeAbsolutePath } from '../utils/candidateResumeStorage';
 import { resumeTextExtractionService } from './ResumeTextExtractionService';
+import { fileStorageService } from './FileStorageService';
 import { ApiError } from '../utils/ApiError';
 
 interface CandidateRef {
@@ -154,8 +155,19 @@ export class EmployerCandidateResumeAnalysisService {
 
     // From here, `claim.row` is exclusively ours (status: processing).
     try {
-      const absolutePath = resolveStoredResumeAbsolutePath(currentSource.storedFileName);
-      const buffer = await fs.promises.readFile(absolutePath);
+      // BUG FIX (institute/employer journey audit): PR-STORAGE-3 migrated
+      // resume upload/download to object storage (see
+      // EmployerCandidateResumeService.getResumeFileForDownload, which
+      // already branches on `storageProvider` exactly like this), but this
+      // analysis path was never updated — it unconditionally read the
+      // legacy local-disk path, so EVERY resume uploaded after that
+      // migration (storageProvider set) failed with ENOENT here,
+      // permanently blocking screening/shortlisting/interview-invitation
+      // for any candidate with a post-migration resume, live-reproduced
+      // during this audit. Mirrors the same branch used for downloads.
+      const buffer = currentSource.storageProvider
+        ? await fileStorageService.downloadFile(currentSource.storedFileName)
+        : await fs.promises.readFile(resolveStoredResumeAbsolutePath(currentSource.storedFileName));
       const resumeText = await resumeTextExtractionService.extractText(buffer, currentSource.fileExtension);
 
       const { profile, aiUsage } = await this.runAnalysis(resumeText, organization._id.toString());

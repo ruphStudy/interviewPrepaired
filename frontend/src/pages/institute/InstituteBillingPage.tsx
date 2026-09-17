@@ -58,12 +58,12 @@ const formatDateTime = (value: string) => new Date(value).toLocaleString();
 const formatInr = (value: number) => `₹${value.toLocaleString('en-IN')}`;
 
 /**
- * Institute Billing & Credits (UI-08). There is NO payment gateway or
- * subscription model yet — the plan catalog is informational only ("what
- * packages exist"), never a checkout. The only mutation here is the
- * existing foundation/admin-style grant endpoint, deliberately labeled
- * "Administrative Credit Grant" and gated to organization:update so it
- * reads as an internal action, not a purchase flow.
+ * Institute Billing & Credits (UI-08 / PR-B2B-BILL-2). Real purchases go
+ * through the self-service Razorpay checkout below (handleBuyCredits).
+ * "Administrative Credit Grant" is a separate, platform-staff-only ledger
+ * primitive (see canAdminGrant) — it is NOT a purchase flow and is hidden
+ * from ordinary institute owners/admins, since the backend route requires
+ * User.role==='admin' precisely to prevent self-service free credits.
  */
 const InstituteBillingPage: React.FC = () => {
   const { organizationId } = useParams<{ organizationId: string }>();
@@ -116,7 +116,15 @@ const InstituteBillingPage: React.FC = () => {
 
   const isSyncing = !organizationId || activeOrganizationId !== organizationId;
   const canView = hasPermission('organization:view');
+  // Real self-service purchase — any institute owner/admin with
+  // organization:update, same as before.
   const canGrant = hasPermission('organization:update') && activeOrganization?.status !== 'archived';
+  // Free "Administrative Credit Grant" — the backend now requires genuine
+  // EnterSkill platform staff (User.role === 'admin') on top of
+  // organization:update, closing a self-service free-credit bypass of the
+  // real Razorpay checkout above. Hidden here for anyone who wouldn't pass
+  // that check, rather than showing a button that always 403s.
+  const canAdminGrant = canGrant && user?.role === 'admin';
   const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
 
   const fetchSummary = useCallback(async () => {
@@ -466,8 +474,8 @@ const InstituteBillingPage: React.FC = () => {
           )}
         </div>
 
-        {/* Administrative grant */}
-        {canGrant && (
+        {/* Administrative grant — platform-staff only, see canAdminGrant above */}
+        {canAdminGrant && (
           <div className="card mb-6">
             <div className="flex items-center gap-2 mb-1">
               <ShieldCheck size={18} className="text-primary-600" />

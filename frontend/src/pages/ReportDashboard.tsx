@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   RadarChart,
@@ -18,7 +18,7 @@ import {
   Line,
 } from 'recharts';
 import AuthenticatedLayout from '../components/AuthenticatedLayout';
-import { interviewApi, InterviewReport } from '../api/interviewApi';
+import { interviewApi, InterviewReport, InterviewHistoryItem as ApiInterviewHistoryItem } from '../api/interviewApi';
 import { API_BASE_URL } from '../config/api.config';
 import { getLanguageByCode } from '../config/languages';
 import {
@@ -106,6 +106,29 @@ interface HistoryScoreData {
   score: number;
 }
 
+/**
+ * Pure mapping so it can be unit-tested in isolation from the component.
+ * Only interviews with a real, recorded overall score belong in the
+ * progress chart/list — `overallScore` is `undefined` for interviews that
+ * haven't been evaluated yet (in-progress/created/paused), and that is a
+ * distinct case from an actual score of 0, which must be preserved.
+ */
+export function mapScoredHistory(items: ApiInterviewHistoryItem[]): InterviewHistoryItem[] {
+  return items
+    .filter((item): item is ApiInterviewHistoryItem & { overallScore: number } => typeof item.overallScore === 'number')
+    .map((item) => ({
+      id: item.id,
+      topic: item.topic,
+      difficulty: item.difficulty,
+      status: item.status,
+      overallScore: item.overallScore,
+      totalQuestions: item.totalQuestions,
+      completedQuestions: item.answeredQuestions,
+      createdAt: item.createdAt,
+      completedAt: item.completedAt,
+    }));
+}
+
 // Main Component
 const ReportDashboard: React.FC = () => {
   const { interviewId } = useParams<{ interviewId: string }>();
@@ -116,6 +139,8 @@ const ReportDashboard: React.FC = () => {
   const [history, setHistory] = useState<InterviewHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'details' | 'history'>('overview');
   const [exportLoading, setExportLoading] = useState<'pdf' | 'csv' | 'json' | null>(null);
 
@@ -143,21 +168,25 @@ const ReportDashboard: React.FC = () => {
     fetchReport();
   }, [interviewId]);
 
-  // Fetch Interview History
-  useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        // This would be a new API endpoint: GET /api/interview/history
-        // For now, using mock data structure
-        const historyData: InterviewHistoryItem[] = [];
-        setHistory(historyData);
-      } catch (err) {
-        console.error('Failed to load history:', err);
-      }
-    };
-
-    fetchHistory();
+  // Fetch Interview History (real data via the existing history endpoint —
+  // used to power the "Progress History" tab's chart and past-interviews list).
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const response = await interviewApi.getHistory({ page: 1, limit: 50 });
+      setHistory(mapScoredHistory(response.data.interviews));
+    } catch (err: any) {
+      console.error('Failed to load history:', err);
+      setHistoryError(err.message || 'Failed to load interview history');
+    } finally {
+      setHistoryLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
 
   // Prepare Radar Chart Data
   const getRadarChartData = (): ScoreData[] => {
@@ -240,11 +269,15 @@ const ReportDashboard: React.FC = () => {
   };
 
   // Prepare History Line Chart Data
+  // `history` is newest-first (matches the list below); a progression chart
+  // reads left-to-right as "over time", so this needs oldest-first order.
   const getHistoryChartData = (): HistoryScoreData[] => {
-    return history.map((item) => ({
-      date: new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      score: item.overallScore,
-    }));
+    return [...history]
+      .reverse()
+      .map((item) => ({
+        date: new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        score: item.overallScore,
+      }));
   };
 
   // Export Functions
@@ -1063,7 +1096,21 @@ const ReportDashboard: React.FC = () => {
           {/* History Tab */}
           {activeTab === 'history' && (
             <div className="space-y-6">
-              {historyData.length > 0 ? (
+              {historyLoading ? (
+                <div className="card p-12 text-center">
+                  <Loader2 className="w-8 h-8 text-primary-600 animate-spin mx-auto mb-3" />
+                  <p className="text-mentor-text-muted text-sm">Loading your progress history...</p>
+                </div>
+              ) : historyError ? (
+                <div className="card p-12 text-center">
+                  <AlertCircle className="w-12 h-12 text-mentor-error mx-auto mb-4" />
+                  <h3 className="section-title mb-1.5">Couldn't load progress history</h3>
+                  <p className="text-sm text-mentor-text-secondary mb-5">{historyError}</p>
+                  <button onClick={() => fetchHistory()} className="btn btn-primary">
+                    Try Again
+                  </button>
+                </div>
+              ) : historyData.length > 0 ? (
                 <>
                   {/* History Line Chart */}
                   <div className="card">
@@ -1100,7 +1147,7 @@ const ReportDashboard: React.FC = () => {
                           <div>
                             <h4 className="text-sm font-semibold text-mentor-text">{item.topic}</h4>
                             <p className="text-xs text-mentor-text-muted mt-0.5">
-                              {item.difficulty} &middot; {item.totalQuestions} questions &middot;{' '}
+                              {item.difficulty} &middot; {item.completedQuestions}/{item.totalQuestions} questions &middot;{' '}
                               {new Date(item.createdAt).toLocaleDateString()}
                             </p>
                           </div>
