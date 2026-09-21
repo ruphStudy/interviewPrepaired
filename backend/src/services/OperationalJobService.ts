@@ -141,6 +141,8 @@ class OperationalJobService {
         return this.handlePrivacyExportGeneration(payload);
       case OperationalJobType.ACCOUNT_DELETION:
         return this.handleAccountDeletion(payload);
+      case OperationalJobType.INTERVIEW_DEFERRED_ENRICHMENT:
+        return this.handleInterviewDeferredEnrichment(payload);
       default:
         // Unknown job type — permanent, never retried.
         throw new ApiError(400, `Unknown operational job type: ${jobType}`);
@@ -225,6 +227,22 @@ class OperationalJobService {
     // TransientOperationalError for plausibly-transient steps — no
     // reclassification needed here.
     await accountDeletionService.processAccountDeletion(userId, originalEmail);
+  }
+
+  private async handleInterviewDeferredEnrichment(payload: Record<string, unknown>): Promise<void> {
+    const interviewId = String(payload.interviewId ?? '');
+    const questionIndex = Number(payload.questionIndex);
+    if (!interviewId || !Number.isInteger(questionIndex) || questionIndex < 0) {
+      throw new ApiError(400, 'INTERVIEW_DEFERRED_ENRICHMENT job payload missing interviewId/questionIndex');
+    }
+    // Lazy import (avoids a hard circular dependency at module-load time,
+    // same pattern as every other handler above). performDeferredEnrichment
+    // itself is idempotent (skips any AI call whose result already exists)
+    // and throws TransientOperationalError only for a genuinely retryable
+    // model-answer-generation failure — a legitimately not-applicable STAR
+    // result (non-behavioral interview style) never throws.
+    const { default: interviewService } = await import('./InterviewService');
+    await interviewService.performDeferredEnrichment(interviewId, questionIndex);
   }
 
   private async recordFailure(job: IOperationalJob, error: unknown): Promise<void> {

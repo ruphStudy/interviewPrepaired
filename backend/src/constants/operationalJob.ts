@@ -18,6 +18,18 @@ export enum OperationalJobType {
   PRIVACY_EXPORT_GENERATION = 'PRIVACY_EXPORT_GENERATION',
   /** Wraps AccountDeletionService.processAccountDeletion — the slower/cross-collection cleanup after the synchronous delete-account request handler already revoked sessions and anonymized the User row. */
   ACCOUNT_DELETION = 'ACCOUNT_DELETION',
+  /**
+   * Phase 6 — STAR analysis + model-answer generation for one already-
+   * answered/evaluated interview question, moved OFF InterviewService
+   * .submitAnswer's synchronous critical path. Neither output is consumed
+   * by NextQuestionDecisionEngine or returned in submitAnswer's response
+   * (STAR was never part of that response even before Phase 6; the report
+   * DTO's modelAnswer is independently self-healed by getInterviewReport's
+   * own existing backfill loop) — purely additive enrichment, safe to run
+   * late. Payload: {interviewId, questionIndex}. Idempotency key:
+   * `deferred-enrichment:<interviewId>:<questionIndex>`.
+   */
+  INTERVIEW_DEFERRED_ENRICHMENT = 'INTERVIEW_DEFERRED_ENRICHMENT',
 }
 
 export type OperationalJobStatus = 'pending' | 'active' | 'completed' | 'dead_letter' | 'cancelled';

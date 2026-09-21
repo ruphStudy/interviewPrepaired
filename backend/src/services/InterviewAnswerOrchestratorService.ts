@@ -209,6 +209,14 @@ export class InterviewAnswerOrchestratorService {
             { _id: fresh._id, [`questions.${targetIndex}.evaluation`]: { $exists: false } },
             { $set: { [`questions.${targetIndex}.evaluation`]: evaluation as IEvaluation } }
           );
+          // Phase 6 (6D) — this recovery path never ran STAR analysis/
+          // model-answer generation even before Phase 6 (a pre-existing
+          // gap: recovery only ever recomputed evaluation + the fast
+          // signal). Now that the durable job infrastructure exists, close
+          // that gap too: enqueue the SAME deferred-enrichment job the
+          // normal path uses, AFTER the evaluation above is durably
+          // persisted. Best-effort — never blocks/fails recovery.
+          await this.enqueueDeferredEnrichment(fresh._id.toString(), targetIndex);
         }
 
         // Phase 2: compute + persist the fast answer signal here too — the
@@ -592,6 +600,29 @@ export class InterviewAnswerOrchestratorService {
         undefined,
         'ANSWER_PROCESSING_IN_PROGRESS'
       );
+    }
+  }
+
+  /**
+   * Phase 6 (6D) — best-effort enqueue of the same
+   * OperationalJobType.INTERVIEW_DEFERRED_ENRICHMENT job
+   * InterviewService.submitAnswer's normal path uses, keyed identically
+   * (`deferred-enrichment:<interviewId>:<questionIndex>`) so a duplicate
+   * enqueue from both paths for the same question is always a safe no-op.
+   * Lazy import mirrors OperationalJobService's own cross-service pattern,
+   * avoiding a hard circular dependency at module-load time.
+   */
+  private async enqueueDeferredEnrichment(interviewId: string, questionIndex: number): Promise<void> {
+    try {
+      const { operationalJobService } = await import('./OperationalJobService');
+      const { OperationalJobType } = await import('../constants/operationalJob');
+      await operationalJobService.enqueue({
+        jobType: OperationalJobType.INTERVIEW_DEFERRED_ENRICHMENT,
+        payload: { interviewId, questionIndex },
+        idempotencyKey: `deferred-enrichment:${interviewId}:${questionIndex}`,
+      });
+    } catch (enqueueError) {
+      console.error('[InterviewAnswerRecovery] Failed to enqueue deferred enrichment job (non-critical):', enqueueError);
     }
   }
 

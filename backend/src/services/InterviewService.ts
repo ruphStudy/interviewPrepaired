@@ -23,6 +23,7 @@ import { difficultyManagerService } from './DifficultyManagerService';
 import { initializeDifficultyTracking, mapLevelToDifficulty } from '../models/DifficultyTracking.model';import { claimVerificationService } from './ClaimVerificationService';
 import { contradictionDetectorService } from './ContradictionDetectorService';
 import { starAnalysisService } from './STARAnalysisService';
+import { shouldAnalyzeSTAR } from '../models/STARAnalysis.model';
 import { answerSignalService, buildFallbackAnswerSignal, hasCompleteAnswerSignal } from './AnswerSignalService';
 import {
   nextQuestionDecisionEngine,
@@ -38,6 +39,8 @@ import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParser
 import { questionSetService } from './QuestionSetService';
 import InstituteStudentInterviewAssignment from '../models/InstituteStudentInterviewAssignment.model';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
+import { OperationalJobType } from '../constants/operationalJob';
+import { TransientOperationalError } from '../utils/operationalError';
 
 /** Same validity rule the frontend/report/PDF must all agree on — never treat a stringified "undefined"/"null"/placeholder/empty value as a real expected answer. */
 function isValidModelAnswer(value: unknown): value is string {
@@ -464,6 +467,190 @@ export class InterviewService {
     } catch (err) {
       console.error(`[ModelAnswer] Generation failed for Q${questionIndex + 1} (non-critical):`, err);
       return {};
+    }
+  }
+
+  // ===========================================================================
+  // Phase 6 (6C) — memory/claim/coverage extraction, verified independent of
+  // each other AND of the answer-evaluation AI call's own output (none reads
+  // another's result — only contradiction detection reads memory's output,
+  // which is why it stays sequenced AFTER this batch in submitAnswer rather
+  // than joining it). Each wraps the EXACT same try/catch/gating a pre-Phase-6
+  // sequential block used, so a single extraction failing can never fail
+  // answer submission or block the other concurrent extractions — these are
+  // run together via Promise.allSettled in submitAnswer, never Promise.all.
+  // ===========================================================================
+
+  private async runMemoryExtraction(params: {
+    interview: IInterview;
+    question: IQuestion;
+    answer: string;
+    questionNumber: number;
+  }): Promise<IInterview['interviewMemory'] | undefined> {
+    const { interview, question, answer, questionNumber } = params;
+    try {
+      const updatedMemory = await interviewMemoryService.extractMemoryFromAnswer({
+        question: question.questionText,
+        answer,
+        questionNumber,
+        existingMemory: interview.interviewMemory || createEmptyMemory(),
+        interviewId: interview._id.toString(),
+        // Phase 5 (5A) — stamped so buildMemoryCallbackCandidates can later
+        // match a memory item back to the competency it came from.
+        competencyName: question.competencyName,
+      });
+      console.log(`[InterviewService] Memory updated. Total facts: ${updatedMemory.totalFacts}`);
+      return updatedMemory;
+    } catch (memoryError) {
+      console.error('[InterviewService] Memory extraction failed (non-critical):', memoryError);
+      return undefined;
+    }
+  }
+
+  private async runClaimExtraction(params: {
+    interview: IInterview;
+    question: IQuestion;
+    answer: string;
+    questionNumber: number;
+  }): Promise<IInterview['claimVerification'] | undefined> {
+    const { interview, question, answer, questionNumber } = params;
+    if (!interview.claimVerification) return undefined;
+    try {
+      const updatedClaims = await claimVerificationService.extractClaims({
+        question: question.questionText,
+        answer,
+        questionNumber,
+        currentTracking: interview.claimVerification,
+        interviewId: interview._id.toString(),
+      });
+      console.log(`[InterviewService] Claims updated. Total: ${updatedClaims.totalClaims}, Unverified: ${updatedClaims.unverifiedCount}`);
+      return updatedClaims;
+    } catch (claimError) {
+      console.error('[InterviewService] Claim extraction failed (non-critical):', claimError);
+      return undefined;
+    }
+  }
+
+  private async runCoverageUpdate(params: {
+    interview: IInterview;
+    question: IQuestion;
+    answer: string;
+    questionNumber: number;
+  }): Promise<IInterview['competencyCoverage'] | undefined> {
+    const { interview, question, answer, questionNumber } = params;
+    if (!interview.blueprintId || !interview.competencyCoverage) return undefined;
+    try {
+      const blueprint = await blueprintService.getBlueprintById(interview.blueprintId.toString());
+      if (!blueprint) return undefined;
+      const updatedCoverage = await coverageTrackerService.updateCoverage({
+        question: question.questionText,
+        answer,
+        questionNumber,
+        competencies: blueprint.competencies,
+        currentCoverage: interview.competencyCoverage,
+        interviewId: interview._id.toString(),
+      });
+      console.log(`[InterviewService] Coverage updated. Overall: ${updatedCoverage.overallCoverage}%, Least covered: ${updatedCoverage.leastCoveredCompetency}`);
+      return updatedCoverage;
+    } catch (coverageError) {
+      console.error('[InterviewService] Coverage tracking failed (non-critical):', coverageError);
+      return undefined;
+    }
+  }
+
+  /**
+   * Phase 6 (6D) — best-effort enqueue of the deferred STAR/model-answer
+   * enrichment job. Called only AFTER the answer + evaluation are already
+   * durably persisted (never speculatively before), so a failed enqueue
+   * here can never lose/corrupt answer state — it only means enrichment is
+   * delayed until getInterviewReport's own lazy re-enqueue recovers it.
+   */
+  private async enqueueDeferredEnrichment(interviewId: string, questionIndex: number): Promise<void> {
+    try {
+      const { operationalJobService } = await import('./OperationalJobService');
+      await operationalJobService.enqueue({
+        jobType: OperationalJobType.INTERVIEW_DEFERRED_ENRICHMENT,
+        payload: { interviewId, questionIndex },
+        idempotencyKey: `deferred-enrichment:${interviewId}:${questionIndex}`,
+      });
+    } catch (enqueueError) {
+      console.error('[InterviewService] Failed to enqueue deferred enrichment job (non-critical):', enqueueError);
+    }
+  }
+
+  private async enrichStarAnalysis(
+    interview: IInterview,
+    question: IQuestion,
+    questionIndex: number,
+    interviewStyle: InterviewStyle
+  ): Promise<void> {
+    if (question.evaluation?.starAnalysis) return; // already computed — never re-call AI.
+    if (!question.evaluation) return; // nothing evaluated yet to attach STAR to.
+
+    const starAnalysis = await starAnalysisService.analyzeSTAR({
+      question: question.questionText,
+      answer: question.answerText || '',
+      interviewStyle,
+      interviewId: interview._id.toString(),
+      interviewLanguage: interview.interviewLanguage,
+    });
+    // analyzeSTAR already degrades internally: returns null (never throws)
+    // both when the interview style isn't behavioral/situational/leadership
+    // AND when its own AI call fails — indistinguishable here, so neither
+    // case is treated as a job failure worth retrying (matches the
+    // pre-Phase-6 inline call's own "log and move on" semantics exactly).
+    if (!starAnalysis) return;
+
+    await Interview.updateOne(
+      { _id: interview._id, [`questions.${questionIndex}.evaluation.starAnalysis`]: { $exists: false } },
+      { $set: { [`questions.${questionIndex}.evaluation.starAnalysis`]: starAnalysis } }
+    );
+  }
+
+  /**
+   * Phase 6 (6D) — STAR analysis + model-answer generation for one already-
+   * answered/evaluated question, run OFF submitAnswer's synchronous critical
+   * path via OperationalJobType.INTERVIEW_DEFERRED_ENRICHMENT. Safe to call
+   * more than once for the same question: both AI calls it may make are
+   * internally idempotent (skip immediately once already computed), so a
+   * duplicate enqueue or a job retry after a prior partial success is
+   * always a safe no-op — never duplicate AI cost.
+   */
+  async performDeferredEnrichment(interviewId: string, questionIndex: number): Promise<void> {
+    const interview = await Interview.findById(interviewId);
+    if (!interview) return; // interview deleted since the job was enqueued — nothing to do.
+
+    const question = interview.questions[questionIndex];
+    if (!question || !question.answerText) return; // nothing to enrich (yet, or ever).
+
+    const interviewStyle = (interview.interviewStyle || inferInterviewStyle(interview.topic)) as InterviewStyle;
+
+    const [starSettled, modelAnswerSettled] = await Promise.allSettled([
+      this.enrichStarAnalysis(interview, question, questionIndex, interviewStyle),
+      this.resolveExpectedAnswer(interview, questionIndex),
+    ]);
+
+    if (starSettled.status === 'rejected') {
+      // Non-critical, matches the pre-Phase-6 inline call's own handling —
+      // never worth a job retry (analyzeSTAR itself never throws; this can
+      // only be an update/lookup error, not a repeatable AI failure).
+      console.error('[InterviewService] Deferred STAR analysis failed (non-critical):', starSettled.reason);
+    }
+
+    // resolveExpectedAnswer never throws (it catches its own AI error and
+    // returns {}) — an empty result while the question STILL has no valid
+    // modelAnswer/referenceAnswer means the AI call was attempted and
+    // failed, which IS worth a bounded job retry (unlike STAR above).
+    if (modelAnswerSettled.status === 'rejected') {
+      throw new TransientOperationalError(
+        modelAnswerSettled.reason instanceof Error ? modelAnswerSettled.reason.message : 'Model answer generation failed'
+      );
+    }
+    const refreshedQuestion = interview.questions[questionIndex];
+    const stillMissingExpectedAnswer =
+      !isValidModelAnswer(refreshedQuestion?.modelAnswer) && !isValidModelAnswer(refreshedQuestion?.referenceAnswer);
+    if (!modelAnswerSettled.value.expectedAnswer && stillMissingExpectedAnswer) {
+      throw new TransientOperationalError(`Model answer generation did not produce a result for question ${questionIndex}`);
     }
   }
 
@@ -922,46 +1109,67 @@ export class InterviewService {
         totalQuestions: interview.totalQuestions,
       };
 
-      // Evaluate answer using OpenAI
-      const evaluationResult = await this.aiService.evaluateAnswer(
-        {
-          sessionConfig,
-          question: currentQuestion.questionText,
-          answer,
-          expectedPoints: currentQuestion.expectedPoints,
-          referenceAnswer: isValidModelAnswer(currentQuestion.referenceAnswer) ? currentQuestion.referenceAnswer : undefined,
-          interviewId: interview._id.toString(),
-          questionIndex: currentQuestionIndex,
-          interviewLanguage: interview.interviewLanguage,
-        },
-        {
-          interviewId: interview._id.toString(),
-          operation: 'answer-evaluation',
-          questionIndex: currentQuestionIndex,
-          language: interview.interviewLanguage,
-        }
-      );
+      // =====================================================================
+      // Phase 6 (6C) — the answer-evaluation AI call and the memory/claim/
+      // coverage extraction AI calls are mutually independent (verified: none
+      // consumes another's OUTPUT, and none needs `evaluation` either — only
+      // contradiction detection below needs memory's output, which is why it
+      // stays sequenced AFTER this batch rather than joining it). Running
+      // them concurrently removes 3 sequential AI round-trips from the
+      // critical path. evaluateAnswer is the one call here that must still
+      // fail the whole submission on error (pre-Phase-6 behavior, no inner
+      // try/catch); the other three already swallow their own errors
+      // internally (matching their pre-Phase-6 individual try/catch blocks
+      // exactly) so Promise.allSettled never sees them reject.
+      // =====================================================================
+      const [evaluationSettled, memorySettled, claimsSettled, coverageSettled] = await Promise.allSettled([
+        this.aiService.evaluateAnswer(
+          {
+            sessionConfig,
+            question: currentQuestion.questionText,
+            answer,
+            expectedPoints: currentQuestion.expectedPoints,
+            referenceAnswer: isValidModelAnswer(currentQuestion.referenceAnswer) ? currentQuestion.referenceAnswer : undefined,
+            interviewId: interview._id.toString(),
+            questionIndex: currentQuestionIndex,
+            interviewLanguage: interview.interviewLanguage,
+          },
+          {
+            interviewId: interview._id.toString(),
+            operation: 'answer-evaluation',
+            questionIndex: currentQuestionIndex,
+            language: interview.interviewLanguage,
+          }
+        ),
+        this.runMemoryExtraction({ interview, question: currentQuestion, answer, questionNumber: interview.currentQuestion }),
+        this.runClaimExtraction({ interview, question: currentQuestion, answer, questionNumber: interview.currentQuestion }),
+        this.runCoverageUpdate({ interview, question: currentQuestion, answer, questionNumber: interview.currentQuestion }),
+      ]);
+
+      if (evaluationSettled.status === 'rejected') {
+        throw evaluationSettled.reason;
+      }
+      const evaluationResult = evaluationSettled.value;
       const evaluation = evaluationResult.data;
 
-      // Perform STAR analysis for behavioral interviews
-      let starAnalysis = null;
-      try {
-        starAnalysis = await starAnalysisService.analyzeSTAR({
-          question: currentQuestion.questionText,
-          answer,
-          interviewStyle: interviewStyle as InterviewStyle,
-          interviewId: interview._id.toString(),
-          interviewLanguage: interview.interviewLanguage,
-        });
-        
-        if (starAnalysis) {
-          console.log(`[InterviewService] STAR analysis completed. Score: ${starAnalysis.overallSTARScore}/10`);
-        }
-      } catch (starError) {
-        console.error('[InterviewService] STAR analysis failed (non-critical):', starError);
+      if (memorySettled.status === 'fulfilled' && memorySettled.value) {
+        interview.interviewMemory = memorySettled.value;
+      }
+      if (claimsSettled.status === 'fulfilled' && claimsSettled.value) {
+        interview.claimVerification = claimsSettled.value;
+      }
+      if (coverageSettled.status === 'fulfilled' && coverageSettled.value) {
+        interview.competencyCoverage = coverageSettled.value;
       }
 
-      // Store evaluation (dynamic dimensions + STAR)
+      // Store evaluation (dimensions/score/strengths/weaknesses/etc). STAR
+      // analysis is deliberately NOT attached here anymore — Phase 6 (6D)
+      // moves it (and model-answer generation) to a background
+      // OperationalJob enqueued below, once the answer/evaluation are
+      // already durably persisted. Neither was ever part of this method's
+      // synchronous response, and modelAnswer is independently self-healed
+      // by getInterviewReport's own existing backfill loop, so deferring
+      // both is purely a latency win with no behavioral/UX change.
       await interview.evaluateQuestion(currentQuestionIndex, {
         dimensions: evaluation.dimensions,
         overallScore: evaluation.overallScore,
@@ -969,64 +1177,15 @@ export class InterviewService {
         weaknesses: evaluation.weaknesses,
         suggestions: evaluation.suggestions,
         missingPoints: evaluation.missingPoints,
-        starAnalysis: starAnalysis || undefined,
       });
 
-      // =====================================================================
-      // Resolve Expected Answer (uploaded reference answer takes priority;
-      // AI model-answer is generated only when nothing valid exists yet)
-      // =====================================================================
-      console.log('[InterviewService] Resolving expected answer for learning...');
-      await this.resolveExpectedAnswer(interview, currentQuestionIndex);
+      // Enqueue AFTER the answer + evaluation are durably saved above —
+      // never speculatively before. Best-effort or not, an enqueue failure
+      // can never lose/corrupt already-persisted answer state; it only
+      // delays enrichment until getInterviewReport's lazy re-enqueue
+      // recovers it (see getInterviewReport).
+      await this.enqueueDeferredEnrichment(interview._id.toString(), currentQuestionIndex);
 
-      // =====================================================================
-      // NEW: Extract and Store Interview Memory
-      // =====================================================================
-      console.log('[InterviewService] Extracting memory from answer...');
-      try {
-        const updatedMemory = await interviewMemoryService.extractMemoryFromAnswer({
-          question: currentQuestion.questionText,
-          answer,
-          questionNumber: interview.currentQuestion,
-          existingMemory: interview.interviewMemory || createEmptyMemory(),
-          interviewId: interview._id.toString(),
-          // Phase 5 (5A) — Phase 1's existing per-question competency tag,
-          // stamped onto every new IMemoryItem extracted this turn so
-          // buildMemoryCallbackCandidates can later match a memory item back
-          // to the competency it came from.
-          competencyName: currentQuestion.competencyName,
-        });
-        
-        // Update interview memory
-        interview.interviewMemory = updatedMemory;
-        console.log(`[InterviewService] Memory updated. Total facts: ${updatedMemory.totalFacts}`);
-      } catch (memoryError) {
-        console.error('[InterviewService] Memory extraction failed (non-critical):', memoryError);
-        // Don't fail the interview if memory extraction fails
-      }
-      
-      // =====================================================================
-      // NEW: Extract Verifiable Claims
-      // =====================================================================
-      console.log('[InterviewService] Extracting verifiable claims...');
-      try {
-        if (interview.claimVerification) {
-          const updatedClaims = await claimVerificationService.extractClaims({
-            question: currentQuestion.questionText,
-            answer,
-            questionNumber: interview.currentQuestion,
-            currentTracking: interview.claimVerification,
-            interviewId: interview._id.toString(),
-          });
-          
-          interview.claimVerification = updatedClaims;
-          console.log(`[InterviewService] Claims updated. Total: ${updatedClaims.totalClaims}, Unverified: ${updatedClaims.unverifiedCount}`);
-        }
-      } catch (claimError) {
-        console.error('[InterviewService] Claim extraction failed (non-critical):', claimError);
-        // Don't fail the interview if claim extraction fails
-      }
-      
       // =====================================================================
       // NEW: Detect Contradictions
       // =====================================================================
@@ -1090,33 +1249,10 @@ export class InterviewService {
         }
       }
 
-      // =====================================================================
-      // NEW: Update Competency Coverage
-      // =====================================================================
-      console.log('[InterviewService] Updating competency coverage...');
-      try {
-        // Get blueprint for competencies
-        if (interview.blueprintId && interview.competencyCoverage) {
-          const blueprint = await blueprintService.getBlueprintById(interview.blueprintId.toString());
-          if (blueprint) {
-            const updatedCoverage = await coverageTrackerService.updateCoverage({
-              question: currentQuestion.questionText,
-              answer,
-              questionNumber: interview.currentQuestion,
-              competencies: blueprint.competencies,
-              currentCoverage: interview.competencyCoverage,
-              interviewId: interview._id.toString(),
-            });
-            
-            interview.competencyCoverage = updatedCoverage;
-            console.log(`[InterviewService] Coverage updated. Overall: ${updatedCoverage.overallCoverage}%, Least covered: ${updatedCoverage.leastCoveredCompetency}`);
-          }
-        }
-      } catch (coverageError) {
-        console.error('[InterviewService] Coverage tracking failed (non-critical):', coverageError);
-        // Don't fail the interview if coverage tracking fails
-      }
-      
+      // Competency coverage is already updated above — computed concurrently
+      // with evaluateAnswer/memory/claims (see runCoverageUpdate + the
+      // Promise.allSettled batch), never a second sequential AI call here.
+
       // =====================================================================
       // NEW: Adjust Difficulty Based on Performance
       // =====================================================================
@@ -1157,7 +1293,21 @@ export class InterviewService {
       let finalInterview = interview; // Track the final interview to return
 
       if (isCompleted) {
-        console.log('[InterviewService] Interview completed! Generating final report...');
+        // Phase 6 (6B/6D) — final-report generation is deliberately NOT
+        // called synchronously here anymore. Verified: aiService
+        // .generateFinalReport's own input is only each question's
+        // evaluation (dimensions/overallScore/strengths/weaknesses/
+        // missingPoints) — never starAnalysis/modelAnswer — so it has no
+        // dependency on anything deferred above, and the frontend's
+        // completion handling only reads `isCompleted` from THIS response
+        // (see InterviewScreen.tsx) before navigating to /report/:id; it
+        // never reads finalReport off this response. getInterviewReport
+        // ALREADY provides idempotent, retry-safe lazy generation for a
+        // COMPLETED interview with no report yet (its long-standing
+        // recovery path, unchanged) — that lazy path is now simply the
+        // ONLY path, removing a full AI report-generation call from the
+        // last answer's critical path with no behavior change.
+        console.log('[InterviewService] Interview completed! Report will be generated on first access.');
         // Mark as completed and set completion timestamp
         interview.status = InterviewStatus.COMPLETED;
         interview.completedAt = new Date();
@@ -1166,30 +1316,11 @@ export class InterviewService {
         await this.syncInstituteAssignmentOnCompletion(interview);
 
         // Reload the interview to refresh the _original tracking
-        let reloadedInterview = await Interview.findById(interview._id);
+        const reloadedInterview = await Interview.findById(interview._id);
         if (!reloadedInterview) {
           throw new ApiError(404, 'Interview not found after save');
         }
-        
-        try {
-          // generateFinalReport will set status to 'evaluated' and save
-          await this.generateFinalReport(reloadedInterview);
-          console.log('[InterviewService] Final report generated successfully');
-          
-          // Reload again to get the evaluated version with final report
-          const evaluatedInterview = await Interview.findById(interview._id);
-          if (evaluatedInterview) {
-            finalInterview = evaluatedInterview;
-          } else {
-            finalInterview = reloadedInterview;
-          }
-        } catch (reportError) {
-          // Log error but don't fail the submission
-          console.error('[InterviewService] Error generating final report:', reportError);
-          console.error('[InterviewService] Interview will be marked as completed anyway');
-          // Still use the reloaded interview even if report generation failed
-          finalInterview = reloadedInterview;
-        }
+        finalInterview = reloadedInterview;
       } else if (interview.interviewMode === 'uploaded') {
         // Uploaded-mode questions are all pre-populated at creation time —
         // never call AI to generate the next question, just advance to the
@@ -1653,6 +1784,30 @@ export class InterviewService {
       if (!interview.questions[i].evaluation) continue;
       const { expectedAnswer } = await this.resolveExpectedAnswer(interview, i);
       if (expectedAnswer) resolvedAnswers.set(i, expectedAnswer);
+    }
+
+    // Phase 6 (6D) — legacy/stuck-recovery: a question can only ever be
+    // missing STAR analysis if either (a) the deferred-enrichment job was
+    // never enqueued (a transient enqueue failure right after submitAnswer
+    // persisted the answer, or an interview answered before this phase
+    // shipped) or (b) the job hasn't run yet. modelAnswer never needs this
+    // treatment — the loop above already resolves it synchronously on every
+    // report view. Best-effort, idempotent (enqueue itself de-dupes on the
+    // same key the normal/recovery paths already use), and scoped to a
+    // finished interview only — never touches one still IN_PROGRESS. Gated
+    // on shouldAnalyzeSTAR so a non-behavioral interview (where STAR
+    // legitimately never gets computed — analyzeSTAR always returns null for
+    // it) isn't re-enqueued forever on every single report view.
+    if (
+      (interview.status === InterviewStatus.COMPLETED || interview.status === InterviewStatus.EVALUATED) &&
+      shouldAnalyzeSTAR(interview.interviewStyle || inferInterviewStyle(interview.topic))
+    ) {
+      for (let i = 0; i < interview.questions.length; i++) {
+        const q = interview.questions[i];
+        if (q.evaluation && !q.evaluation.starAnalysis) {
+          await this.enqueueDeferredEnrichment(interview._id.toString(), i);
+        }
+      }
     }
 
     console.log(
