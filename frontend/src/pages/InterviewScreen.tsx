@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { InterviewAvatar } from '../components/InterviewAvatar/InterviewAvatar';
 import { useSpeechInterview } from '../hooks/useSpeechInterview';
-import { interviewApi } from '../api/interviewApi';
+import { interviewApi, ConversationPresentationPlan } from '../api/interviewApi';
 import { getInterviewPhrase } from '../config/interviewPhrases';
 import {
   useInterviewPresentationState,
@@ -30,6 +30,19 @@ import {
 
 interface LocationState {
   interview?: any;
+}
+
+/**
+ * Phase 8 — a small, bounded (always <= a presentation plan's own
+ * prePauseMs/betweenPauseMs, never a multi-second/artificial delay) pacing
+ * pause between spoken filler phrases. This is audio pacing ONLY — it never
+ * gates the question TEXT (already visible before this is ever called, per
+ * Phase 7's fix) and every caller re-checks staleness immediately after it
+ * resolves.
+ */
+function wait(ms: number): Promise<void> {
+  if (!ms || ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 export const InterviewScreen: React.FC = () => {
@@ -202,6 +215,77 @@ export const InterviewScreen: React.FC = () => {
     }
   }, [currentQuestion, speak, beginAsking, presentationQuestionSpoken]);
 
+  // Phase 8 — sequences the Conversation Humanizer's presentation plan
+  // (acknowledgement -> pause -> transition -> pause -> spoken question)
+  // WITHIN the same continuous ASKING_QUESTION span the caller already
+  // entered via beginAsking() before this runs; `askCurrentQuestion` (the
+  // ONE place that mints the "final" questionGeneration + calls
+  // presentationQuestionSpoken, per Phase 7) is always the last step, so
+  // the SAME staleness guard Phase 7 already built protects this too.
+  // `presentation` is additive/optional (older cached responses simply omit
+  // it): absent -> the exact pre-Phase-8 generic thank-you/transition
+  // phrase fallback; `silenceOnly` -> no lead-in at all, straight to the
+  // question (Phase 7's existing fast path); otherwise -> the humanizer's
+  // own short, neutral phrases, never the two combined.
+  const speakPresentationSequence = useCallback(
+    async (
+      presentation: ConversationPresentationPlan | undefined,
+      fallbackQuestionText: string,
+      lang: string | undefined,
+      requestGeneration: number
+    ) => {
+      const isStale = () => !isMountedRef.current || !isRequestCurrent(requestGeneration);
+
+      if (!presentation) {
+        try {
+          await speak(getInterviewPhrase('thankYou', lang));
+        } catch {
+          // Non-blocking — text is already visible.
+        }
+        if (isStale()) return;
+        try {
+          await speak(getInterviewPhrase('nextQuestion', lang));
+        } catch {
+          // Non-blocking.
+        }
+        if (isStale()) return;
+        await askCurrentQuestion(fallbackQuestionText);
+        return;
+      }
+
+      if (presentation.silenceOnly) {
+        if (isStale()) return;
+        await askCurrentQuestion(presentation.spokenQuestionText || fallbackQuestionText);
+        return;
+      }
+
+      if (presentation.acknowledgementText) {
+        await wait(presentation.prePauseMs);
+        if (isStale()) return;
+        try {
+          await speak(presentation.acknowledgementText);
+        } catch {
+          // Non-blocking.
+        }
+      }
+      if (isStale()) return;
+
+      if (presentation.transitionText) {
+        await wait(presentation.betweenPauseMs);
+        if (isStale()) return;
+        try {
+          await speak(presentation.transitionText);
+        } catch {
+          // Non-blocking.
+        }
+      }
+      if (isStale()) return;
+
+      await askCurrentQuestion(presentation.spokenQuestionText || fallbackQuestionText);
+    },
+    [speak, askCurrentQuestion, isRequestCurrent]
+  );
+
   const startWelcomeSequence = useCallback(async (topic: string, questionText: string) => {
     presentationStartInterview();
     try {
@@ -316,13 +400,15 @@ export const InterviewScreen: React.FC = () => {
           return;
         }
 
-        try {
-          await speak(getInterviewPhrase('thankYou', lang));
-        } catch {
-          // Keep progressing even if voice output fails — text is already visible above.
-        }
-
         if (isCompleted) {
+          // Completion has no next question to present, so Phase 8's
+          // presentation plan never applies here (the backend never builds
+          // one for this turn either) — unchanged pre-Phase-8 phrasing.
+          try {
+            await speak(getInterviewPhrase('thankYou', lang));
+          } catch {
+            // Keep progressing even if voice output fails — text is already visible above.
+          }
           try {
             await speak(getInterviewPhrase('congratulations', lang));
             await speak(getInterviewPhrase('reportReady', lang));
@@ -334,13 +420,12 @@ export const InterviewScreen: React.FC = () => {
         }
 
         if (response.data.nextQuestion) {
-          try {
-            await speak(getInterviewPhrase('nextQuestion', lang));
-          } catch {
-            // Non-blocking.
-          }
           if (!isMountedRef.current || !isRequestCurrent(requestGeneration)) return;
-          await askCurrentQuestion(response.data.nextQuestion.question);
+          // Phase 8 — presentation is additive/optional: absent means an
+          // older/degraded response, which falls back to the EXACT
+          // pre-Phase-8 generic thank-you + transition phrasing inside
+          // speakPresentationSequence itself.
+          await speakPresentationSequence(response.data.presentation, response.data.nextQuestion.question, lang, requestGeneration);
         }
       } catch (error: any) {
         if (error?.code === 'ANSWER_PROCESSING_IN_PROGRESS' && attempt < MAX_PROCESSING_RETRIES) {

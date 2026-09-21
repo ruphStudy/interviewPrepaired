@@ -105,6 +105,40 @@ export interface EvaluationResult {
   pointComparison?: PointComparison[];
 }
 
+/**
+ * Phase 8 (Conversation Humanizer) — the FINAL, already-safe-to-speak
+ * presentation content for the next question, mirroring
+ * `ConversationPresentationPlan` (backend/src/constants/conversationHumanizer.ts)
+ * field-for-field. Additive/optional: an older cached build simply never
+ * reads this field and falls back to Phase 7's pre-Phase-8 behavior
+ * (speak `nextQuestion.question` plain), exactly matching the backend's own
+ * "fail-safe: if humanization fails, use original question text directly"
+ * contract.
+ */
+export interface ConversationPresentationPlan {
+  presentationType:
+    | 'direct'
+    | 'acknowledge_then_ask'
+    | 'think_then_ask'
+    | 'probe'
+    | 'clarify'
+    | 'challenge'
+    | 'callback'
+    | 'contradiction_clarification'
+    | 'transition'
+    | 'closing';
+  acknowledgementPhraseId?: string;
+  acknowledgementText?: string;
+  transitionPhraseId?: string;
+  transitionText?: string;
+  spokenQuestionText: string;
+  prePauseMs: number;
+  betweenPauseMs: number;
+  avatarStateHint: string;
+  silenceOnly: boolean;
+  toneHint?: string;
+}
+
 export interface SubmitAnswerResponse {
   success: boolean;
   message: string;
@@ -122,6 +156,7 @@ export interface SubmitAnswerResponse {
       expectedPoints: string[];
       followUpTopics: string[];
     };
+    presentation?: ConversationPresentationPlan;
   };
 }
 

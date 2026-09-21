@@ -30,6 +30,9 @@ import {
   findMemoryItemForMove,
   QuestionTaggingFromMove,
 } from './NextQuestionDecisionEngine';
+import { conversationHumanizerService } from './ConversationHumanizerService';
+import { ConversationPresentationPlan, deriveHumanizerMode } from '../constants/conversationHumanizer';
+import { DEFAULT_LANGUAGE_CODE } from '../config/languages';
 
 const RECOVERY_CLAIM_STALE_MS = 2 * 60 * 1000;
 // Wraps the entire legacy submission chain (evaluation + memory/claim/
@@ -55,6 +58,10 @@ interface SubmitAnswerResult {
   evaluation: DynamicEvaluationResponse;
   nextQuestion?: QuestionResponse;
   isCompleted: boolean;
+  // Phase 8 — additive, optional; absent for uploaded/legacy/non-English/
+  // failure cases or when there is no next question (see
+  // ConversationHumanizerService / InterviewService.submitAnswer).
+  presentation?: ConversationPresentationPlan;
 }
 
 function normalizeAnswer(value: string): string {
@@ -169,12 +176,17 @@ export class InterviewAnswerOrchestratorService {
   private async replayPersistedResult(interview: IInterview, targetIndex: number): Promise<SubmitAnswerResult> {
     const isCompleted = this.isTerminal(interview);
     let nextQuestion: QuestionResponse | undefined;
+    let presentation: ConversationPresentationPlan | undefined;
 
     if (!isCompleted) {
       const nextIndex = interview.currentQuestion - 1;
       const next = interview.questions[nextIndex];
       if (next && !next.answerText) {
         nextQuestion = this.toQuestionResponse(next);
+        // Phase 8 — the persisted next question already carries its own
+        // presentation plan (set when it was generated); a replay simply
+        // returns it unchanged, never recomputes it.
+        presentation = next.presentation;
       }
     }
 
@@ -183,6 +195,7 @@ export class InterviewAnswerOrchestratorService {
       evaluation: interview.questions[targetIndex].evaluation as DynamicEvaluationResponse,
       nextQuestion,
       isCompleted,
+      presentation,
     };
   }
 
@@ -326,6 +339,10 @@ export class InterviewAnswerOrchestratorService {
         evaluation: (freshInterview.questions[targetIndex].evaluation || evaluation) as DynamicEvaluationResponse,
         nextQuestion: this.toQuestionResponse(existingNext),
         isCompleted: false,
+        // Phase 8 — the already-saved question carries its own persisted
+        // presentation plan (set when it was originally generated); never
+        // recomputed on repair.
+        presentation: existingNext.presentation,
       };
     }
 
@@ -344,6 +361,13 @@ export class InterviewAnswerOrchestratorService {
         evaluation: (freshInterview.questions[targetIndex].evaluation || evaluation) as DynamicEvaluationResponse,
         nextQuestion: this.toQuestionResponse(freshInterview.questions[firstUnansweredIndex]),
         isCompleted: false,
+        // Phase 8 — uploaded-mode questions are pre-populated at creation
+        // time with no presentation plan attached ahead of time (only
+        // InterviewService.submitAnswer's normal uploaded-mode path builds
+        // one, at the moment a question is actually shown); a recovered
+        // pointer-repair here degrades safely to undefined, same as any
+        // other absent-presentation case.
+        presentation: freshInterview.questions[firstUnansweredIndex].presentation,
       };
     }
 
@@ -373,6 +397,11 @@ export class InterviewAnswerOrchestratorService {
       evaluation: (freshInterview.questions[targetIndex].evaluation || evaluation) as DynamicEvaluationResponse,
       nextQuestion,
       isCompleted: false,
+      // Phase 8 — the freshly-pushed question's own persisted presentation
+      // (set by generateRecoveryQuestion below via the SAME
+      // buildPresentationPlanSafely-equivalent path InterviewService.
+      // submitAnswer uses), never recomputed a second time here.
+      presentation: recoveryTagging.presentation,
     };
   }
 
@@ -420,7 +449,9 @@ export class InterviewAnswerOrchestratorService {
    * one generated on the "happy path" (see the shared tagging test in this
    * file's own test suite).
    */
-  private async generateRecoveryQuestion(interview: IInterview): Promise<{ question: QuestionResponse; tagging: QuestionTaggingFromMove }> {
+  private async generateRecoveryQuestion(
+    interview: IInterview
+  ): Promise<{ question: QuestionResponse; tagging: QuestionTaggingFromMove & { presentation?: ConversationPresentationPlan } }> {
     const experienceLevel = interview.experienceLevel || mapExperienceYearsToLevel(interview.experienceYears);
     const interviewStyle = interview.interviewStyle || inferInterviewStyle(interview.topic);
     const sessionConfig = {
@@ -484,9 +515,33 @@ export class InterviewAnswerOrchestratorService {
       throw new ApiError(503, 'The next question could not be generated. Please retry.', undefined, 'AI_PROVIDER_UNAVAILABLE');
     }
 
-    const tagging = buildQuestionTaggingFromMove(finalMove, {
+    const tagging: QuestionTaggingFromMove & { presentation?: ConversationPresentationPlan } = buildQuestionTaggingFromMove(finalMove, {
       difficultyAtGeneration: interview.difficultyTracking ? mapLevelToDifficulty(interview.difficultyTracking.currentLevel) : interview.difficulty,
     });
+
+    // Phase 8 — built from the SAME finalMove/answerSignal/interview
+    // context already in scope here, mirroring InterviewService.
+    // submitAnswer's normal-path integration exactly (same non-critical
+    // try/catch discipline, same English-only language gate, same
+    // repetition-history derivation) so a retry-recovered question's
+    // presentation plan is indistinguishable from one generated on the
+    // happy path.
+    const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
+    if (language === DEFAULT_LANGUAGE_CODE) {
+      try {
+        const interviewMode = deriveHumanizerMode(interview);
+        const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
+        tagging.presentation = conversationHumanizerService.buildPresentationPlan({
+          move: finalMove,
+          question: { text: response.question },
+          answerSignal: justAnsweredQuestion?.answerSignal,
+          interviewMode,
+          recentPhraseHistory,
+        });
+      } catch (humanizerError) {
+        console.error('[InterviewAnswerRecovery] Conversation humanizer failed (non-critical):', humanizerError);
+      }
+    }
 
     // Close the loop on the specific claim/contradiction just probed (same
     // idempotency markers InterviewService.submitAnswer uses on the normal

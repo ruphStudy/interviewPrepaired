@@ -149,6 +149,11 @@ export class InterviewController {
         },
         evaluation: result.evaluation,
         nextQuestion: result.nextQuestion,
+        // Phase 8 — additive, optional; absent for uploaded/legacy/
+        // non-English/failure cases (see ConversationHumanizerService).
+        // The frontend already falls back to speaking `nextQuestion.question`
+        // plain (Phase 7's pre-Phase-8 behavior) whenever this is absent.
+        presentation: result.presentation,
       })
     );
   });

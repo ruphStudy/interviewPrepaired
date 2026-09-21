@@ -25,6 +25,7 @@ import {
   DIFFICULTY_INTENT_VALUES,
   CLAIM_PROBE_TYPE_VALUES,
 } from '../constants/nextQuestionDecision';
+import { ConversationPresentationPlan, PRESENTATION_TYPE_VALUES } from '../constants/conversationHumanizer';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -161,6 +162,23 @@ export interface IQuestion {
     // Phase 5 (5B) — additive, set only for CLAIM_PROBE moves.
     claimProbeType?: ClaimProbeType;
   };
+  // Phase 8 (Conversation Humanizer) — additive, optional, no default,
+  // absent on every question that predates this feature and on any turn
+  // where the humanizer didn't run (uploaded-mode text-only rewrite,
+  // non-English interview language, or a best-effort failure — see
+  // ConversationHumanizerService). Set by
+  // conversationHumanizerService.buildPresentationPlan, called from
+  // InterviewService.submitAnswer and
+  // InterviewAnswerOrchestratorService.generateRecoveryQuestion right after
+  // the decision engine picks `move` and the question is generated. Riding
+  // along on the question it describes (like `decision` above) also makes
+  // it available as REPETITION-AVOIDANCE HISTORY for future turns via
+  // ConversationHumanizerService.deriveRecentPhraseHistory — never a new
+  // parallel field on Interview. Never surfaced to a candidate-facing
+  // (hiring-assessment) API response, same discipline as `decision`/
+  // `answerSignal` above (in practice the employer flow never reaches this
+  // code path at all — see HiringQuestionMaterializationService).
+  presentation?: ConversationPresentationPlan;
 }
 
 export interface IAIUsageCall {
@@ -336,6 +354,8 @@ export interface IInterview extends Document {
         sourceQuestionIndex?: number;
         claimProbeType?: ClaimProbeType;
       };
+      // Phase 8 — additive/optional, absent for every pre-existing caller.
+      presentation?: ConversationPresentationPlan;
     }
   ): Promise<IInterview>;
   submitAnswer(questionIndex: number, answerText: string, duration?: number): Promise<IInterview>;
@@ -548,6 +568,27 @@ const decisionSchema = new Schema(
   { _id: false }
 );
 
+// Phase 8 (Conversation Humanizer) sub-schema — additive, all optional, no
+// `default` so a question that predates this feature (or any turn where the
+// humanizer didn't run) continues to load/validate with `presentation`
+// genuinely absent, exactly like decision/answerSignal above.
+const presentationSchema = new Schema(
+  {
+    presentationType: { type: String, required: true, enum: PRESENTATION_TYPE_VALUES },
+    acknowledgementPhraseId: { type: String, trim: true, maxlength: [100, 'acknowledgementPhraseId cannot exceed 100 characters'] },
+    acknowledgementText: { type: String, trim: true, maxlength: [300, 'acknowledgementText cannot exceed 300 characters'] },
+    transitionPhraseId: { type: String, trim: true, maxlength: [100, 'transitionPhraseId cannot exceed 100 characters'] },
+    transitionText: { type: String, trim: true, maxlength: [300, 'transitionText cannot exceed 300 characters'] },
+    spokenQuestionText: { type: String, required: true, trim: true, maxlength: [1000, 'spokenQuestionText cannot exceed 1000 characters'] },
+    prePauseMs: { type: Number, required: true, min: 0 },
+    betweenPauseMs: { type: Number, required: true, min: 0 },
+    avatarStateHint: { type: String, required: true, trim: true, maxlength: [50, 'avatarStateHint cannot exceed 50 characters'] },
+    silenceOnly: { type: Boolean, required: true, default: false },
+    toneHint: { type: String, trim: true, maxlength: [50, 'toneHint cannot exceed 50 characters'] },
+  },
+  { _id: false }
+);
+
 const questionSchema = new Schema<IQuestion>(
   {
     questionText: {
@@ -633,6 +674,9 @@ const questionSchema = new Schema<IQuestion>(
     // Phase 3 (next-question decision engine) — no `default`, stays
     // genuinely absent on every question that doesn't have one computed yet.
     decision: { type: decisionSchema },
+    // Phase 8 (Conversation Humanizer) — no `default`, stays genuinely
+    // absent on every question the humanizer didn't run for.
+    presentation: { type: presentationSchema },
   },
   { _id: false, timestamps: false }
 );
@@ -1062,6 +1106,7 @@ interviewSchema.methods.addQuestion = async function (
       sourceQuestionIndex?: number;
       claimProbeType?: ClaimProbeType;
     };
+    presentation?: ConversationPresentationPlan;
   }
 ): Promise<IInterview> {
   if (this.questions.length >= this.totalQuestions) {

@@ -33,8 +33,11 @@ import {
   findContradictionIndexForMove,
   findMemoryItemForMove,
 } from './NextQuestionDecisionEngine';
+import { INextInterviewMove } from '../constants/nextQuestionDecision';
+import { conversationHumanizerService } from './ConversationHumanizerService';
+import { ConversationPresentationPlan, deriveHumanizerMode } from '../constants/conversationHumanizer';
 import { buildAICostReport, AICostReport } from './AIUsageService';
-import { normalizeLanguageCode } from '../config/languages';
+import { normalizeLanguageCode, DEFAULT_LANGUAGE_CODE } from '../config/languages';
 import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
 import { questionSetService } from './QuestionSetService';
 import InstituteStudentInterviewAssignment from '../models/InstituteStudentInterviewAssignment.model';
@@ -1051,6 +1054,51 @@ export class InterviewService {
   }
 
   /**
+   * Phase 8 (Conversation Humanizer) — the ONE call site both submitAnswer's
+   * normal next-question path and its uploaded-mode path use to build a
+   * presentation plan for the question about to be shown next. Best-effort:
+   * wraps ConversationHumanizerService's own internal try/catch with a
+   * second outer guard (matching this file's established non-critical
+   * enrichment pattern everywhere else — memory/claims/coverage/
+   * difficulty/answerSignal above all follow the exact same shape) so a
+   * humanizer failure can NEVER block/fail answer submission.
+   *
+   * Deliberately skipped (returns undefined) for any interview whose
+   * `interviewLanguage` isn't the default English locale: the phrase
+   * library (constants/phraseLibrary.ts) is English-only today, and mixing
+   * English filler phrases into a Hindi/Marathi TTS session would sound
+   * exactly as broken as the mixed-language bug interviewPhrases.ts's own
+   * header comment already guards against for the welcome/transition
+   * phrases. The frontend's existing fallback (speak the plain question
+   * text, Phase 7's pre-Phase-8 behavior) applies automatically whenever
+   * `presentation` is absent, so this is a safe, non-breaking scope limit.
+   */
+  private buildPresentationPlanSafely(params: {
+    interview: IInterview;
+    move: INextInterviewMove;
+    questionText: string;
+    answerSignal?: IAnswerSignal;
+  }): ConversationPresentationPlan | undefined {
+    const { interview, move, questionText, answerSignal } = params;
+    const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
+    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
+    try {
+      const interviewMode = deriveHumanizerMode(interview);
+      const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
+      return conversationHumanizerService.buildPresentationPlan({
+        move,
+        question: { text: questionText },
+        answerSignal,
+        interviewMode,
+        recentPhraseHistory,
+      });
+    } catch (humanizerError) {
+      console.error('[InterviewService] Conversation humanizer failed (non-critical):', humanizerError);
+      return undefined;
+    }
+  }
+
+  /**
    * Submit answer and get evaluation + next question
    */
   async submitAnswer(params: SubmitAnswerParams): Promise<{
@@ -1058,6 +1106,11 @@ export class InterviewService {
     evaluation: DynamicEvaluationResponse;
     nextQuestion?: QuestionResponse;
     isCompleted: boolean;
+    // Phase 8 — additive, optional; absent whenever the humanizer didn't
+    // run (uploaded/legacy/non-English/failure) or there is no next
+    // question at all (interview completed). See
+    // ConversationHumanizerService for the safe-fallback contract.
+    presentation?: ConversationPresentationPlan;
   }> {
     const { interviewId, userId, answer, duration } = params;
 
@@ -1290,6 +1343,7 @@ export class InterviewService {
       const answeredCount = interview.questions.filter((q) => q.answerText).length;
       const isCompleted = answeredCount >= interview.totalQuestions;
       let nextQuestion: QuestionResponse | undefined;
+      let presentation: ConversationPresentationPlan | undefined;
       let finalInterview = interview; // Track the final interview to return
 
       if (isCompleted) {
@@ -1327,7 +1381,6 @@ export class InterviewService {
         // next already-stored question.
         console.log(`[InterviewService] Uploaded mode: advancing to pre-loaded question ${interview.currentQuestion + 1}`);
         interview.currentQuestion += 1;
-        await interview.save();
 
         const upcoming = interview.questions[interview.currentQuestion - 1];
         if (upcoming) {
@@ -1337,7 +1390,37 @@ export class InterviewService {
             expectedPoints: upcoming.expectedPoints || [],
             followUpTopics: [],
           };
+
+          // Phase 8 — uploaded-mode questions never go through the
+          // decision engine (Phase 3's confirmed uploaded-mode handling:
+          // no NextQuestionDecisionEngine call at all). Synthesize the
+          // SAME fixed no-op move the engine's own reserved
+          // 'uploaded_sequence_fixed' reason code already models, purely
+          // so this turn can still receive a presentation plan (a light
+          // neutral acknowledgement + the deterministic spoken-form
+          // rewrite) — this is never a real decision and never influences
+          // which question is shown; canonical `upcoming.questionText`
+          // stays authoritative/unchanged.
+          const uploadedSyntheticMove: INextInterviewMove = {
+            moveType: 'CONTINUE_BLUEPRINT',
+            reasonCode: 'uploaded_sequence_fixed',
+            priority: 0,
+            difficultyIntent: 'same',
+            remainingBudget: Math.max(0, interview.totalQuestions - interview.currentQuestion),
+            questionSource: 'uploaded',
+          };
+          presentation = this.buildPresentationPlanSafely({
+            interview,
+            move: uploadedSyntheticMove,
+            questionText: upcoming.questionText,
+            answerSignal: interview.questions[currentQuestionIndex]?.answerSignal,
+          });
+          if (presentation) {
+            upcoming.presentation = presentation;
+            interview.markModified(`questions.${interview.currentQuestion - 1}.presentation`);
+          }
         }
+        await interview.save();
       } else {
         console.log(`[InterviewService] More questions remaining. Current: ${interview.currentQuestion}, Total: ${interview.totalQuestions}`);
 
@@ -1451,7 +1534,24 @@ export class InterviewService {
         const nextQuestionTagging = buildQuestionTaggingFromMove(finalMove, {
           difficultyAtGeneration: adaptiveSessionConfig.difficulty,
         });
-        await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints, nextQuestion.questionType, nextQuestionTagging);
+
+        // Phase 8 — built from the SAME finalMove/answerSignal/interview
+        // context already in scope here (no new DB reads, no new AI
+        // calls), right after the decision is finalized and the question
+        // is generated. Attached onto the tagging object so it's persisted
+        // on the question it describes (available as repetition-avoidance
+        // history for future turns) in the SAME addQuestion call, not a
+        // second write.
+        presentation = this.buildPresentationPlanSafely({
+          interview,
+          move: finalMove,
+          questionText: nextQuestion.question,
+          answerSignal: justAnsweredQuestion?.answerSignal,
+        });
+        await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints, nextQuestion.questionType, {
+          ...nextQuestionTagging,
+          presentation,
+        });
 
         // Close the loop on the specific claim/contradiction just probed
         // (reusing the existing, previously-unused idempotency markers on
@@ -1502,6 +1602,7 @@ export class InterviewService {
         evaluation,
         nextQuestion,
         isCompleted,
+        presentation,
       };
     } catch (error) {
       console.error('[InterviewService] Error in submitAnswer:', error);
