@@ -1069,6 +1069,7 @@ export class InterviewService {
             claimsThisQuestion,
             contradictionsThisQuestion,
             partialConcepts: params.partialConcepts,
+            durationSeconds: duration,
           });
           interview.questions[currentQuestionIndex].answerSignal = signal;
           interview.markModified(`questions.${currentQuestionIndex}.answerSignal`);

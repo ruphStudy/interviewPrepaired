@@ -35,6 +35,20 @@ class DifficultyManagerService {
   private readonly LOW_SCORE_THRESHOLD = 4.0; // Decrease difficulty if score <= 4
   private readonly MIN_QUESTIONS_BEFORE_ADJUST = 2; // Wait at least 2 questions
   private readonly CONSISTENCY_THRESHOLD = 2; // Need 2 consecutive high/low scores
+  // Phase 4 (4C) — guardrails so the interview's configured difficulty tier
+  // stays meaningful even after a long run of strong answers, and so a
+  // single reversal doesn't immediately undo the last one:
+  // - MAX_LEVELS_ABOVE_START: an interview started at "beginner" must never
+  //   escalate all the way to "expert" purely from sustained high scores —
+  //   this is the "reasonable ceiling relative to the configured tier" the
+  //   master prompt requires. Escalation below this ceiling is unaffected.
+  // - OSCILLATION_GUARD_WINDOW: right after a reversal-direction adjustment
+  //   (e.g. a 'down' adjustment), require a STRONGER consistency bar (all of
+  //   recentScores, not just CONSISTENCY_THRESHOLD) before flipping back
+  //   'up' within this many questions — dampens flip-flopping without
+  //   duplicating adjustmentHistory as a second tracking structure.
+  private readonly MAX_LEVELS_ABOVE_START = 2;
+  private readonly OSCILLATION_GUARD_WINDOW = 3;
   
   /**
    * Adjust difficulty based on latest performance
@@ -56,6 +70,7 @@ class DifficultyManagerService {
       questionNumber,
       lastAdjustedAt: currentTracking.lastAdjustedAt,
       recentScores,
+      adjustmentHistory: currentTracking.adjustmentHistory,
     });
     
     if (!shouldAdjust.adjust) {
@@ -71,8 +86,8 @@ class DifficultyManagerService {
     const previousLevel = currentTracking.currentLevel;
     const newLevel = this.calculateNewLevel({
       currentLevel: previousLevel,
+      startingLevel: currentTracking.startingLevel,
       direction: shouldAdjust.direction!,
-      rollingAverage,
     });
     
     // No change needed
@@ -123,24 +138,31 @@ class DifficultyManagerService {
     questionNumber: number;
     lastAdjustedAt?: number;
     recentScores: number[];
+    adjustmentHistory: IDifficultyAdjustment[];
   }): { adjust: boolean; direction?: 'up' | 'down'; reason?: string } {
-    const { currentLevel, rollingAverage, questionNumber, lastAdjustedAt, recentScores } = params;
-    
+    const { currentLevel, rollingAverage, questionNumber, lastAdjustedAt, recentScores, adjustmentHistory } = params;
+
     // Too early to adjust
     if (questionNumber < this.MIN_QUESTIONS_BEFORE_ADJUST) {
       return { adjust: false };
     }
-    
+
     // Recently adjusted - give candidate time to adapt
     if (lastAdjustedAt && questionNumber - lastAdjustedAt < 2) {
       return { adjust: false };
     }
-    
+
+    // Phase 4 (4C) anti-oscillation: right after a reversal-direction
+    // adjustment, require a stronger consistency bar (ALL of recentScores,
+    // not just CONSISTENCY_THRESHOLD) before flipping back the other way —
+    // dampens a harder-then-immediately-easier (or vice versa) flip-flop.
+    const requiredConsistency = (direction: 'up' | 'down') =>
+      this.isImmediateReversal(direction, adjustmentHistory, questionNumber) ? Math.max(this.CONSISTENCY_THRESHOLD, recentScores.length) : this.CONSISTENCY_THRESHOLD;
+
     // Check for high performance (increase difficulty)
     if (rollingAverage >= this.HIGH_SCORE_THRESHOLD && currentLevel < 5) {
-      // Verify consistency
       const highScores = recentScores.filter(s => s >= this.HIGH_SCORE_THRESHOLD).length;
-      if (highScores >= this.CONSISTENCY_THRESHOLD) {
+      if (highScores >= requiredConsistency('up')) {
         return {
           adjust: true,
           direction: 'up',
@@ -148,12 +170,11 @@ class DifficultyManagerService {
         };
       }
     }
-    
+
     // Check for low performance (decrease difficulty)
     if (rollingAverage <= this.LOW_SCORE_THRESHOLD && currentLevel > 1) {
-      // Verify consistency
       const lowScores = recentScores.filter(s => s <= this.LOW_SCORE_THRESHOLD).length;
-      if (lowScores >= this.CONSISTENCY_THRESHOLD) {
+      if (lowScores >= requiredConsistency('down')) {
         return {
           adjust: true,
           direction: 'down',
@@ -161,35 +182,44 @@ class DifficultyManagerService {
         };
       }
     }
-    
+
     return { adjust: false };
+  }
+
+  /** True when the most recent adjustment in history moved the OPPOSITE direction and happened within OSCILLATION_GUARD_WINDOW questions of now. */
+  private isImmediateReversal(direction: 'up' | 'down', adjustmentHistory: IDifficultyAdjustment[], questionNumber: number): boolean {
+    if (adjustmentHistory.length === 0) return false;
+    const last = adjustmentHistory[adjustmentHistory.length - 1];
+    const lastDirection: 'up' | 'down' = last.newLevel > last.previousLevel ? 'up' : 'down';
+    if (lastDirection === direction) return false;
+    return questionNumber - last.questionNumber <= this.OSCILLATION_GUARD_WINDOW;
   }
   
   /**
-   * Calculate new difficulty level
+   * Calculate new difficulty level.
+   *
+   * Phase 4 (4C): a single adjustment call ALWAYS moves by exactly one
+   * level — "one excellent (or one poor) answer must not alone justify a
+   * dramatic jump" — and an 'up' move is additionally capped at
+   * `startingLevel + MAX_LEVELS_ABOVE_START`, so an interview configured at
+   * a low starting tier can adapt upward but never escalate all the way to
+   * expert purely from sustained high scores within one session.
    */
   private calculateNewLevel(params: {
     currentLevel: DifficultyLevelNumber;
+    startingLevel: DifficultyLevelNumber;
     direction: 'up' | 'down';
-    rollingAverage: number;
   }): DifficultyLevelNumber {
-    const { currentLevel, direction, rollingAverage } = params;
-    
+    const { currentLevel, startingLevel, direction } = params;
+
     if (direction === 'up') {
-      // Exceptional performance (9+) - jump 2 levels
-      if (rollingAverage >= 9.0 && currentLevel <= 3) {
-        return Math.min(5, currentLevel + 2) as DifficultyLevelNumber;
-      }
-      // Good performance - increase by 1
-      return Math.min(5, currentLevel + 1) as DifficultyLevelNumber;
-    } else {
-      // Very poor performance (< 3) - drop 2 levels
-      if (rollingAverage < 3.0 && currentLevel >= 3) {
-        return Math.max(1, currentLevel - 2) as DifficultyLevelNumber;
-      }
-      // Struggling - decrease by 1
-      return Math.max(1, currentLevel - 1) as DifficultyLevelNumber;
+      const ceiling = Math.min(5, startingLevel + this.MAX_LEVELS_ABOVE_START);
+      const capped = Math.min(ceiling, currentLevel + 1);
+      // Never let the ceiling itself decrease a level that (e.g. via a
+      // manual override) already sits above it.
+      return Math.max(currentLevel, capped) as DifficultyLevelNumber;
     }
+    return Math.max(1, currentLevel - 1) as DifficultyLevelNumber;
   }
   
   /**

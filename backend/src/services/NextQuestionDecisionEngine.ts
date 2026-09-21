@@ -81,6 +81,7 @@ interface Candidate {
   candidateClaimReference?: string;
   contradictionReference?: string;
   memoryReference?: string;
+  sourcePhraseReference?: string;
 }
 
 // ============================================================================
@@ -229,6 +230,64 @@ function questionsSinceLastMemoryCallback(history: IQuestion[]): number {
   return Infinity;
 }
 
+/**
+ * Trailing streak (from the end of history) of consecutive persisted
+ * `decision.difficultyIntent` values — used by anti-oscillation smoothing
+ * (4C) to avoid an immediate harder-after-easier (or vice versa) flip.
+ * Reuses the SAME persisted field `buildQuestionTaggingFromMove` already
+ * writes on every question — no second/parallel tracking state.
+ */
+function lastPersistedDifficultyIntent(history: IQuestion[]): DifficultyIntent | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const intent = history[i].decision?.difficultyIntent;
+    if (intent) return intent;
+  }
+  return undefined;
+}
+
+// ============================================================================
+// Phase 4 (4B) — lightweight "production dimension" hints for SCENARIO
+// content variation. Keyed by the SAME canonical concept-registry keys
+// AnswerSignalService/detectConcepts already use — never a rigid
+// per-technology hardcode, just a small applied-per-topic lookup. Falls back
+// to a generic production-edge-case framing when the concept/competency
+// isn't recognized.
+// ============================================================================
+const PRODUCTION_DIMENSION_HINTS: Record<string, string> = {
+  redis: 'what happens when the cache becomes stale or briefly unavailable',
+  caching: 'what happens when the cache becomes stale or briefly unavailable',
+  cdn: 'stale content being served right after a deploy',
+  kafka: 'a message being delivered twice or out of order',
+  rabbitmq: 'a message being delivered twice or out of order',
+  queues: 'a message being delivered twice or out of order',
+  eventDriven: 'a message being delivered twice or out of order',
+  asyncProcessing: 'a background job failing partway through and needing retry',
+  mongodb: 'a data-consistency issue or race condition under concurrent writes',
+  postgresql: 'a data-consistency issue or race condition under concurrent writes',
+  mysql: 'a data-consistency issue or race condition under concurrent writes',
+  transactions: 'a data-consistency issue or race condition under concurrent writes',
+  sharding: 'one shard/partition receiving uneven load in production',
+  replication: 'replica lag or a failover between primary and replica',
+  scaling: 'a sudden spike in traffic and how the system holds up',
+  loadBalancing: 'one backend node failing while traffic keeps flowing',
+  microservices: 'one downstream service being slow or unavailable',
+  circuitBreaker: 'a downstream dependency failing repeatedly',
+  authentication: 'a compromised credential or an authentication outage',
+  authorization: 'a permission being wrongly granted or denied',
+  observability: 'a production incident with little visibility into the cause',
+  rateLimiting: 'a burst of traffic that needs to be throttled',
+  kubernetes: 'a pod being evicted or restarted mid-request',
+  docker: 'a container running out of memory under load',
+};
+
+function deriveProductionDimensionHint(targetConcept?: string, targetCompetency?: string): string {
+  const candidates = [...detectConcepts(targetConcept || ''), ...detectConcepts(targetCompetency || '')];
+  for (const key of candidates) {
+    if (PRODUCTION_DIMENSION_HINTS[key]) return PRODUCTION_DIMENSION_HINTS[key];
+  }
+  return 'one realistic production edge case relevant to what they just described';
+}
+
 // ============================================================================
 // The engine
 // ============================================================================
@@ -268,13 +327,14 @@ export class NextQuestionDecisionEngine {
             sourceQuestionIndex: currentSourceIndex,
           },
           context,
-          remainingBudget
+          remainingBudget,
+          history
         );
       }
 
       const coverageOnly = this.buildCoverageCandidates(context, remainingBudget, history, config);
       const fallbackWinner: Candidate = coverageOnly[0] || { moveType: 'CONTINUE_BLUEPRINT', score: 0, reasonCode: 'blueprint_progression' };
-      return this.finalizeMove(fallbackWinner, context, remainingBudget);
+      return this.finalizeMove(fallbackWinner, context, remainingBudget, history);
     }
 
     // ------------------------------------------------------------------
@@ -283,6 +343,7 @@ export class NextQuestionDecisionEngine {
     const candidates: Candidate[] = [];
     if (signal) {
       candidates.push(...this.buildFollowUpCandidates(context, signal, history, currentSourceIndex, config));
+      candidates.push(...this.buildScenarioCandidates(context, signal, history, currentSourceIndex, remainingBudget, config));
       candidates.push(...this.buildClaimCandidates(context, history, config));
       candidates.push(...this.buildContradictionCandidates(context, history));
       candidates.push(...this.buildMemoryCallbackCandidates(signal, history, currentSourceIndex, config));
@@ -303,7 +364,7 @@ export class NextQuestionDecisionEngine {
     }
     if (!winner) winner = { moveType: 'CONTINUE_BLUEPRINT', score: 0, reasonCode: 'blueprint_progression' };
 
-    return this.finalizeMove(winner, context, remainingBudget);
+    return this.finalizeMove(winner, context, remainingBudget, history);
   }
 
   private buildFollowUpCandidates(
@@ -324,19 +385,114 @@ export class NextQuestionDecisionEngine {
       const moveType = OPPORTUNITY_TYPE_TO_MOVE_TYPE[opp.type];
       if (!moveType) continue;
       const repeated = opportunityRepetitionPenalty(opp.topic, recentConcepts);
+      const targetCompetency = opp.relatedCompetency || context.currentQuestionCompetency;
       let score = BASE_SCORE[moveType] + opp.priority;
       if (repeated) score -= config.repetitionPenalty;
+      score -= this.overCoveragePenalty(targetCompetency, context, config);
       out.push({
         moveType,
         score,
         reasonCode: deriveFollowUpReasonCode(signal.quality, repeated),
-        targetCompetency: opp.relatedCompetency || context.currentQuestionCompetency,
+        targetCompetency,
         targetConcept: opp.topic,
         followUpType: opp.type,
         sourceQuestionIndex: currentSourceIndex,
+        sourcePhraseReference: opp.sourcePhrase,
       });
     }
     return out;
+  }
+
+  /**
+   * Phase 4 (4B) — SCENARIO/CHALLENGE_ASSUMPTION (production/tradeoff)
+   * probing, driven directly by this turn's signal + coverage/budget context
+   * rather than by a pre-extracted follow-up opportunity (AnswerSignalService
+   * never emits practical_example/edge_case/failure_scenario/tradeoff
+   * opportunities today — see the module comment). Folded into the SAME
+   * candidate-array/highest-score-wins comparison `decideNextMove` already
+   * runs, never a second scoring path.
+   *
+   * Eligibility (per the master prompt): quality strong/adequate AND (a
+   * claim hint suggests production experience OR the competency is
+   * high-priority/high-weight) AND budget allows it AND the competency isn't
+   * already over-covered. Weak/unusable answers and low-budget-with-gaps are
+   * both hard-excluded, not merely penalized.
+   */
+  private buildScenarioCandidates(
+    context: DecisionContext,
+    signal: IAnswerSignal,
+    history: IQuestion[],
+    currentSourceIndex: number,
+    remainingBudget: number,
+    config: NextQuestionDecisionConfig
+  ): Candidate[] {
+    if (countConsecutiveFollowUpFamilyMoves(history) >= config.maxFollowUpsPerQuestion) return [];
+    if (signal.quality !== 'strong' && signal.quality !== 'adequate') return [];
+    if (remainingBudget <= config.lowBudgetThreshold) return [];
+
+    const targetCompetency = context.currentQuestionCompetency;
+    const coverageItem = targetCompetency
+      ? context.competencyCoverage?.items.find((i) => i.competencyName === targetCompetency)
+      : undefined;
+    const band = coverageItem ? deriveCoverageBand(coverageItem.coveragePercentage, config) : undefined;
+    if (band === 'SUFFICIENT' || band === 'DEEP') return []; // already well-covered — not low-value to probe further here
+
+    const weight = targetCompetency
+      ? (context.blueprintCompetencies || []).find((c) => c.name === targetCompetency)?.weight
+      : undefined;
+    const isHighPriorityCompetency = weight !== undefined && weight >= config.scenarioHighPriorityWeightThreshold;
+    const hasProductionClaimHint = signal.claimHints.length > 0;
+    if (!hasProductionClaimHint && !isHighPriorityCompetency) return [];
+
+    const bonus =
+      (signal.quality === 'strong' ? config.scenarioStrongQualityBonus : 0) +
+      (hasProductionClaimHint ? config.scenarioProductionClaimBonus : 0) +
+      (isHighPriorityCompetency ? config.scenarioHighPriorityCompetencyBonus : 0);
+
+    const targetConcept = signal.concepts[0];
+    const out: Candidate[] = [
+      {
+        moveType: 'SCENARIO',
+        score: BASE_SCORE.SCENARIO + bonus,
+        reasonCode: 'strong_followup_opportunity',
+        targetCompetency,
+        targetConcept,
+        // 'deep' answers earn the heavier production-failure framing; a
+        // merely-adequate one gets the lighter single-edge-condition ask —
+        // still content-variation within the SAME SCENARIO move type.
+        followUpType: signal.depth === 'deep' ? 'failure_scenario' : 'edge_case',
+        sourceQuestionIndex: currentSourceIndex,
+      },
+    ];
+
+    // Tradeoff/assumption-challenge is only worth also offering when the
+    // answer was genuinely deep (there's an actual design choice to
+    // interrogate) — scored a notch below SCENARIO so SCENARIO is the
+    // default production probe when both are eligible.
+    if (signal.depth === 'deep') {
+      out.push({
+        moveType: 'CHALLENGE_ASSUMPTION',
+        score: BASE_SCORE.CHALLENGE_ASSUMPTION + bonus - 10,
+        reasonCode: 'strong_followup_opportunity',
+        targetCompetency,
+        targetConcept,
+        followUpType: 'tradeoff',
+        sourceQuestionIndex: currentSourceIndex,
+      });
+    }
+
+    return out;
+  }
+
+  /** Shared by every follow-up-family candidate builder — see `competencyOverCoveragePenalty`'s doc comment. */
+  private overCoveragePenalty(targetCompetency: string | undefined, context: DecisionContext, config: NextQuestionDecisionConfig): number {
+    if (!targetCompetency) return 0;
+    const item = context.competencyCoverage?.items.find((i) => i.competencyName === targetCompetency);
+    if (!item) return 0;
+    const band = deriveCoverageBand(item.coveragePercentage, config);
+    if (band === 'DEEP') return config.competencyOverCoveragePenalty * 1.5;
+    if (band === 'SUFFICIENT') return config.competencyOverCoveragePenalty;
+    return 0;
   }
 
   private buildClaimCandidates(context: DecisionContext, history: IQuestion[], config: NextQuestionDecisionConfig): Candidate[] {
@@ -396,6 +552,10 @@ export class NextQuestionDecisionEngine {
     // this is a real callback, not a restatement of what was just discussed.
     for (let i = 0; i < currentSourceIndex; i++) {
       const q = history[i];
+      // Defensive — `history` is caller-supplied and, per this module's
+      // "never throws on missing/legacy data" contract, must degrade safely
+      // even if it's ever shorter than `currentSourceIndex` implies.
+      if (!q) continue;
       const overlap = (q.answerSignal?.concepts || []).find((c) => conceptSet.has(c));
       if (overlap && q.competencyName && q.competencyName !== currentCompetency) {
         return [
@@ -499,7 +659,12 @@ export class NextQuestionDecisionEngine {
     }
   }
 
-  private finalizeMove(candidate: Candidate, context: DecisionContext, remainingBudget: number): INextInterviewMove {
+  private finalizeMove(
+    candidate: Candidate,
+    context: DecisionContext,
+    remainingBudget: number,
+    history: IQuestion[] = context.questionHistory || []
+  ): INextInterviewMove {
     return {
       moveType: candidate.moveType,
       targetCompetency: candidate.targetCompetency,
@@ -507,14 +672,52 @@ export class NextQuestionDecisionEngine {
       sourceQuestionIndex: candidate.sourceQuestionIndex,
       reasonCode: candidate.reasonCode,
       priority: Math.round(candidate.score),
-      difficultyIntent: deriveDifficultyIntent(context.answerSignal),
+      difficultyIntent: this.resolveDifficultyIntent(candidate, context, history),
       followUpType: candidate.followUpType,
       candidateClaimReference: candidate.candidateClaimReference,
       contradictionReference: candidate.contradictionReference,
       memoryReference: candidate.memoryReference,
+      sourcePhraseReference: candidate.sourcePhraseReference,
       remainingBudget,
       questionSource: questionSourceForMoveType(candidate.moveType),
     };
+  }
+
+  /**
+   * Phase 4 (4C) — wraps the pure per-signal `deriveDifficultyIntent` with
+   * three additional guardrails the master prompt requires, none of which
+   * duplicate DifficultyManagerService's own (separate) currentLevel
+   * tracking — this only ever expresses a soft per-turn INTENT:
+   *  1. Never ramp difficulty across a competency switch — a strong answer
+   *     in the competency being left behind says nothing about the next one.
+   *  2. Anti-oscillation — don't flip straight from 'easier' to 'harder' (or
+   *     vice versa) turn-to-turn; require a settling turn first. Reuses the
+   *     already-persisted `decision.difficultyIntent` history, no second
+   *     counter.
+   *  3. Ceiling — never suggest 'harder' once difficultyTracking is already
+   *     at the max level; there's nothing higher to ask for. The REAL
+   *     interview-tier ceiling (relative to the configured starting
+   *     difficulty) is enforced where `currentLevel` itself is computed —
+   *     see DifficultyManagerService.calculateNewLevel.
+   */
+  private resolveDifficultyIntent(candidate: Candidate, context: DecisionContext, history: IQuestion[]): DifficultyIntent {
+    let intent = deriveDifficultyIntent(context.answerSignal);
+    if (intent === 'harder') {
+      const isCompetencySwitch = candidate.moveType === 'SWITCH_COMPETENCY' || (!!context.currentQuestionCompetency && !!candidate.targetCompetency && candidate.targetCompetency !== context.currentQuestionCompetency);
+      if (isCompetencySwitch) intent = 'same';
+    }
+
+    if (intent !== 'same') {
+      const lastIntent = lastPersistedDifficultyIntent(history);
+      const opposite: DifficultyIntent = intent === 'harder' ? 'easier' : 'harder';
+      if (lastIntent === opposite) intent = 'same';
+    }
+
+    if (intent === 'harder' && context.difficultyTracking && context.difficultyTracking.currentLevel >= 5) {
+      intent = 'same';
+    }
+
+    return intent;
   }
 }
 
@@ -527,70 +730,205 @@ export const nextQuestionDecisionEngine = new NextQuestionDecisionEngine();
 // defined exactly once.
 // ============================================================================
 
+// Phase 4 (4A/4B) — every builder below (a) grounds in the move's own
+// reference field(s) instead of a generic template, (b) explicitly asks for
+// ONE focused question (never a compound one), and (c) branches on
+// `followUpType`/`reasonCode` where the SAME move type covers more than one
+// sub-behavior — content variation within the existing taxonomy, never a
+// new move type.
 const MOVE_DIRECTIVE_BUILDERS: Partial<Record<NextInterviewMoveType, (move: INextInterviewMove) => string>> = {
   DEEPEN: (m) =>
-    `Ask a deeper follow-up question specifically about "${m.targetConcept}"${m.targetCompetency ? ` within ${m.targetCompetency}` : ''}, building directly on the candidate's previous answer. Do not repeat the previous question.`,
+    `Ask ONE focused follow-up question that probes deeper into how the candidate specifically structured/implemented "${m.targetConcept}"${m.targetCompetency ? ` within ${m.targetCompetency}` : ''}${m.sourcePhraseReference ? `, grounded in their own words: "${m.sourcePhraseReference}"` : ''}. Build directly on their previous answer — do not repeat the previous question, and ask only one question.`,
   CLARIFY: (m) =>
     m.reasonCode === 'no_answer'
       ? `The candidate did not answer the previous question. Ask a single, clear, more approachable clarifying question on the SAME topic — do not move to a new topic yet.`
       : m.reasonCode === 'off_topic'
         ? `The candidate's previous answer did not address the question asked. Politely redirect with a clearer, more specific version of the same question.`
-        : `Ask the candidate to clarify or elaborate on: "${m.targetConcept}". Be specific about what is unclear.`,
+        : `Ask the candidate what SPECIFICALLY they mean by "${m.targetConcept}"${m.sourcePhraseReference ? ` (they said: "${m.sourcePhraseReference}")` : ''}. Ask ONE clear, focused clarifying question — be specific about what is unclear, not multiple questions.`,
   FOLLOW_UP: (m) =>
-    `Ask a direct follow-up question about "${m.targetConcept}"${m.targetCompetency ? ` within ${m.targetCompetency}` : ''}, building on the candidate's previous answer.`,
-  SCENARIO: (m) =>
-    `Pose a realistic scenario/edge-case question that explores "${m.targetConcept}" in more practical depth${m.targetCompetency ? ` within ${m.targetCompetency}` : ''}.`,
+    `Ask ONE direct follow-up question about "${m.targetConcept}"${m.targetCompetency ? ` within ${m.targetCompetency}` : ''}, building on the candidate's previous answer${m.sourcePhraseReference ? ` (they said: "${m.sourcePhraseReference}")` : ''}.`,
+  SCENARIO: (m) => {
+    if (m.followUpType === 'practical_example') {
+      return `Ask the candidate for ONE concrete example of "${m.targetConcept || m.targetCompetency}" from their own real experience — not a hypothetical, something they actually did. Ask ONE focused question.`;
+    }
+    const dimension = deriveProductionDimensionHint(m.targetConcept, m.targetCompetency);
+    return `Pose ONE concise, realistic production scenario question${m.targetConcept ? ` about "${m.targetConcept}"` : m.targetCompetency ? ` within ${m.targetCompetency}` : ''} — focus specifically on ${dimension}, and ask how their system would behave or what they would check first. Do NOT ask them to enumerate every possible failure — keep it to ONE specific situation, phrased as a single focused question.`;
+  },
   CHALLENGE_ASSUMPTION: (m) =>
-    `Respectfully challenge a tradeoff or assumption in the candidate's previous answer about "${m.targetConcept}" — ask them to justify their choice or consider an alternative.`,
+    m.followUpType === 'tradeoff'
+      ? `Ask the candidate ONE focused question about what trade-off they made by choosing "${m.targetConcept}"${m.targetCompetency ? ` for ${m.targetCompetency}` : ''} — what did they give up, and would they choose differently under different constraints?`
+      : `Respectfully ask the candidate ONE focused question about what would happen if a key assumption in their previous answer${m.targetConcept ? ` about "${m.targetConcept}"` : ''} no longer held.`,
   CLAIM_PROBE: (m) =>
-    `Ask the candidate to elaborate on and substantiate this claim with specifics (numbers, their exact role, concrete outcome): "${m.candidateClaimReference}".`,
+    `Ask ONE focused question that asks the candidate to substantiate this specific claim with concrete specifics — the scale/bottleneck involved, their exact individual role, and a measurable outcome: "${m.candidateClaimReference}".`,
   CONTRADICTION_PROBE: (m) =>
-    `Neutrally and non-accusatorially ask the candidate to clarify this apparent inconsistency in their answers: ${m.contradictionReference}.`,
+    `Ask ONE neutral, non-accusatory clarifying question about this apparent inconsistency between two of the candidate's answers: ${m.contradictionReference}. Phrase it in the spirit of "Earlier you mentioned X, and here you mentioned Y — can you help me understand how those fit together?" — NEVER say "you contradicted yourself" or imply dishonesty.`,
   MEMORY_CALLBACK: (m) =>
-    `Reference the candidate's earlier answer ("${m.memoryReference}") and connect it to the current topic${m.targetCompetency ? ` (${m.targetCompetency})` : ''} in a natural follow-up.`,
+    `Reference the candidate's earlier mention of "${m.targetConcept || m.memoryReference}" (they said: "${m.memoryReference}") and ask ONE new, focused question connecting it to the current topic${m.targetCompetency ? ` (${m.targetCompetency})` : ''} — do not repeat a question already asked.`,
   // SWITCH_COMPETENCY / CONTINUE_BLUEPRINT deliberately have no directive —
   // they keep using the existing priorityCompetency-based soft prompt
   // (OpenAIService.getQuestionUserPrompt), unchanged from pre-Phase-3.
 };
 
+// Phase 4 (4C) — feeds the engine's already-computed `difficultyIntent` into
+// the actual generation constraint instead of leaving it computed-but-unused
+// metadata. Appended uniformly to every move that has a directive, rather
+// than duplicated per-move-type.
+const DIFFICULTY_INTENT_CLAUSE: Partial<Record<DifficultyIntent, string>> = {
+  harder: 'Raise the technical bar slightly versus the previous question — introduce an edge case, a trade-off, or deeper architectural reasoning.',
+  easier: 'Keep this question approachable and focused on fundamentals — do not increase the technical bar.',
+};
+
 export function buildMoveDirective(move: INextInterviewMove, options?: { forceful?: boolean }): string | undefined {
   const builder = MOVE_DIRECTIVE_BUILDERS[move.moveType];
   if (!builder) return undefined;
-  const base = builder(move);
-  if (!options?.forceful) return base;
-  return `${base} This is critical: the question MUST explicitly and unambiguously address the above in this exact turn.`;
+  let text = builder(move);
+  const difficultyClause = DIFFICULTY_INTENT_CLAUSE[move.difficultyIntent];
+  if (difficultyClause) text += ` ${difficultyClause}`;
+  if (!options?.forceful) return text;
+  return `${text} This is critical: the question MUST explicitly and unambiguously address the above in this exact turn.`;
 }
 
 function significantWords(text: string | undefined): Set<string> {
   return new Set((text || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4));
 }
 
+// Phase 4 — cheap, deterministic quality guards folded into the SAME
+// validator/retry-then-degrade flow (never a second validator/retry loop).
+const MIN_QUESTION_TEXT_LENGTH = 12;
+const SCORING_LEAKAGE_PHRASES = [
+  'good answer',
+  'great answer',
+  'bad answer',
+  "that's wrong",
+  'that is wrong',
+  'you scored',
+  'your score',
+  'weak on this',
+  'weak answer',
+  'strong answer',
+  'correct answer',
+  'incorrect answer',
+  'well done',
+  "you're wrong",
+  'you are wrong',
+];
+const NEAR_DUPLICATE_WINDOW = 5;
+const NEAR_DUPLICATE_WORD_OVERLAP_RATIO = 0.85;
+
+function containsScoringLeakage(questionText: string): boolean {
+  const normalized = questionText.toLowerCase();
+  return SCORING_LEAKAGE_PHRASES.some((phrase) => normalized.includes(phrase));
+}
+
+/** Soft heuristic (not a hard NLP parse): flags an obviously compound/multi-part question. */
+function looksCompound(questionText: string): boolean {
+  const questionMarks = (questionText.match(/\?/g) || []).length;
+  if (questionMarks > 1) return true;
+  if (questionMarks >= 1 && /\band also\b/i.test(questionText)) return true;
+  return false;
+}
+
+/** Cheap normalized-text comparison against the last few questions — never semantic embeddings. */
+function isNearDuplicateOfRecent(questionText: string, recentQuestionTexts: string[]): boolean {
+  const normalized = questionText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+
+  return recentQuestionTexts.slice(-NEAR_DUPLICATE_WINDOW).some((other) => {
+    const otherNormalized = (other || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!otherNormalized) return false;
+    if (otherNormalized === normalized) return true;
+
+    const wordsA = new Set(normalized.split(' ').filter((w) => w.length >= 4));
+    const wordsB = new Set(otherNormalized.split(' ').filter((w) => w.length >= 4));
+    if (wordsA.size === 0 || wordsB.size === 0) return false;
+    const shared = [...wordsA].filter((w) => wordsB.has(w)).length;
+    return shared / Math.min(wordsA.size, wordsB.size) >= NEAR_DUPLICATE_WORD_OVERLAP_RATIO;
+  });
+}
+
 /**
  * Cheap, deterministic output validation — never a second AI "judge" call.
- * Returns true whenever there's nothing specific to validate (e.g.
- * CONTINUE_BLUEPRINT/SWITCH_COMPETENCY with no concept/claim/contradiction
- * reference), or when the generated question shares a significant word or a
- * canonical concept-registry key with the move's reference text.
+ * ALWAYS checks basic generation-quality guards (non-trivially short,
+ * no scoring/feedback leakage, not an obviously compound question, not a
+ * near-duplicate of a recently-asked question); then, when the move has a
+ * specific target, ALSO checks that the question plausibly hits it —
+ * concept-level (a shared significant word or concept-registry key with
+ * `targetConcept`/`candidateClaimReference`/`contradictionReference`/
+ * `memoryReference`) when one is set, or competency-level (the question
+ * plausibly relates to `targetCompetency`'s own words/concepts) when only a
+ * competency is set and the move isn't an open SWITCH_COMPETENCY/
+ * CONTINUE_BLUEPRINT progression move. Returns true whenever there's
+ * nothing specific to validate beyond the basic guards.
  */
-export function questionPlausiblyTargetsMove(questionText: string, move: INextInterviewMove): boolean {
+export function questionPlausiblyTargetsMove(questionText: string, move: INextInterviewMove, recentQuestionTexts: string[] = []): boolean {
+  const trimmed = (questionText || '').trim();
+  if (trimmed.length < MIN_QUESTION_TEXT_LENGTH) return false;
+  if (containsScoringLeakage(trimmed)) return false;
+  if (looksCompound(trimmed)) return false;
+  if (isNearDuplicateOfRecent(trimmed, recentQuestionTexts)) return false;
+
   const reference = move.targetConcept || move.candidateClaimReference || move.contradictionReference || move.memoryReference;
-  if (!reference) return true;
 
-  const refWords = significantWords(reference);
-  if (refWords.size === 0) return true;
+  if (reference) {
+    const refWords = significantWords(reference);
+    if (refWords.size === 0) return true;
 
-  const qWords = significantWords(questionText);
-  for (const w of refWords) {
-    if (qWords.has(w)) return true;
+    const qWords = significantWords(trimmed);
+    for (const w of refWords) {
+      if (qWords.has(w)) return true;
+    }
+
+    if (move.targetConcept) {
+      const qConcepts = new Set(detectConcepts(trimmed));
+      const refConcepts = detectConcepts(move.targetConcept);
+      if (refConcepts.some((c) => qConcepts.has(c))) return true;
+    }
+
+    return false;
   }
 
-  if (move.targetConcept) {
-    const qConcepts = new Set(detectConcepts(questionText || ''));
-    const refConcepts = detectConcepts(move.targetConcept);
-    if (refConcepts.some((c) => qConcepts.has(c))) return true;
+  // No concept/claim/contradiction/memory reference to anchor on. For an
+  // open progression move (SWITCH_COMPETENCY/CONTINUE_BLUEPRINT) there is
+  // nothing further to validate. SCENARIO/CHALLENGE_ASSUMPTION are also
+  // exempted here — their directive already anchors on a production-
+  // dimension/trade-off framing rather than literal concept wording, so
+  // requiring a literal word/concept match would false-reject good,
+  // naturally-phrased scenario questions. For any OTHER move that still
+  // names a specific `targetCompetency` (e.g. a follow-up-family
+  // opportunity whose topic text happened to be empty), require the
+  // question to at least plausibly relate to that competency so it can't
+  // silently wander onto an unrelated topic.
+  if (
+    move.targetCompetency &&
+    move.moveType !== 'SWITCH_COMPETENCY' &&
+    move.moveType !== 'CONTINUE_BLUEPRINT' &&
+    move.moveType !== 'SCENARIO' &&
+    move.moveType !== 'CHALLENGE_ASSUMPTION'
+  ) {
+    const compWords = significantWords(move.targetCompetency);
+    if (compWords.size === 0) return true;
+
+    const qWords = significantWords(trimmed);
+    for (const w of compWords) {
+      if (qWords.has(w)) return true;
+    }
+
+    const qConcepts = new Set(detectConcepts(trimmed));
+    const compConcepts = detectConcepts(move.targetCompetency);
+    if (compConcepts.some((c) => qConcepts.has(c))) return true;
+
+    return false;
   }
 
-  return false;
+  return true;
 }
 
 export interface QuestionTaggingFromMove {
@@ -683,15 +1021,21 @@ export async function generateQuestionForMove(
     moveDirective: directive,
   };
 
+  // Phase 4: basic generation-quality guards (length/leakage/compound/near-
+  // duplicate) apply to EVERY move, not just ones with a specific target —
+  // reuses this SAME recentQuestionTexts list (already available as
+  // baseRequest.previousQuestions, never a second lookup).
+  const recentQuestionTexts = baseRequest.previousQuestions || [];
+
   let result = await aiService.generateQuestion(firstRequest, requestContext);
   let questionText = result?.data?.question || '';
 
-  if (directive && !questionPlausiblyTargetsMove(questionText, move)) {
+  if (!questionPlausiblyTargetsMove(questionText, move, recentQuestionTexts)) {
     const retryRequest: QuestionRequest = { ...firstRequest, moveDirective: buildMoveDirective(move, { forceful: true }) };
     result = await aiService.generateQuestion(retryRequest, requestContext);
     questionText = result?.data?.question || '';
 
-    if (!questionPlausiblyTargetsMove(questionText, move)) {
+    if (!questionPlausiblyTargetsMove(questionText, move, recentQuestionTexts)) {
       const degradedMove: INextInterviewMove = {
         ...move,
         moveType: 'CONTINUE_BLUEPRINT',

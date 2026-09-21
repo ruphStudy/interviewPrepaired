@@ -40,6 +40,23 @@ export interface NextQuestionDecisionConfig {
   memoryCallbackMinGap: number;
   /** Minimum claim confidence (0-100) required before a claim is probe-worthy. */
   minClaimConfidenceToProbe: number;
+
+  // ==========================================================================
+  // Phase 4 (4B) — SCENARIO/CHALLENGE_ASSUMPTION (production/tradeoff)
+  // probing. Reuses the existing SCENARIO/CHALLENGE_ASSUMPTION move types and
+  // FollowUpOpportunityType taxonomy — these only tune WHEN/HOW STRONGLY the
+  // engine's own scoring prefers them, never a second scoring path.
+  // ==========================================================================
+  /** Blueprint competency weight (0-100) at/above which a competency counts as "high priority" for scenario-probing eligibility. */
+  scenarioHighPriorityWeightThreshold: number;
+  /** Score bonus applied to a SCENARIO/CHALLENGE_ASSUMPTION candidate when the answer quality is 'strong'. */
+  scenarioStrongQualityBonus: number;
+  /** Score bonus applied when the answer carries a claim hint (suggests real production experience worth probing). */
+  scenarioProductionClaimBonus: number;
+  /** Score bonus applied when the target competency is high-priority/high-weight. */
+  scenarioHighPriorityCompetencyBonus: number;
+  /** Score subtracted from a follow-up-family candidate whose target competency's coverage band is already SUFFICIENT (DEEP applies this at 1.5x) — prefers moving to an uncovered competency over yet more probing of an already-covered one (see the "excellent Redis answer, caching already sufficiently covered" example). */
+  competencyOverCoveragePenalty: number;
 }
 
 export const nextQuestionDecisionConfig: NextQuestionDecisionConfig = {
@@ -56,4 +73,9 @@ export const nextQuestionDecisionConfig: NextQuestionDecisionConfig = {
   repetitionPenalty: 500,
   memoryCallbackMinGap: intFromEnv('NEXT_QUESTION_MEMORY_CALLBACK_MIN_GAP', 4),
   minClaimConfidenceToProbe: intFromEnv('NEXT_QUESTION_MIN_CLAIM_CONFIDENCE', 60),
+  scenarioHighPriorityWeightThreshold: intFromEnv('NEXT_QUESTION_SCENARIO_HIGH_WEIGHT_THRESHOLD', 20),
+  scenarioStrongQualityBonus: intFromEnv('NEXT_QUESTION_SCENARIO_STRONG_QUALITY_BONUS', 30),
+  scenarioProductionClaimBonus: intFromEnv('NEXT_QUESTION_SCENARIO_PRODUCTION_CLAIM_BONUS', 25),
+  scenarioHighPriorityCompetencyBonus: intFromEnv('NEXT_QUESTION_SCENARIO_HIGH_PRIORITY_BONUS', 15),
+  competencyOverCoveragePenalty: intFromEnv('NEXT_QUESTION_OVER_COVERAGE_PENALTY', 220),
 };

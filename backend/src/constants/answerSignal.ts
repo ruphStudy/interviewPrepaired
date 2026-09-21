@@ -53,6 +53,15 @@ export type FollowUpOpportunityType = (typeof FOLLOW_UP_OPPORTUNITY_TYPE_VALUES)
 export const PROBE_WORTHINESS_VALUES = ['high', 'medium', 'low'] as const;
 export type ProbeWorthiness = (typeof PROBE_WORTHINESS_VALUES)[number];
 
+// Phase 4 (4D) — purely DESCRIPTIVE verbosity metadata, computed cheaply
+// from the answer's own word count. Deliberately NEVER used as a proxy for
+// quality/depth/probeWorthiness anywhere in AnswerSignalService — a long
+// answer is not automatically strong, a short one is not automatically
+// unusable (see AnswerSignalService.test.ts for the tests proving both
+// directions).
+export const VERBOSITY_CLASS_VALUES = ['concise', 'normal', 'verbose'] as const;
+export type VerbosityClass = (typeof VERBOSITY_CLASS_VALUES)[number];
+
 // Bounded lengths — kept small deliberately so nothing here can become a
 // dumping ground for raw AI reasoning text.
 export const MAX_FOLLOW_UP_OPPORTUNITIES = 5;
@@ -94,5 +103,11 @@ export interface IAnswerSignal {
   contradictionHints: string[];
   /** 0-100: how much real signal was available to derive this (see AnswerSignalService for the rule). */
   confidence: number;
+  /** Word count of the raw answer text — descriptive only, see VERBOSITY_CLASS_VALUES doc comment above. */
+  wordCount?: number;
+  /** The answer's spoken/typed duration in seconds, when available (already collected by submitAnswer) — descriptive only. */
+  durationSeconds?: number;
+  /** Cheap bucketing of `wordCount` — descriptive only, never a quality/depth proxy. */
+  verbosityClass?: VerbosityClass;
   generatedAt?: Date;
 }

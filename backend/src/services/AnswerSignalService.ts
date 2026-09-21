@@ -15,6 +15,7 @@ import {
   MAX_SHORT_STRING_LENGTH,
   MAX_UNCLEAR_POINTS,
   ProbeWorthiness,
+  VerbosityClass,
 } from '../constants/answerSignal';
 
 export interface BuildFastSignalParams {
@@ -30,6 +31,8 @@ export interface BuildFastSignalParams {
   contradictionsThisQuestion: IContradiction[];
   /** Canonical concept keys detected client-side while the candidate was still speaking (2C) — merged, never re-extracted. */
   partialConcepts?: string[];
+  /** Phase 4 (4D) — the answer's spoken/typed duration in seconds, when available (already collected by submitAnswer's `duration` param). Descriptive metadata only — see IAnswerSignal.durationSeconds. */
+  durationSeconds?: number;
 }
 
 /**
@@ -160,13 +163,48 @@ function buildUnclearPoints(evaluation: DynamicEvaluationResponse): string[] {
   return fallback.map((v) => truncate(v)).filter(Boolean).slice(0, MAX_UNCLEAR_POINTS);
 }
 
+// Phase 4 (4D) — cheap denylist of generic/filler phrasing. Only ever
+// consulted as a last-resort safety net (see below) when NOTHING else
+// (contradiction/missing-point/claim/partial-point, or the missingPoints/
+// weaknesses fallback) already found something to probe AND the answer
+// mentions no recognizable technical concept — never a general-purpose
+// "vagueness classifier".
+const VAGUE_LANGUAGE_PHRASES = [
+  'best practices',
+  'best practice',
+  'optimized it',
+  'optimized the',
+  'made it better',
+  'improved performance',
+  'improved it',
+  'handled it',
+  'did the needful',
+  'standard procedures',
+  'standard approach',
+  'usual way',
+  'right approach',
+  'the right way',
+  'as expected',
+  'as usual',
+];
+
+function detectVagueLanguage(answer: string): string | undefined {
+  const normalized = (answer || '').toLowerCase();
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  if (wordCount === 0 || wordCount > 40) return undefined; // only a cheap net for short/generic non-answers, not long detailed ones
+  return VAGUE_LANGUAGE_PHRASES.find((phrase) => normalized.includes(phrase));
+}
+
 function buildFollowUpOpportunities(params: {
   evaluation: DynamicEvaluationResponse;
   claimsThisQuestion: IVerifiableClaim[];
   contradictionsThisQuestion: IContradiction[];
   targetCompetency?: string;
+  quality: AnswerQuality;
+  answer: string;
+  concepts: string[];
 }): IFollowUpOpportunity[] {
-  const { evaluation, claimsThisQuestion, contradictionsThisQuestion, targetCompetency } = params;
+  const { evaluation, claimsThisQuestion, contradictionsThisQuestion, targetCompetency, quality, answer, concepts } = params;
   const candidates: IFollowUpOpportunity[] = [];
 
   // Priority tiers (simple, deterministic): contradiction > missing point > claim > partial point.
@@ -182,13 +220,30 @@ function buildFollowUpOpportunities(params: {
   }
 
   const pointComparison = evaluation?.pointComparison || [];
-  for (const p of pointComparison) {
-    if (p.status === 'missing') {
+  if (pointComparison.length > 0) {
+    for (const p of pointComparison) {
+      if (p.status === 'missing') {
+        candidates.push({
+          topic: truncate(p.expectedPoint),
+          type: 'deepen',
+          reason: 'Expected point was not addressed in the answer.',
+          priority: 80,
+          relatedCompetency: targetCompetency,
+          sourcePhrase: p.candidateEvidence ? truncate(p.candidateEvidence) : undefined,
+        });
+      }
+    }
+  } else {
+    // Fallback when the evaluator didn't return structured point-by-point
+    // comparison — mirrors buildUnclearPoints' own missingPoints/weaknesses
+    // fallback (below) so a genuinely vague/incomplete answer still surfaces
+    // a real follow-up opportunity instead of silently having none.
+    for (const missing of (evaluation?.missingPoints || []).slice(0, 2)) {
       candidates.push({
-        topic: truncate(p.expectedPoint),
+        topic: truncate(missing),
         type: 'deepen',
         reason: 'Expected point was not addressed in the answer.',
-        priority: 80,
+        priority: 75,
         relatedCompetency: targetCompetency,
       });
     }
@@ -204,19 +259,57 @@ function buildFollowUpOpportunities(params: {
     });
   }
 
-  for (const p of pointComparison) {
-    if (p.status === 'partial') {
+  if (pointComparison.length > 0) {
+    for (const p of pointComparison) {
+      if (p.status === 'partial') {
+        candidates.push({
+          topic: truncate(p.expectedPoint),
+          type: 'clarify',
+          reason: 'Expected point was only partially covered.',
+          priority: 40,
+          relatedCompetency: targetCompetency,
+          sourcePhrase: p.candidateEvidence ? truncate(p.candidateEvidence) : undefined,
+        });
+      }
+    }
+  } else {
+    for (const weakness of (evaluation?.weaknesses || []).slice(0, 2)) {
       candidates.push({
-        topic: truncate(p.expectedPoint),
+        topic: truncate(weakness),
         type: 'clarify',
-        reason: 'Expected point was only partially covered.',
-        priority: 40,
+        reason: 'Evaluator flagged a weakness that warrants clarification.',
+        priority: 38,
         relatedCompetency: targetCompetency,
       });
     }
   }
 
+  // Cheap deterministic vague-language safety net (4D): only when NOTHING
+  // else flagged anything to probe, the answer scored adequate/strong
+  // (a lenient AI score could otherwise wave a "we used best practices"
+  // style non-answer through with nothing to follow up on), and the answer
+  // mentions no recognizable technical concept.
+  if (candidates.length === 0 && (quality === 'adequate' || quality === 'strong') && concepts.length === 0) {
+    const vaguePhrase = detectVagueLanguage(answer);
+    if (vaguePhrase) {
+      candidates.push({
+        topic: truncate(vaguePhrase),
+        type: 'clarify',
+        reason: `Answer used vague/generic language ("${vaguePhrase}") without concrete technical detail.`,
+        priority: 45,
+        relatedCompetency: targetCompetency,
+        sourcePhrase: truncate(answer),
+      });
+    }
+  }
+
   return candidates.sort((a, b) => b.priority - a.priority).slice(0, MAX_FOLLOW_UP_OPPORTUNITIES);
+}
+
+function deriveVerbosityClass(wordCount: number): VerbosityClass {
+  if (wordCount < 30) return 'concise';
+  if (wordCount <= 150) return 'normal';
+  return 'verbose';
 }
 
 /**
@@ -285,7 +378,7 @@ function buildClaimHints(claimsThisQuestion: IVerifiableClaim[], answer: string)
  */
 export class AnswerSignalService {
   buildFastSignal(params: BuildFastSignalParams): IAnswerSignal {
-    const { answer, evaluation, claimsThisQuestion, contradictionsThisQuestion, targetCompetency, partialConcepts } = params;
+    const { answer, evaluation, claimsThisQuestion, contradictionsThisQuestion, targetCompetency, partialConcepts, durationSeconds } = params;
 
     const isNoAnswer = isEffectivelyNoAnswer(answer);
     const { quality, depth } = deriveQualityAndDepth(evaluation, isNoAnswer);
@@ -312,7 +405,7 @@ export class AnswerSignalService {
     const unclearPoints = isNoAnswer ? [] : buildUnclearPoints(evaluation);
     const followUpOpportunities = isNoAnswer
       ? []
-      : buildFollowUpOpportunities({ evaluation, claimsThisQuestion, contradictionsThisQuestion, targetCompetency });
+      : buildFollowUpOpportunities({ evaluation, claimsThisQuestion, contradictionsThisQuestion, targetCompetency, quality, answer, concepts });
 
     const probeWorthiness = deriveProbeWorthiness({
       quality,
@@ -321,6 +414,12 @@ export class AnswerSignalService {
     });
 
     const confidence = deriveConfidence({ evaluation, claimsThisQuestion, contradictionsThisQuestion, isNoAnswer });
+
+    // Phase 4 (4D) — purely descriptive verbosity metadata, NEVER folded
+    // into quality/depth/probeWorthiness above (see VERBOSITY_CLASS_VALUES
+    // doc comment): a long answer isn't automatically strong, a short one
+    // isn't automatically unusable.
+    const wordCount = (answer || '').trim().split(/\s+/).filter(Boolean).length;
 
     return {
       quality,
@@ -336,6 +435,9 @@ export class AnswerSignalService {
       claimHints,
       contradictionHints,
       confidence,
+      wordCount,
+      durationSeconds,
+      verbosityClass: deriveVerbosityClass(wordCount),
       generatedAt: new Date(),
     };
   }

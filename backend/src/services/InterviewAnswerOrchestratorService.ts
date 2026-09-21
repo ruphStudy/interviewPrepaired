@@ -232,6 +232,7 @@ export class InterviewAnswerOrchestratorService {
               evaluation: evaluationForSignal,
               claimsThisQuestion,
               contradictionsThisQuestion,
+              durationSeconds: freshQuestion?.duration,
             });
             await Interview.updateOne(
               { _id: fresh._id, [`questions.${targetIndex}.answerSignal`]: { $exists: false } },

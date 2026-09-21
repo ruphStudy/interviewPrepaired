@@ -82,6 +82,15 @@ export interface INextInterviewMove {
   contradictionReference?: string;
   /** Bounded (<=160 char) reference to what's being called back to. */
   memoryReference?: string;
+  /**
+   * Phase 4 (4A) — a short (<=160 char), bounded excerpt of the candidate's
+   * OWN words this move should ground its follow-up in (e.g. the
+   * `candidateEvidence` behind a missing/partial expected point). Purely a
+   * directive-building aid — NEVER persisted on the resulting question's
+   * `decision` metadata (see `buildQuestionTaggingFromMove`), same
+   * ephemeral treatment as `candidateClaimReference`/`contradictionReference`.
+   */
+  sourcePhraseReference?: string;
   remainingBudget: number;
   questionSource: QuestionSource;
 }
