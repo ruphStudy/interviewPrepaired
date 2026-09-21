@@ -15,6 +15,14 @@ import {
   FOLLOW_UP_OPPORTUNITY_TYPE_VALUES,
   PROBE_WORTHINESS_VALUES,
 } from '../constants/answerSignal';
+import {
+  NextInterviewMoveType,
+  DecisionReasonCode,
+  DifficultyIntent,
+  NEXT_INTERVIEW_MOVE_TYPE_VALUES,
+  DECISION_REASON_CODE_VALUES,
+  DIFFICULTY_INTENT_VALUES,
+} from '../constants/nextQuestionDecision';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -131,6 +139,24 @@ export interface IQuestion {
   // candidate-facing (hiring-assessment) API response — only the user's
   // own practice-mode report DTO may include it.
   answerSignal?: IAnswerSignal;
+  // Phase 3 (next-question decision engine) — additive, optional, no
+  // default, absent on every question that predates this feature and on
+  // every uploaded-mode question (uploaded mode never computes a real
+  // decision). Compact audit/debug/recovery metadata riding along on the
+  // question that RESULTED from the decision — `targetCompetency` is
+  // deliberately NOT duplicated here since it's already `competencyName`
+  // above (Phase 1). Set by NextQuestionDecisionEngine.decideNextMove via
+  // buildQuestionTaggingFromMove, called from InterviewService.submitAnswer
+  // and InterviewAnswerOrchestratorService.generateRecoveryQuestion — never
+  // surfaced to a candidate-facing (hiring-assessment) API response.
+  decision?: {
+    moveType: NextInterviewMoveType;
+    reasonCode: DecisionReasonCode;
+    priority: number;
+    difficultyIntent: DifficultyIntent;
+    targetConcept?: string;
+    sourceQuestionIndex?: number;
+  };
 }
 
 export interface IAIUsageCall {
@@ -296,6 +322,15 @@ export interface IInterview extends Document {
       questionSource?: QuestionSource;
       sourceReasonCode?: string;
       difficultyAtGeneration?: string;
+      // Phase 3 — additive/optional, absent for every pre-existing caller.
+      decision?: {
+        moveType: NextInterviewMoveType;
+        reasonCode: DecisionReasonCode;
+        priority: number;
+        difficultyIntent: DifficultyIntent;
+        targetConcept?: string;
+        sourceQuestionIndex?: number;
+      };
     }
   ): Promise<IInterview>;
   submitAnswer(questionIndex: number, answerText: string, duration?: number): Promise<IInterview>;
@@ -490,6 +525,22 @@ const answerSignalSchema = new Schema(
   { _id: false }
 );
 
+// Phase 3 (next-question decision engine) sub-schema — additive, all
+// optional, no `default` so a question that predates this feature (or any
+// uploaded-mode question) continues to load/validate with `decision`
+// genuinely absent, exactly like answerSignal above.
+const decisionSchema = new Schema(
+  {
+    moveType: { type: String, required: true, enum: NEXT_INTERVIEW_MOVE_TYPE_VALUES },
+    reasonCode: { type: String, required: true, enum: DECISION_REASON_CODE_VALUES },
+    priority: { type: Number, required: true },
+    difficultyIntent: { type: String, required: true, enum: DIFFICULTY_INTENT_VALUES },
+    targetConcept: { type: String, trim: true, maxlength: [200, 'targetConcept cannot exceed 200 characters'] },
+    sourceQuestionIndex: { type: Number, min: 0 },
+  },
+  { _id: false }
+);
+
 const questionSchema = new Schema<IQuestion>(
   {
     questionText: {
@@ -572,6 +623,9 @@ const questionSchema = new Schema<IQuestion>(
     // Phase 2 (fast answer signal) — no `default`, stays genuinely absent
     // on every question that doesn't have one computed yet.
     answerSignal: { type: answerSignalSchema },
+    // Phase 3 (next-question decision engine) — no `default`, stays
+    // genuinely absent on every question that doesn't have one computed yet.
+    decision: { type: decisionSchema },
   },
   { _id: false, timestamps: false }
 );
@@ -992,6 +1046,14 @@ interviewSchema.methods.addQuestion = async function (
     questionSource?: QuestionSource;
     sourceReasonCode?: string;
     difficultyAtGeneration?: string;
+    decision?: {
+      moveType: NextInterviewMoveType;
+      reasonCode: DecisionReasonCode;
+      priority: number;
+      difficultyIntent: DifficultyIntent;
+      targetConcept?: string;
+      sourceQuestionIndex?: number;
+    };
   }
 ): Promise<IInterview> {
   if (this.questions.length >= this.totalQuestions) {

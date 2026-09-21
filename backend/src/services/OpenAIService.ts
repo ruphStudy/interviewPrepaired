@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { normalizeScore, normalizeEvaluationDimensions } from '../utils/scoreNormalization';
 import { recordAIUsage } from './AIUsageService';
 import { getLanguageInstruction, getMaxTokensForLanguage } from '../config/languages';
+import type { NextInterviewMoveType } from '../constants/nextQuestionDecision';
 
 /** Optional per-call context for AI cost attribution — omit for calls with no specific interview (e.g. connectivity checks). */
 export interface AIUsageContext {
@@ -140,6 +141,18 @@ export interface QuestionRequest {
   difficultyContext?: string; // NEW: Adaptive difficulty information
   interviewId?: string; // For AI cost attribution
   interviewLanguage?: string;
+  // Phase 3 (Next Question Decision Engine) — stronger, explicit generation
+  // constraints than the loose priorityCompetency hint above. All
+  // optional/additive: absent for every caller that predates Phase 3 (e.g.
+  // startInterview's first question), so behavior is unchanged when absent.
+  // `targetCompetency` supersedes `priorityCompetency` when both are set.
+  // When `moveDirective` is present it's injected as a HARD constraint the
+  // generated question must satisfy, rather than blended as soft context —
+  // see getQuestionUserPrompt.
+  targetCompetency?: string;
+  targetConcept?: string;
+  moveType?: NextInterviewMoveType;
+  moveDirective?: string;
 }
 
 export interface QuestionResponse {
@@ -1028,9 +1041,17 @@ these keys:
       prompt += `\n\n=== END OF COVERAGE ===\n\n`;
     }
     
-    // NEW: Priority competency guidance
-    if (request.priorityCompetency) {
-      prompt += `⚠️ IMPORTANT: Focus the next question on assessing "${request.priorityCompetency}" competency.\n`;
+    // Phase 3: an explicit move directive is a HARD constraint the question
+    // MUST satisfy — injected before the softer competency/memory hints
+    // below so the model treats it as non-negotiable, not just more context.
+    const effectiveCompetency = request.targetCompetency || request.priorityCompetency;
+    if (request.moveDirective) {
+      prompt += `=== NEXT QUESTION DIRECTIVE (MUST FOLLOW) ===\n`;
+      prompt += request.moveDirective;
+      prompt += `\n=== END OF DIRECTIVE ===\n\n`;
+    } else if (effectiveCompetency) {
+      // NEW: Priority competency guidance (unchanged pre-Phase-3 behavior)
+      prompt += `⚠️ IMPORTANT: Focus the next question on assessing "${effectiveCompetency}" competency.\n`;
       prompt += `This competency has the lowest coverage and needs more assessment.\n\n`;
     }
 
@@ -1055,8 +1076,8 @@ these keys:
     }
 
     prompt += `Generate a NEW, DIFFERENT question`;
-    if (request.priorityCompetency) {
-      prompt += ` that specifically assesses "${request.priorityCompetency}" competency`;
+    if (!request.moveDirective && effectiveCompetency) {
+      prompt += ` that specifically assesses "${effectiveCompetency}" competency`;
     }
     if (request.memoryContext) {
       prompt += ` that references or builds upon the candidate's previous answers`;

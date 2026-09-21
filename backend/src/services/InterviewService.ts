@@ -24,6 +24,13 @@ import { initializeDifficultyTracking, mapLevelToDifficulty } from '../models/Di
 import { contradictionDetectorService } from './ContradictionDetectorService';
 import { starAnalysisService } from './STARAnalysisService';
 import { answerSignalService, buildFallbackAnswerSignal, hasCompleteAnswerSignal } from './AnswerSignalService';
+import {
+  nextQuestionDecisionEngine,
+  generateQuestionForMove,
+  buildQuestionTaggingFromMove,
+  findClaimForMove,
+  findContradictionIndexForMove,
+} from './NextQuestionDecisionEngine';
 import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode } from '../config/languages';
 import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
@@ -1238,8 +1245,45 @@ export class InterviewService {
         if (interview.difficultyTracking) {
           console.log(`[InterviewService] Current difficulty: Level ${interview.difficultyTracking.currentLevel}/5`);
         }
-        
-        const nextQuestionResult = await this.aiService.generateQuestion(
+
+        // =====================================================================
+        // Phase 3: deterministically DECIDE what kind of question should
+        // come next (follow up on this answer? probe a claim/contradiction?
+        // switch competency? just continue the blueprint?) using the answer
+        // signal already computed above this turn, then use that decision to
+        // give the AI generator an explicit, constrained target instead of
+        // only the loose priorityCompetency hint.
+        // =====================================================================
+        // Best-effort — a missing/deleted blueprint must never fail answer
+        // submission; the engine degrades to equal-weighted coverage-target
+        // selection when blueprintCompetencies is undefined (see
+        // NextQuestionDecisionEngine.pickCoverageTarget).
+        let blueprintForDecision: Awaited<ReturnType<typeof blueprintService.getBlueprintById>> | null = null;
+        if (interview.blueprintId) {
+          try {
+            blueprintForDecision = await blueprintService.getBlueprintById(interview.blueprintId.toString());
+          } catch (blueprintLookupError) {
+            console.error('[InterviewService] Blueprint lookup for next-question decision failed (non-critical):', blueprintLookupError);
+          }
+        }
+        const justAnsweredQuestion = interview.questions[currentQuestionIndex];
+        const nextMove = nextQuestionDecisionEngine.decideNextMove({
+          currentQuestionNumber: interview.currentQuestion,
+          totalQuestions: interview.totalQuestions,
+          competencyCoverage: interview.competencyCoverage,
+          blueprintCompetencies: blueprintForDecision?.competencies,
+          answerSignal: justAnsweredQuestion?.answerSignal,
+          currentQuestionCompetency: justAnsweredQuestion?.competencyName,
+          claims: interview.claimVerification?.claims || [],
+          contradictions: interview.contradictionTracking?.contradictions || [],
+          difficultyTracking: interview.difficultyTracking,
+          questionHistory: interview.questions,
+          interviewMode: interview.interviewMode,
+        });
+        console.log(`[InterviewService] Next-question decision: ${nextMove.moveType} (${nextMove.reasonCode})`);
+
+        const { response: nextQuestionResponse, finalMove } = await generateQuestionForMove(
+          this.aiService,
           {
             sessionConfig: adaptiveSessionConfig,
             previousQuestions,
@@ -1250,18 +1294,45 @@ export class InterviewService {
             interviewId: interview._id.toString(),
             interviewLanguage: interview.interviewLanguage,
           },
+          nextMove,
           {
             interviewId: interview._id.toString(),
             operation: 'question-generation',
             language: interview.interviewLanguage,
           }
         );
-        nextQuestion = nextQuestionResult.data;
+        nextQuestion = nextQuestionResponse;
 
-        // Add next question with expected points, tagged with the same
-        // competency/source/difficulty metadata computed above.
-        const nextQuestionTagging = buildQuestionTagging(interview);
+        // Add next question with expected points, tagged with the
+        // decision's competency/source/reason + the difficulty snapshot
+        // computed above.
+        const nextQuestionTagging = buildQuestionTaggingFromMove(finalMove, {
+          difficultyAtGeneration: adaptiveSessionConfig.difficulty,
+        });
         await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints, nextQuestion.questionType, nextQuestionTagging);
+
+        // Close the loop on the specific claim/contradiction just probed
+        // (reusing the existing, previously-unused idempotency markers on
+        // those records) so the engine never re-suggests the same one next
+        // turn. Best-effort — never blocks progression.
+        try {
+          if (interview.claimVerification) {
+            const matchedClaim = findClaimForMove(interview.claimVerification.claims, finalMove);
+            if (matchedClaim) {
+              claimVerificationService.markFollowUpAsked(interview.claimVerification, matchedClaim.claim, interview.currentQuestion + 1);
+              interview.markModified('claimVerification');
+            }
+          }
+          if (interview.contradictionTracking) {
+            const matchedIndex = findContradictionIndexForMove(interview.contradictionTracking.contradictions, finalMove);
+            if (matchedIndex >= 0) {
+              contradictionDetectorService.markClarificationAsked(interview.contradictionTracking, matchedIndex, interview.currentQuestion + 1);
+              interview.markModified('contradictionTracking');
+            }
+          }
+        } catch (markError) {
+          console.error('[InterviewService] Failed to mark claim/contradiction follow-up as asked (non-critical):', markError);
+        }
         
         // Increment current question counter
         interview.currentQuestion += 1;

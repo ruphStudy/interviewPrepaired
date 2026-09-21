@@ -15,9 +15,20 @@ import {
   QuestionResponse,
 } from './OpenAIService';
 import { inferInterviewStyle, mapExperienceYearsToLevel } from './OpenAIAdapter';
-import { InterviewService, buildQuestionTagging } from './InterviewService';
+import { InterviewService } from './InterviewService';
 import { answerSignalService, buildFallbackAnswerSignal, hasCompleteAnswerSignal } from './AnswerSignalService';
 import { IAnswerSignal } from '../constants/answerSignal';
+import { mapLevelToDifficulty } from '../models/DifficultyTracking.model';
+import { coverageTrackerService } from './CoverageTrackerService';
+import { blueprintService } from './BlueprintService';
+import {
+  nextQuestionDecisionEngine,
+  generateQuestionForMove,
+  buildQuestionTaggingFromMove,
+  findClaimForMove,
+  findContradictionIndexForMove,
+  QuestionTaggingFromMove,
+} from './NextQuestionDecisionEngine';
 
 const RECOVERY_CLAIM_STALE_MS = 2 * 60 * 1000;
 // Wraps the entire legacy submission chain (evaluation + memory/claim/
@@ -326,10 +337,7 @@ export class InterviewAnswerOrchestratorService {
       };
     }
 
-    const nextQuestion = await this.generateRecoveryQuestion(freshInterview);
-    // Tag the recovered question exactly like the normal next-question path
-    // does (same shared helper — see InterviewService.buildQuestionTagging).
-    const recoveryTagging = buildQuestionTagging(freshInterview);
+    const { question: nextQuestion, tagging: recoveryTagging } = await this.generateRecoveryQuestion(freshInterview);
     await Interview.updateOne(
       {
         _id: freshInterview._id,
@@ -394,7 +402,15 @@ export class InterviewAnswerOrchestratorService {
     return result.data;
   }
 
-  private async generateRecoveryQuestion(interview: IInterview): Promise<QuestionResponse> {
+  /**
+   * Regenerates the next question exactly like the normal
+   * InterviewService.submitAnswer next-question path does — same
+   * NextQuestionDecisionEngine call, same generateQuestionForMove glue, same
+   * tagging shape — so a retry-recovered question is indistinguishable from
+   * one generated on the "happy path" (see the shared tagging test in this
+   * file's own test suite).
+   */
+  private async generateRecoveryQuestion(interview: IInterview): Promise<{ question: QuestionResponse; tagging: QuestionTaggingFromMove }> {
     const experienceLevel = interview.experienceLevel || mapExperienceYearsToLevel(interview.experienceYears);
     const interviewStyle = interview.interviewStyle || inferInterviewStyle(interview.topic);
     const sessionConfig = {
@@ -405,13 +421,44 @@ export class InterviewAnswerOrchestratorService {
       totalQuestions: interview.totalQuestions,
     };
 
-    const result = await this.aiService.generateQuestion(
+    let blueprintForDecision: Awaited<ReturnType<typeof blueprintService.getBlueprintById>> | null = null;
+    if (interview.blueprintId) {
+      try {
+        blueprintForDecision = await blueprintService.getBlueprintById(interview.blueprintId.toString());
+      } catch (blueprintLookupError) {
+        console.error('[InterviewAnswerRecovery] Blueprint lookup for next-question decision failed (non-critical):', blueprintLookupError);
+      }
+    }
+
+    const justAnsweredQuestion = interview.questions[interview.currentQuestion - 1];
+    const priorityCompetency = interview.competencyCoverage
+      ? coverageTrackerService.getNextCompetencyToPrioritize(interview.competencyCoverage)
+      : undefined;
+
+    const nextMove = nextQuestionDecisionEngine.decideNextMove({
+      currentQuestionNumber: interview.currentQuestion,
+      totalQuestions: interview.totalQuestions,
+      competencyCoverage: interview.competencyCoverage,
+      blueprintCompetencies: blueprintForDecision?.competencies,
+      answerSignal: justAnsweredQuestion?.answerSignal,
+      currentQuestionCompetency: justAnsweredQuestion?.competencyName,
+      claims: interview.claimVerification?.claims || [],
+      contradictions: interview.contradictionTracking?.contradictions || [],
+      difficultyTracking: interview.difficultyTracking,
+      questionHistory: interview.questions,
+      interviewMode: interview.interviewMode,
+    });
+
+    const { response, finalMove } = await generateQuestionForMove(
+      this.aiService,
       {
         sessionConfig,
         previousQuestions: interview.questions.map((q) => q.questionText),
+        priorityCompetency,
         interviewId: interview._id.toString(),
         interviewLanguage: interview.interviewLanguage,
       },
+      nextMove,
       {
         interviewId: interview._id.toString(),
         operation: 'question-generation-recovery',
@@ -419,10 +466,52 @@ export class InterviewAnswerOrchestratorService {
       }
     );
 
-    if (!result.data?.question || result.data.question.trim().length < 10) {
+    if (!response?.question || response.question.trim().length < 10) {
       throw new ApiError(503, 'The next question could not be generated. Please retry.', undefined, 'AI_PROVIDER_UNAVAILABLE');
     }
-    return result.data;
+
+    const tagging = buildQuestionTaggingFromMove(finalMove, {
+      difficultyAtGeneration: interview.difficultyTracking ? mapLevelToDifficulty(interview.difficultyTracking.currentLevel) : interview.difficulty,
+    });
+
+    // Close the loop on the specific claim/contradiction just probed (same
+    // idempotency markers InterviewService.submitAnswer uses on the normal
+    // path) — best-effort, never blocks recovery.
+    try {
+      if (interview.claimVerification) {
+        const matchedClaim = findClaimForMove(interview.claimVerification.claims, finalMove);
+        const claimIndex = matchedClaim ? interview.claimVerification.claims.indexOf(matchedClaim) : -1;
+        if (claimIndex >= 0) {
+          await Interview.updateOne(
+            { _id: interview._id },
+            {
+              $set: {
+                [`claimVerification.claims.${claimIndex}.followUpAsked`]: true,
+                [`claimVerification.claims.${claimIndex}.followUpQuestionNumber`]: interview.currentQuestion + 1,
+              },
+            }
+          );
+        }
+      }
+      if (interview.contradictionTracking) {
+        const contradictionIndex = findContradictionIndexForMove(interview.contradictionTracking.contradictions, finalMove);
+        if (contradictionIndex >= 0) {
+          await Interview.updateOne(
+            { _id: interview._id },
+            {
+              $set: {
+                [`contradictionTracking.contradictions.${contradictionIndex}.clarificationAsked`]: true,
+                [`contradictionTracking.contradictions.${contradictionIndex}.clarificationQuestionNumber`]: interview.currentQuestion + 1,
+              },
+            }
+          );
+        }
+      }
+    } catch (markError) {
+      console.error('[InterviewAnswerRecovery] Failed to mark claim/contradiction follow-up as asked (non-critical):', markError);
+    }
+
+    return { question: response, tagging };
   }
 
   private toQuestionResponse(question: any): QuestionResponse {
