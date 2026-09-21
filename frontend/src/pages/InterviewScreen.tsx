@@ -43,12 +43,13 @@ export const InterviewScreen: React.FC = () => {
   const [useTypedAnswer, setUseTypedAnswer] = useState(false);
 
   const handleQuestionSpoken = useCallback(() => undefined, []);
-  const handleAnswerCompleteRef = React.useRef<(answer: string, duration: number) => Promise<void>>();
+  const handleAnswerCompleteRef = React.useRef<(answer: string, duration: number, detectedConcepts?: string[]) => Promise<void>>();
 
   const {
     isSpeaking,
     isListening,
     currentAnswer,
+    detectedConcepts,
     speechSupported,
     speechError,
     clearSpeechError,
@@ -56,7 +57,7 @@ export const InterviewScreen: React.FC = () => {
     startListening,
     stopListening,
   } = useSpeechInterview({
-    onAnswerComplete: (answer, duration) => handleAnswerCompleteRef.current?.(answer, duration),
+    onAnswerComplete: (answer, duration, concepts) => handleAnswerCompleteRef.current?.(answer, duration, concepts),
     onQuestionSpoken: handleQuestionSpoken,
     language: interviewData?.interviewLanguage,
   });
@@ -153,7 +154,7 @@ export const InterviewScreen: React.FC = () => {
     await startWelcomeSequence(interviewData.topic, currentQuestion);
   }, [interviewStarted, interviewData, currentQuestion, startWelcomeSequence]);
 
-  handleAnswerCompleteRef.current = async (answer: string, duration: number) => {
+  handleAnswerCompleteRef.current = async (answer: string, duration: number, submittedDetectedConcepts?: string[]) => {
     if (!interviewId || isProcessing) return;
     const normalizedAnswer = answer.trim();
     if (normalizedAnswer.length < 3) {
@@ -182,6 +183,7 @@ export const InterviewScreen: React.FC = () => {
           answer: normalizedAnswer,
           duration,
           questionNumber: currentQuestionNumber,
+          detectedConcepts: submittedDetectedConcepts && submittedDetectedConcepts.length > 0 ? submittedDetectedConcepts : undefined,
         });
 
         setTypedAnswer('');
@@ -261,7 +263,7 @@ export const InterviewScreen: React.FC = () => {
       setSubmissionError('Please type at least a few words before submitting.');
       return;
     }
-    await handleAnswerCompleteRef.current?.(normalized, 0);
+    await handleAnswerCompleteRef.current?.(normalized, 0, detectedConcepts);
   };
 
   const getPhaseLabel = (p: InterviewPhase): string => {

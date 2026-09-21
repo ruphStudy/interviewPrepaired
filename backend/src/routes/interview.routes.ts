@@ -104,6 +104,17 @@ const submitAnswerValidation = [
     .optional()
     .isInt({ min: 1, max: MAX_UPLOADED_QUESTIONS })
     .withMessage('Question number must be a valid positive integer'),
+  // Phase 2 (2C) — canonical concept-registry keys detected client-side
+  // while the candidate was still speaking. Optional/additive: absent for
+  // any client build that predates this feature, safely ignored server-side.
+  body('detectedConcepts')
+    .optional()
+    .isArray({ max: 50 })
+    .withMessage('detectedConcepts must be an array'),
+  body('detectedConcepts.*')
+    .optional()
+    .isString()
+    .withMessage('Each detected concept must be a string'),
 ];
 
 const mongoIdValidation = [

@@ -2,12 +2,18 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { AvatarState } from '../components/InterviewAvatar/AvatarState';
 import { voiceService } from '../services/voice.service';
 import { DEFAULT_LANGUAGE_CODE } from '../config/languages';
+import { detectConcepts } from '../utils/conceptRegistry';
 
 interface UseSpeechInterviewProps {
-  onAnswerComplete: (answer: string, duration: number) => void;
+  onAnswerComplete: (answer: string, duration: number, detectedConcepts: string[]) => void;
   onQuestionSpoken: () => void;
   language?: string;
 }
+
+// While-speaking concept detection (2C) is debounced so a local, offline
+// scan of the registry doesn't run on every single interim speech-result
+// event — only after the transcript has been quiet for this long.
+const CONCEPT_DETECTION_DEBOUNCE_MS = 450;
 
 export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, language }: UseSpeechInterviewProps) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -16,9 +22,16 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
   const [avatarState, setAvatarState] = useState<AvatarState>(AvatarState.IDLE);
   const [speechSupported, setSpeechSupported] = useState(true);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  // Accumulated, deduplicated canonical concept keys detected locally (no
+  // AI, no network call) from the interim/final transcript as the
+  // candidate speaks. Never stores raw partial transcript text — only the
+  // deduplicated concept-key list leaves the browser (on final submit).
+  const [detectedConcepts, setDetectedConcepts] = useState<string[]>([]);
 
   const recognitionRef = useRef<any>(null);
   const startTimeRef = useRef<number>(0);
+  const conceptDetectionTimerRef = useRef<number | null>(null);
+  const detectedConceptsRef = useRef<string[]>([]);
   const resolvedLanguage = language || DEFAULT_LANGUAGE_CODE;
 
   useEffect(() => {
@@ -76,6 +89,33 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
     };
   }, [resolvedLanguage]);
 
+  // Debounced (~450ms) local concept detection over the accumulating
+  // interim/final transcript — resets on every currentAnswer change rather
+  // than firing on each character/interim event. Purely local (no network,
+  // no AI); only the deduplicated canonical concept keys are kept.
+  useEffect(() => {
+    if (conceptDetectionTimerRef.current !== null) {
+      window.clearTimeout(conceptDetectionTimerRef.current);
+    }
+    if (!currentAnswer.trim()) return;
+
+    conceptDetectionTimerRef.current = window.setTimeout(() => {
+      const found = detectConcepts(currentAnswer);
+      if (found.length === 0) return;
+      setDetectedConcepts((prev) => {
+        const merged = Array.from(new Set([...prev, ...found]));
+        detectedConceptsRef.current = merged;
+        return merged;
+      });
+    }, CONCEPT_DETECTION_DEBOUNCE_MS);
+
+    return () => {
+      if (conceptDetectionTimerRef.current !== null) {
+        window.clearTimeout(conceptDetectionTimerRef.current);
+      }
+    };
+  }, [currentAnswer]);
+
   const speak = useCallback((text: string, onEnd?: () => void) => {
     return new Promise<void>((resolve) => {
       setIsSpeaking(true);
@@ -101,6 +141,11 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
     if (isListening) return false;
 
     setCurrentAnswer('');
+    // Reuse the same "new question started" reset point for detected
+    // concepts — startListening already resets currentAnswer per question,
+    // so accumulated concepts should not carry over from the previous one.
+    setDetectedConcepts([]);
+    detectedConceptsRef.current = [];
     startTimeRef.current = Date.now();
     try {
       setIsListening(true);
@@ -136,7 +181,10 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
 
     const duration = Math.max(0, Math.floor((Date.now() - startTimeRef.current) / 1000));
     setSpeechError(null);
-    onAnswerComplete(answer, duration);
+    // Also run one last synchronous detection pass over the final transcript
+    // so a concept mentioned only in the last debounce window isn't lost.
+    const finalConcepts = Array.from(new Set([...detectedConceptsRef.current, ...detectConcepts(answer)]));
+    onAnswerComplete(answer, duration, finalConcepts);
     setCurrentAnswer('');
     return true;
   }, [isListening, currentAnswer, onAnswerComplete]);
@@ -153,6 +201,7 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
     isSpeaking,
     isListening,
     currentAnswer,
+    detectedConcepts,
     avatarState,
     setAvatarState,
     speechSupported,

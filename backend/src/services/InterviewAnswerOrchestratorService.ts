@@ -16,6 +16,8 @@ import {
 } from './OpenAIService';
 import { inferInterviewStyle, mapExperienceYearsToLevel } from './OpenAIAdapter';
 import { InterviewService, buildQuestionTagging } from './InterviewService';
+import { answerSignalService, buildFallbackAnswerSignal, hasCompleteAnswerSignal } from './AnswerSignalService';
+import { IAnswerSignal } from '../constants/answerSignal';
 
 const RECOVERY_CLAIM_STALE_MS = 2 * 60 * 1000;
 // Wraps the entire legacy submission chain (evaluation + memory/claim/
@@ -32,6 +34,8 @@ interface SubmitAnswerParams {
   duration: number;
   /** 1-based question number displayed to the client. New clients always send it; legacy clients may omit it. */
   questionNumber?: number;
+  /** Phase 2 (2C) — canonical concept-registry keys detected client-side while speaking. Optional/additive; passed through to InterviewService.submitAnswer unchanged. */
+  partialConcepts?: string[];
 }
 
 interface SubmitAnswerResult {
@@ -193,6 +197,46 @@ export class InterviewAnswerOrchestratorService {
             { _id: fresh._id, [`questions.${targetIndex}.evaluation`]: { $exists: false } },
             { $set: { [`questions.${targetIndex}.evaluation`]: evaluation as IEvaluation } }
           );
+        }
+
+        // Phase 2: compute + persist the fast answer signal here too — the
+        // ONE other place (besides InterviewService.submitAnswer) that
+        // recovers/persists an evaluation. Idempotent: never overwrite an
+        // existing complete signal (e.g. a concurrent normal submission
+        // already computed one while this recovery was in flight).
+        if (!hasCompleteAnswerSignal(freshQuestion)) {
+          const evaluationForSignal = evaluation as DynamicEvaluationResponse;
+          try {
+            const claimsThisQuestion = (fresh.claimVerification?.claims || []).filter(
+              (c) => c.questionNumber === targetIndex + 1
+            );
+            const contradictionsThisQuestion = (fresh.contradictionTracking?.contradictions || []).filter(
+              (c) => c.questionNumber2 === targetIndex + 1
+            );
+            const signal = answerSignalService.buildFastSignal({
+              question: freshQuestion?.questionText || '',
+              answer: freshQuestion?.answerText || '',
+              expectedPoints: freshQuestion?.expectedPoints,
+              targetCompetency: freshQuestion?.competencyName,
+              evaluation: evaluationForSignal,
+              claimsThisQuestion,
+              contradictionsThisQuestion,
+            });
+            await Interview.updateOne(
+              { _id: fresh._id, [`questions.${targetIndex}.answerSignal`]: { $exists: false } },
+              { $set: { [`questions.${targetIndex}.answerSignal`]: signal as IAnswerSignal } }
+            );
+          } catch (signalError) {
+            console.error('[InterviewAnswerRecovery] Fast answer-signal derivation failed (non-critical):', signalError);
+            try {
+              await Interview.updateOne(
+                { _id: fresh._id, [`questions.${targetIndex}.answerSignal`]: { $exists: false } },
+                { $set: { [`questions.${targetIndex}.answerSignal`]: buildFallbackAnswerSignal() as IAnswerSignal } }
+              );
+            } catch {
+              // Never let a signal-persistence failure block recovery.
+            }
+          }
         }
 
         await InterviewAnswerRecoveryClaim.updateOne(

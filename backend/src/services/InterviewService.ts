@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import Interview, { IInterview, IEvaluation, IQuestion } from '../models/interview.model';
+import { IAnswerSignal } from '../constants/answerSignal';
 import { InterviewTopic, QuestionResponse } from './OpenAIService';
 import {
   DifficultyLevel,
@@ -22,6 +23,7 @@ import { difficultyManagerService } from './DifficultyManagerService';
 import { initializeDifficultyTracking, mapLevelToDifficulty } from '../models/DifficultyTracking.model';import { claimVerificationService } from './ClaimVerificationService';
 import { contradictionDetectorService } from './ContradictionDetectorService';
 import { starAnalysisService } from './STARAnalysisService';
+import { answerSignalService, buildFallbackAnswerSignal, hasCompleteAnswerSignal } from './AnswerSignalService';
 import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode } from '../config/languages';
 import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
@@ -66,6 +68,12 @@ interface SubmitAnswerParams {
   userId: string;
   answer: string;
   duration: number;
+  // Phase 2 (2C) — canonical concept-registry keys detected client-side,
+  // locally, while the candidate was still speaking (no AI, no network
+  // call). Optional/additive: absent for any client build that predates
+  // this feature. Merged into AnswerSignalService.buildFastSignal's
+  // `concepts`, never used for anything else.
+  partialConcepts?: string[];
 }
 
 interface GetHistoryParams {
@@ -106,6 +114,10 @@ interface InterviewReport {
     answeredAt?: Date;
     duration?: number;
     evaluation?: IEvaluation;
+    // Phase 2 (fast answer signal) — the user's own practice-mode report
+    // MAY surface this (it's the user's own data about their own answers);
+    // no new frontend UI consumes it in this phase, this is data-only.
+    answerSignal?: IAnswerSignal;
   }>;
   finalReport?: {
     overallScore: number;
@@ -1026,7 +1038,44 @@ export class InterviewService {
         console.error('[InterviewService] Contradiction detection failed (non-critical):', contradictionError);
         // Don't fail the interview if contradiction detection fails
       }
-      
+
+      // =====================================================================
+      // Phase 2: Build fast answer signal (zero additional AI calls — reuses
+      // the evaluation + this turn's claims/contradictions computed above).
+      // Best-effort/non-critical like the blocks above: must never block
+      // answer/evaluation/next-question progression.
+      // =====================================================================
+      try {
+        if (!hasCompleteAnswerSignal(interview.questions[currentQuestionIndex])) {
+          const claimsThisQuestion = (interview.claimVerification?.claims || []).filter(
+            (c) => c.questionNumber === interview.currentQuestion
+          );
+          const contradictionsThisQuestion = (interview.contradictionTracking?.contradictions || []).filter(
+            (c) => c.questionNumber2 === interview.currentQuestion
+          );
+          const signal = answerSignalService.buildFastSignal({
+            question: currentQuestion.questionText,
+            answer,
+            expectedPoints: currentQuestion.expectedPoints,
+            targetCompetency: currentQuestion.competencyName,
+            evaluation,
+            claimsThisQuestion,
+            contradictionsThisQuestion,
+            partialConcepts: params.partialConcepts,
+          });
+          interview.questions[currentQuestionIndex].answerSignal = signal;
+          interview.markModified(`questions.${currentQuestionIndex}.answerSignal`);
+        }
+      } catch (signalError) {
+        console.error('[InterviewService] Fast answer-signal derivation failed (non-critical):', signalError);
+        try {
+          interview.questions[currentQuestionIndex].answerSignal = buildFallbackAnswerSignal();
+          interview.markModified(`questions.${currentQuestionIndex}.answerSignal`);
+        } catch {
+          // Never let a signal-persistence failure block interview progression.
+        }
+      }
+
       // =====================================================================
       // NEW: Update Competency Coverage
       // =====================================================================
@@ -1550,6 +1599,7 @@ export class InterviewService {
         answeredAt: q.answeredAt,
         duration: q.duration,
         evaluation: q.evaluation,
+        answerSignal: q.answerSignal,
       })),
       finalReport: interview.finalReport
         ? {

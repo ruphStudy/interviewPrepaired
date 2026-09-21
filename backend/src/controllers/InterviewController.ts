@@ -120,8 +120,14 @@ export class InterviewController {
     const userId = req.user?.id;
     if (!userId) throw new ApiError(401, 'Authentication required');
 
-    const { interviewId, answer, duration, questionNumber } = req.body;
+    const { interviewId, answer, duration, questionNumber, detectedConcepts } = req.body;
     if (!interviewId || !answer) throw new ApiError(400, 'Missing required fields: interviewId, answer');
+
+    // Additive/optional (Phase 2, 2C) — safely ignored/defaulted if absent,
+    // for backward compatibility with older frontend builds that never send it.
+    const partialConcepts: string[] | undefined = Array.isArray(detectedConcepts)
+      ? detectedConcepts.filter((c: unknown): c is string => typeof c === 'string').slice(0, 50)
+      : undefined;
 
     const result = await this.answerOrchestrator.submitAnswer({
       interviewId,
@@ -129,6 +135,7 @@ export class InterviewController {
       answer,
       duration: duration || 0,
       questionNumber,
+      partialConcepts,
     });
 
     res.status(200).json(

@@ -7,6 +7,14 @@ import { IContradictionTracking, contradictionTrackingSchema, initializeContradi
 import { ISTARAnalysis } from './STARAnalysis.model';
 import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
 import { InterviewStatus, InterviewPurpose, QuestionSource, QUESTION_SOURCE_VALUES } from '../constants/interview';
+import {
+  IAnswerSignal,
+  ANSWER_QUALITY_VALUES,
+  ANSWER_DEPTH_VALUES,
+  CONVERSATION_SIGNAL_VALUES,
+  FOLLOW_UP_OPPORTUNITY_TYPE_VALUES,
+  PROBE_WORTHINESS_VALUES,
+} from '../constants/answerSignal';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -112,6 +120,17 @@ export interface IQuestion {
   // `Interview.evaluateQuestion` already uses — never a separate id.
   dynamicFollowUp?: boolean;
   followUpSourceQuestionIndex?: number;
+  // Phase 2 (fast answer signal) — additive, optional, no default, absent
+  // on every question that predates this feature (no migration needed).
+  // Set by AnswerSignalService.buildFastSignal, called from
+  // InterviewService.submitAnswer and
+  // InterviewAnswerOrchestratorService.evaluatePersistedAnswer's recovery
+  // path — computed deterministically from data already produced earlier
+  // in the same flow (the OpenAI evaluation, this turn's claims/
+  // contradictions), never a new AI call. Never surfaced to a
+  // candidate-facing (hiring-assessment) API response — only the user's
+  // own practice-mode report DTO may include it.
+  answerSignal?: IAnswerSignal;
 }
 
 export interface IAIUsageCall {
@@ -427,6 +446,50 @@ const evaluationSchema = new Schema<IEvaluation>(
   { _id: false }
 );
 
+// Phase 2 (fast answer signal) sub-schemas — additive, all optional, no
+// `default` anywhere so a legacy question document with no answerSignal at
+// all continues to load/validate exactly as before (see IQuestion above).
+const followUpOpportunitySchema = new Schema(
+  {
+    topic: { type: String, required: true, trim: true, maxlength: [200, 'topic cannot exceed 200 characters'] },
+    type: { type: String, required: true, enum: FOLLOW_UP_OPPORTUNITY_TYPE_VALUES },
+    reason: { type: String, required: true, trim: true, maxlength: [300, 'reason cannot exceed 300 characters'] },
+    priority: { type: Number, required: true },
+    relatedCompetency: { type: String, trim: true, maxlength: [200, 'relatedCompetency cannot exceed 200 characters'] },
+    sourcePhrase: { type: String, trim: true, maxlength: [200, 'sourcePhrase cannot exceed 200 characters'] },
+  },
+  { _id: false }
+);
+
+const answerSignalSchema = new Schema(
+  {
+    quality: { type: String, required: true, enum: ANSWER_QUALITY_VALUES },
+    depth: { type: String, required: true, enum: ANSWER_DEPTH_VALUES },
+    conversationSignal: { type: String, required: true, enum: CONVERSATION_SIGNAL_VALUES },
+    concepts: { type: [String], default: [] },
+    unclearPoints: { type: [String], default: [] },
+    followUpOpportunities: {
+      type: [followUpOpportunitySchema],
+      default: [],
+      validate: {
+        validator: function (v: unknown[]) {
+          return v.length <= 5;
+        },
+        message: 'Cannot have more than 5 follow-up opportunities',
+      },
+    },
+    probableCompetency: { type: String, trim: true, maxlength: [200, 'probableCompetency cannot exceed 200 characters'] },
+    probeWorthiness: { type: String, required: true, enum: PROBE_WORTHINESS_VALUES },
+    isOffTopic: { type: Boolean, required: true, default: false },
+    isNoAnswer: { type: Boolean, required: true, default: false },
+    claimHints: { type: [String], default: [] },
+    contradictionHints: { type: [String], default: [] },
+    confidence: { type: Number, required: true, min: 0, max: 100 },
+    generatedAt: { type: Date },
+  },
+  { _id: false }
+);
+
 const questionSchema = new Schema<IQuestion>(
   {
     questionText: {
@@ -506,6 +569,9 @@ const questionSchema = new Schema<IQuestion>(
     // `default`, so these stay genuinely absent on every non-follow-up question.
     dynamicFollowUp: { type: Boolean },
     followUpSourceQuestionIndex: { type: Number, min: 0 },
+    // Phase 2 (fast answer signal) — no `default`, stays genuinely absent
+    // on every question that doesn't have one computed yet.
+    answerSignal: { type: answerSignalSchema },
   },
   { _id: false, timestamps: false }
 );

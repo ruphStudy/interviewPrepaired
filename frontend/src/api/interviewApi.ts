@@ -71,6 +71,8 @@ export interface SubmitAnswerRequest {
   duration: number;
   /** 1-based displayed question number. Makes retries/response-loss idempotent instead of applying an old answer to the next question. */
   questionNumber?: number;
+  /** Canonical concept-registry keys detected locally (no AI/network) while the candidate was still speaking — see utils/conceptRegistry.ts. Optional/additive. */
+  detectedConcepts?: string[];
 }
 
 export interface EvaluationDimension {
