@@ -1,10 +1,21 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { InterviewAvatar } from '../components/InterviewAvatar/InterviewAvatar';
-import { AvatarState } from '../components/InterviewAvatar/AvatarState';
 import { useSpeechInterview } from '../hooks/useSpeechInterview';
 import { interviewApi } from '../api/interviewApi';
 import { getInterviewPhrase } from '../config/interviewPhrases';
+import {
+  useInterviewPresentationState,
+  presentationStateToAvatarState,
+  presentationStateToLegacyPhase,
+  type LegacyInterviewPhase as InterviewPhase,
+} from '../hooks/useInterviewPresentationState';
+import {
+  derivePredictiveBranches,
+  matchPreparedBranch,
+  type PredictiveBranch,
+  type PredictiveBranchQuestionContext,
+} from '../utils/predictiveBranches';
 import {
   PlayCircle,
   Mic,
@@ -21,8 +32,6 @@ interface LocationState {
   interview?: any;
 }
 
-type InterviewPhase = 'READY' | 'WELCOME' | 'QUESTION' | 'LISTENING' | 'PROCESSING' | 'NEXT_QUESTION' | 'COMPLETED';
-
 export const InterviewScreen: React.FC = () => {
   const { interviewId } = useParams<{ interviewId: string }>();
   const navigate = useNavigate();
@@ -32,15 +41,53 @@ export const InterviewScreen: React.FC = () => {
   const [interviewData, setInterviewData] = useState<any>(locationState?.interview || null);
   const [currentQuestion, setCurrentQuestion] = useState<string>('');
   const [currentQuestionNumber, setCurrentQuestionNumber] = useState<number>(0);
+  const [currentQuestionContext, setCurrentQuestionContext] = useState<PredictiveBranchQuestionContext>({});
   const [totalQuestions, setTotalQuestions] = useState<number>(0);
-  const [phase, setPhase] = useState<InterviewPhase>('READY');
   const [isProcessing, setIsProcessing] = useState(false);
   const [interviewStarted, setInterviewStarted] = useState(false);
-  const [avatarState, setAvatarState] = useState<AvatarState>(AvatarState.IDLE);
   const [loadError, setLoadError] = useState<string>('');
   const [submissionError, setSubmissionError] = useState<string>('');
   const [typedAnswer, setTypedAnswer] = useState('');
   const [useTypedAnswer, setUseTypedAnswer] = useState(false);
+
+  // Phase 7A — single source of truth for "what is the avatar/UI doing
+  // right now". `phase` (legacy JSX branching) and `avatarState` (the
+  // InterviewAvatar video/chip) below are both PURE derivations of this one
+  // state machine — there is no second, independently-mutated copy of
+  // either, which is what previously let the avatar's own overlay chip
+  // (driven by a separately-managed avatarState) show "Speaking" while the
+  // badge below it (driven by a separately-managed phase) simultaneously
+  // said "Preparing next question".
+  const {
+    presentationState,
+    isRequestCurrent,
+    startInterview: presentationStartInterview,
+    beginAsking,
+    questionSpoken: presentationQuestionSpoken,
+    beginAnswerFinalizing,
+    beginRequest,
+    submitSucceededNextQuestion,
+    submitSucceededCompleted,
+    questionTextAvailable,
+    submitFailed,
+    resetToPreStart,
+  } = useInterviewPresentationState();
+
+  const phase: InterviewPhase = presentationStateToLegacyPhase(presentationState);
+
+  // Phase 7C — bounded, purely local speculative "branch" preparation,
+  // derived from Phase 2's existing debounced `detectedConcepts` (see the
+  // effect below) — never rendered, never sent anywhere; see
+  // utils/predictiveBranches.ts for exactly what this can and cannot do.
+  const predictiveBranchesRef = useRef<PredictiveBranch[]>([]);
+  const matchedBranchRef = useRef<PredictiveBranch | null>(null);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const handleQuestionSpoken = useCallback(() => undefined, []);
   const handleAnswerCompleteRef = React.useRef<(answer: string, duration: number, detectedConcepts?: string[]) => Promise<void>>();
@@ -62,6 +109,22 @@ export const InterviewScreen: React.FC = () => {
     language: interviewData?.interviewLanguage,
   });
 
+  // Phase 7A — the InterviewAvatar's video/chip and the phase badge below it
+  // are both pure derivations of the single presentation state machine;
+  // `isListening` (Phase 2/pre-existing, actual mic recording) resolves the
+  // one genuine ambiguity the coarser 5-value AvatarState can't express on
+  // its own (LISTENING presentation state covers both "your turn, not
+  // recording yet" and "actively recording").
+  const avatarState = presentationStateToAvatarState(presentationState, isListening);
+
+  // Phase 7C — recompute bounded speculative branches whenever Phase 2's
+  // already-debounced detectedConcepts (or the current question's known
+  // expectedPoints/followUpTopics) change. No new debounce/timer is added
+  // here — this effect just reacts to state Phase 2 already produces.
+  useEffect(() => {
+    predictiveBranchesRef.current = derivePredictiveBranches(detectedConcepts, currentQuestionContext, Date.now());
+  }, [detectedConcepts, currentQuestionContext]);
+
   useEffect(() => {
     if (!speechSupported) setUseTypedAnswer(true);
   }, [speechSupported]);
@@ -77,8 +140,9 @@ export const InterviewScreen: React.FC = () => {
       setInterviewData(interview);
       setCurrentQuestion(interview.currentQuestion?.questionText || '');
       setCurrentQuestionNumber(interview.currentQuestion?.questionNumber || 1);
+      setCurrentQuestionContext({});
       setTotalQuestions(interview.totalQuestions || 5);
-      setPhase('READY');
+      resetToPreStart();
       return;
     }
 
@@ -106,8 +170,9 @@ export const InterviewScreen: React.FC = () => {
         });
         setCurrentQuestion(session.currentQuestion.questionText);
         setCurrentQuestionNumber(session.currentQuestionIndex + 1);
+        setCurrentQuestionContext({ expectedPoints: session.currentQuestion.expectedPoints });
         setTotalQuestions(session.totalQuestions);
-        setPhase('READY');
+        resetToPreStart();
       } catch (err: any) {
         if (!cancelled) setLoadError(err.message || 'Failed to load interview. Please return to setup and try again.');
       }
@@ -118,25 +183,28 @@ export const InterviewScreen: React.FC = () => {
     };
   }, [interviewId, locationState?.interview, navigate]);
 
+  // Phase 7D: this always speaks a question that is ALREADY visible in the
+  // UI (the caller sets currentQuestion/currentQuestionNumber before ever
+  // invoking this) — the text is never gated behind this call. Guarded by
+  // a question-generation token so a slow/late-cancelled utterance can
+  // never fire a LISTENING transition for a question the candidate has
+  // since moved past (retry/exit) — see useInterviewPresentationState.ts.
   const askCurrentQuestion = useCallback(async (questionText?: string) => {
     const question = questionText || currentQuestion;
     if (!question) return;
+    const questionGeneration = beginAsking();
     try {
-      setPhase('QUESTION');
-      setAvatarState(AvatarState.SPEAKING);
       await speak(question);
     } catch {
       // TTS is an enhancement; a failure must never block the interview.
     } finally {
-      setPhase('LISTENING');
-      setAvatarState(AvatarState.IDLE);
+      if (isMountedRef.current) presentationQuestionSpoken(questionGeneration);
     }
-  }, [currentQuestion, speak]);
+  }, [currentQuestion, speak, beginAsking, presentationQuestionSpoken]);
 
   const startWelcomeSequence = useCallback(async (topic: string, questionText: string) => {
+    presentationStartInterview();
     try {
-      setPhase('WELCOME');
-      setAvatarState(AvatarState.SPEAKING);
       const lang = interviewData?.interviewLanguage;
       await speak(getInterviewPhrase('welcome', lang, { topic }));
       await speak(getInterviewPhrase('intro', lang));
@@ -145,8 +213,8 @@ export const InterviewScreen: React.FC = () => {
     } catch {
       // Fall through to the persisted question even when TTS is unavailable.
     }
-    await askCurrentQuestion(questionText);
-  }, [speak, interviewData, askCurrentQuestion]);
+    if (isMountedRef.current) await askCurrentQuestion(questionText);
+  }, [speak, interviewData, askCurrentQuestion, presentationStartInterview]);
 
   const handleStartInterview = useCallback(async () => {
     if (interviewStarted || !interviewData || !currentQuestion) return;
@@ -158,15 +226,21 @@ export const InterviewScreen: React.FC = () => {
     if (!interviewId || isProcessing) return;
     const normalizedAnswer = answer.trim();
     if (normalizedAnswer.length < 3) {
+      // Presentation state never left LISTENING/ERROR_RECOVERY for this
+      // path — nothing to transition.
       setSubmissionError('Please provide a longer answer before submitting.');
-      setPhase('LISTENING');
       return;
     }
 
     setSubmissionError('');
     setIsProcessing(true);
-    setPhase('PROCESSING');
-    setAvatarState(AvatarState.THINKING);
+    beginAnswerFinalizing();
+    // requestGeneration is this specific submit attempt's identity — every
+    // async continuation below (including the bounded 409 retry loop) must
+    // check it's still current before touching component state, so a
+    // response for a submission the candidate has since abandoned (exit/
+    // retry) can never resurrect stale UI. See useInterviewPresentationState.ts.
+    const requestGeneration = beginRequest();
 
     // A concurrent submission for the same question (double-click, or a retry
     // racing the still-in-flight original) is rejected server-side with a
@@ -186,27 +260,76 @@ export const InterviewScreen: React.FC = () => {
           detectedConcepts: submittedDetectedConcepts && submittedDetectedConcepts.length > 0 ? submittedDetectedConcepts : undefined,
         });
 
+        if (!isMountedRef.current || !isRequestCurrent(requestGeneration)) return;
+
         setTypedAnswer('');
         clearSpeechError();
-        setPhase('NEXT_QUESTION');
-        setAvatarState(AvatarState.SPEAKING);
+
         const lang = interviewData?.interviewLanguage;
+        const isCompleted = response.data.interview.isCompleted;
+
+        if (isCompleted) {
+          submitSucceededCompleted(requestGeneration);
+        } else if (response.data.nextQuestion) {
+          // Phase 7D — the ONLY point real question text ever exists (the
+          // HTTP response IS decision+generation combined, per Phase 6).
+          // Make it visible immediately: this happens BEFORE any TTS below,
+          // not gated behind the "thank you"/transition phrases finishing.
+          const nextQ = response.data.nextQuestion.question;
+          const nextContext: PredictiveBranchQuestionContext = {
+            expectedPoints: response.data.nextQuestion.expectedPoints,
+            followUpTopics: response.data.nextQuestion.followUpTopics,
+          };
+
+          // 7C — bookkeeping only, see predictiveBranches.ts: comparing the
+          // REAL next question against what was speculated while the
+          // candidate was still answering. Recomputed once more here from
+          // the final (post-stopListening) concept list so the very last
+          // debounce window's concepts aren't missed, without adding a
+          // second debounce timer.
+          const branchesAtSubmit = derivePredictiveBranches(
+            submittedDetectedConcepts && submittedDetectedConcepts.length > 0 ? submittedDetectedConcepts : detectedConcepts,
+            currentQuestionContext,
+            Date.now()
+          );
+          matchedBranchRef.current = matchPreparedBranch(branchesAtSubmit, {
+            question: nextQ,
+            expectedPoints: nextContext.expectedPoints,
+            followUpTopics: nextContext.followUpTopics,
+          });
+
+          setCurrentQuestion(nextQ);
+          setCurrentQuestionNumber(response.data.interview.currentQuestion);
+          setCurrentQuestionContext(nextContext);
+
+          const nextQuestionGeneration = submitSucceededNextQuestion(requestGeneration);
+          questionTextAvailable(requestGeneration, nextQuestionGeneration);
+          // Consolidate into one continuous "asking" presentation for the
+          // filler phrase below through the real question — audio really is
+          // playing back-to-back for this whole span, so this is a more
+          // truthful single signal than showing "preparing" while the
+          // avatar is already audibly speaking.
+          beginAsking();
+        } else {
+          setSubmissionError('Your answer was saved, but the next question is not ready. Reload this interview to recover safely.');
+          submitFailed(requestGeneration);
+          return;
+        }
+
         try {
           await speak(getInterviewPhrase('thankYou', lang));
         } catch {
-          // Keep progressing even if voice output fails.
+          // Keep progressing even if voice output fails — text is already visible above.
         }
 
-        if (response.data.interview.isCompleted) {
+        if (isCompleted) {
           try {
             await speak(getInterviewPhrase('congratulations', lang));
             await speak(getInterviewPhrase('reportReady', lang));
           } catch {
             // Navigation to the report is the important part.
           }
-          setPhase('COMPLETED');
-          setAvatarState(AvatarState.COMPLETED);
-          window.setTimeout(() => navigate(`/report/${interviewId}`), 800);
+          if (isMountedRef.current) window.setTimeout(() => navigate(`/report/${interviewId}`), 800);
           return;
         }
 
@@ -216,32 +339,31 @@ export const InterviewScreen: React.FC = () => {
           } catch {
             // Non-blocking.
           }
-          const nextQ = response.data.nextQuestion.question;
-          setCurrentQuestion(nextQ);
-          setCurrentQuestionNumber(response.data.interview.currentQuestion);
-          await askCurrentQuestion(nextQ);
-        } else {
-          setSubmissionError('Your answer was saved, but the next question is not ready. Reload this interview to recover safely.');
-          setPhase('LISTENING');
+          if (!isMountedRef.current || !isRequestCurrent(requestGeneration)) return;
+          await askCurrentQuestion(response.data.nextQuestion.question);
         }
       } catch (error: any) {
         if (error?.code === 'ANSWER_PROCESSING_IN_PROGRESS' && attempt < MAX_PROCESSING_RETRIES) {
-          // Stay in the PROCESSING phase — this is not a failure, just a
-          // brief wait for the in-flight submission to finish.
+          // Stay in the ACKNOWLEDGING/THINKING presentation — this is not a
+          // failure, just a brief wait for the in-flight submission to
+          // finish. The latency-tier tick loop (7B) may naturally escalate
+          // the neutral "still thinking" treatment while this loop waits;
+          // it never gates this loop's own timing.
           await new Promise((resolve) => window.setTimeout(resolve, PROCESSING_RETRY_DELAY_MS));
+          if (!isMountedRef.current || !isRequestCurrent(requestGeneration)) return;
           await attemptSubmit(attempt + 1);
           return;
         }
+        if (!isMountedRef.current || !isRequestCurrent(requestGeneration)) return;
         setSubmissionError(error?.message || 'We could not process your answer. Please try again.');
-        setAvatarState(AvatarState.IDLE);
-        setPhase('LISTENING');
+        submitFailed(requestGeneration);
       }
     };
 
     try {
       await attemptSubmit(1);
     } finally {
-      setIsProcessing(false);
+      if (isMountedRef.current) setIsProcessing(false);
     }
   };
 
@@ -253,8 +375,7 @@ export const InterviewScreen: React.FC = () => {
   };
 
   const handleStopAnswer = () => {
-    const submitted = stopListening();
-    if (!submitted) setPhase('LISTENING');
+    stopListening();
   };
 
   const handleTypedSubmit = async () => {
