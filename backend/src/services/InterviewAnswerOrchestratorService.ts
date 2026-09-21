@@ -27,6 +27,7 @@ import {
   buildQuestionTaggingFromMove,
   findClaimForMove,
   findContradictionIndexForMove,
+  findMemoryItemForMove,
   QuestionTaggingFromMove,
 } from './NextQuestionDecisionEngine';
 
@@ -445,6 +446,10 @@ export class InterviewAnswerOrchestratorService {
       currentQuestionCompetency: justAnsweredQuestion?.competencyName,
       claims: interview.claimVerification?.claims || [],
       contradictions: interview.contradictionTracking?.contradictions || [],
+      // Phase 5 (5A) — same wiring as InterviewService.submitAnswer's
+      // next-question block, via the SAME decideNextMove/shared functions —
+      // never a duplicated decision path.
+      interviewMemory: interview.interviewMemory,
       difficultyTracking: interview.difficultyTracking,
       questionHistory: interview.questions,
       interviewMode: interview.interviewMode,
@@ -508,8 +513,26 @@ export class InterviewAnswerOrchestratorService {
           );
         }
       }
+      // Phase 5 (5A) — same idempotency-marker pattern as claims/
+      // contradictions above, via the SAME findMemoryItemForMove helper
+      // InterviewService.submitAnswer uses on the normal path.
+      if (interview.interviewMemory) {
+        const matchedItem = findMemoryItemForMove(interview.interviewMemory, finalMove);
+        const itemIndex = matchedItem ? interview.interviewMemory.allItems.indexOf(matchedItem) : -1;
+        if (itemIndex >= 0) {
+          await Interview.updateOne(
+            { _id: interview._id },
+            {
+              $set: {
+                [`interviewMemory.allItems.${itemIndex}.callbackUsedCount`]: (matchedItem!.callbackUsedCount || 0) + 1,
+                [`interviewMemory.allItems.${itemIndex}.lastCallbackAt`]: new Date(),
+              },
+            }
+          );
+        }
+      }
     } catch (markError) {
-      console.error('[InterviewAnswerRecovery] Failed to mark claim/contradiction follow-up as asked (non-critical):', markError);
+      console.error('[InterviewAnswerRecovery] Failed to mark claim/contradiction/memory follow-up as asked (non-critical):', markError);
     }
 
     return { question: response, tagging };

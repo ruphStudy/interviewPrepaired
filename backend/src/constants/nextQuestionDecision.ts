@@ -36,6 +36,23 @@ export type NextInterviewMoveType = (typeof NEXT_INTERVIEW_MOVE_TYPE_VALUES)[num
 export const DIFFICULTY_INTENT_VALUES = ['easier', 'same', 'harder'] as const;
 export type DifficultyIntent = (typeof DIFFICULTY_INTENT_VALUES)[number];
 
+// Phase 5 (5B) — CLAIM_PROBE sub-type taxonomy. Content variation WITHIN the
+// existing CLAIM_PROBE move type (mirrors how `followUpType` already
+// differentiates content within FOLLOW_UP/SCENARIO/CHALLENGE_ASSUMPTION) —
+// never a new top-level move type. Derived deterministically from
+// `IVerifiableClaim.claimType` (+ a cheap keyword check) by
+// `deriveClaimProbeType` in NextQuestionDecisionEngine.ts.
+export const CLAIM_PROBE_TYPE_VALUES = [
+  'OWNERSHIP',
+  'SCALE',
+  'IMPACT',
+  'IMPLEMENTATION_DETAIL',
+  'TRADEOFF',
+  'INCIDENT',
+  'LEADERSHIP',
+] as const;
+export type ClaimProbeType = (typeof CLAIM_PROBE_TYPE_VALUES)[number];
+
 export const DECISION_REASON_CODE_VALUES = [
   'answer_shallow',
   'answer_vague',
@@ -76,6 +93,8 @@ export interface INextInterviewMove {
   priority: number;
   difficultyIntent: DifficultyIntent;
   followUpType?: FollowUpOpportunityType;
+  /** Phase 5 (5B) — CLAIM_PROBE content-variation sub-type, set only when moveType is CLAIM_PROBE. */
+  claimProbeType?: ClaimProbeType;
   /** Bounded (<=160 char) claim text — never the full claim-verification record. */
   candidateClaimReference?: string;
   /** Bounded (<=160 char) contradiction description — never the full contradiction record. */

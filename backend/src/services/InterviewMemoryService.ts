@@ -10,6 +10,8 @@ export interface MemoryExtractionRequest {
   questionNumber: number;
   existingMemory?: IInterviewMemory;
   interviewId?: string;
+  /** Phase 5 (5A) — the CURRENT question's own Phase 1 `competencyName` tag, stamped onto every new IMemoryItem extracted this turn. Undefined for uploaded-mode/legacy questions with no competency tag — never re-derived here. */
+  competencyName?: string;
 }
 
 /**
@@ -27,8 +29,50 @@ export interface MemoryExtractionResponse {
 }
 
 /**
+ * Phase 5 (5A) — PURE, synchronous helper that turns one turn's AI-extracted
+ * facts into `IMemoryItem[]`, stamping `competencyName` (Phase 1's existing
+ * per-question field, looked up by the CALLER via `questionNumber` — never
+ * re-derived here) onto every new item. Extracted out of `mergeMemory` (a
+ * private instance method that also needs `getAIService()`) so this specific
+ * piece of logic can be unit-tested without any AI mocking — mirrors how
+ * `AnswerSignalService.buildFastSignal` stays a pure function alongside its
+ * AI-calling service class.
+ */
+export function buildMemoryItemsFromExtraction(
+  extracted: MemoryExtractionResponse,
+  questionNumber: number,
+  competencyName?: string,
+  timestamp: Date = new Date()
+): IMemoryItem[] {
+  const newItems: IMemoryItem[] = [];
+  const addItems = (category: IMemoryItem['category'], items: string[]) => {
+    items.forEach(content => {
+      newItems.push({
+        category,
+        content,
+        questionNumber,
+        timestamp,
+        confidence: 0.8,
+        competencyName,
+      });
+    });
+  };
+
+  addItems('claim', extracted.claims);
+  addItems('achievement', extracted.achievements);
+  addItems('experience', extracted.experienceDetails);
+  addItems('number', extracted.numbers);
+  addItems('project', extracted.projects);
+  addItems('leadership', extracted.leadershipExamples);
+  addItems('certification', extracted.certifications);
+  addItems('contradiction', extracted.contradictions);
+
+  return newItems;
+}
+
+/**
  * Interview Memory Service
- * 
+ *
  * Extracts and manages candidate information throughout the interview
  */
 export class InterviewMemoryService {
@@ -55,7 +99,7 @@ export class InterviewMemoryService {
       );
 
       // Update memory with new facts
-      const updatedMemory = this.mergeMemory(currentMemory, extractedFacts, request.questionNumber);
+      const updatedMemory = this.mergeMemory(currentMemory, extractedFacts, request.questionNumber, request.competencyName);
 
       console.log(`[MemoryService] Memory updated. Total facts: ${updatedMemory.totalFacts}`);
       
@@ -196,35 +240,11 @@ Return ONLY valid JSON:
   private mergeMemory(
     currentMemory: IInterviewMemory,
     extracted: MemoryExtractionResponse,
-    questionNumber: number
+    questionNumber: number,
+    competencyName?: string
   ): IInterviewMemory {
     const timestamp = new Date();
-
-    // Create new memory items
-    const newItems: IMemoryItem[] = [];
-
-    // Helper to add items
-    const addItems = (category: IMemoryItem['category'], items: string[]) => {
-      items.forEach(content => {
-        newItems.push({
-          category,
-          content,
-          questionNumber,
-          timestamp,
-          confidence: 0.8,
-        });
-      });
-    };
-
-    // Add all extracted facts
-    addItems('claim', extracted.claims);
-    addItems('achievement', extracted.achievements);
-    addItems('experience', extracted.experienceDetails);
-    addItems('number', extracted.numbers);
-    addItems('project', extracted.projects);
-    addItems('leadership', extracted.leadershipExamples);
-    addItems('certification', extracted.certifications);
-    addItems('contradiction', extracted.contradictions);
+    const newItems = buildMemoryItemsFromExtraction(extracted, questionNumber, competencyName, timestamp);
 
     // Merge with existing memory (avoid duplicates)
     const updatedMemory: IInterviewMemory = {
@@ -325,8 +345,36 @@ Return ONLY valid JSON:
   }
 
   /**
+   * Phase 5 (5A) — mark a specific memory item as having been used as a
+   * MEMORY_CALLBACK source, so the decision engine's own reuse-cap
+   * (`maxCallbacksPerMemoryItem`) naturally penalizes/disqualifies it on
+   * subsequent turns. Mirrors the EXISTING best-effort, mutate-and-return
+   * write-back pattern already used by
+   * `ClaimVerificationService.markFollowUpAsked`/
+   * `ContradictionDetectorService.markClarificationAsked` — never a second
+   * write-back mechanism. Matches by object identity first (the common case
+   * — the caller already found the item via `findMemoryItemForMove` against
+   * this SAME `memory` object), falling back to a content/category/
+   * questionNumber match for callers working off a freshly-reloaded document.
+   */
+  markCallbackUsed(memory: IInterviewMemory, item: IMemoryItem): IInterviewMemory {
+    const target =
+      memory.allItems.find((i) => i === item) ||
+      memory.allItems.find(
+        (i) => i.content === item.content && i.category === item.category && i.questionNumber === item.questionNumber
+      );
+
+    if (target) {
+      target.callbackUsedCount = (target.callbackUsedCount || 0) + 1;
+      target.lastCallbackAt = new Date();
+    }
+
+    return memory;
+  }
+
+  /**
    * Check if candidate has provided enough detail
-   * 
+   *
    * Used to determine if follow-up is needed
    */
   hasEnoughDetail(memory: IInterviewMemory): boolean {

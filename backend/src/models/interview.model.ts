@@ -19,9 +19,11 @@ import {
   NextInterviewMoveType,
   DecisionReasonCode,
   DifficultyIntent,
+  ClaimProbeType,
   NEXT_INTERVIEW_MOVE_TYPE_VALUES,
   DECISION_REASON_CODE_VALUES,
   DIFFICULTY_INTENT_VALUES,
+  CLAIM_PROBE_TYPE_VALUES,
 } from '../constants/nextQuestionDecision';
 
 // ============================================================================
@@ -156,6 +158,8 @@ export interface IQuestion {
     difficultyIntent: DifficultyIntent;
     targetConcept?: string;
     sourceQuestionIndex?: number;
+    // Phase 5 (5B) — additive, set only for CLAIM_PROBE moves.
+    claimProbeType?: ClaimProbeType;
   };
 }
 
@@ -330,6 +334,7 @@ export interface IInterview extends Document {
         difficultyIntent: DifficultyIntent;
         targetConcept?: string;
         sourceQuestionIndex?: number;
+        claimProbeType?: ClaimProbeType;
       };
     }
   ): Promise<IInterview>;
@@ -537,6 +542,8 @@ const decisionSchema = new Schema(
     difficultyIntent: { type: String, required: true, enum: DIFFICULTY_INTENT_VALUES },
     targetConcept: { type: String, trim: true, maxlength: [200, 'targetConcept cannot exceed 200 characters'] },
     sourceQuestionIndex: { type: Number, min: 0 },
+    // Phase 5 (5B) — no `default`, stays genuinely absent on every non-CLAIM_PROBE move and every move that predates this feature.
+    claimProbeType: { type: String, enum: CLAIM_PROBE_TYPE_VALUES },
   },
   { _id: false }
 );
@@ -1053,6 +1060,7 @@ interviewSchema.methods.addQuestion = async function (
       difficultyIntent: DifficultyIntent;
       targetConcept?: string;
       sourceQuestionIndex?: number;
+      claimProbeType?: ClaimProbeType;
     };
   }
 ): Promise<IInterview> {

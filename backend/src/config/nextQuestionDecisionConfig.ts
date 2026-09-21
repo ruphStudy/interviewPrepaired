@@ -15,6 +15,13 @@ function intFromEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function floatFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export interface NextQuestionDecisionConfig {
   /** Hard cap (not a soft penalty) on how many FOLLOW_UP-family questions may target the same source question. */
   maxFollowUpsPerQuestion: number;
@@ -57,6 +64,36 @@ export interface NextQuestionDecisionConfig {
   scenarioHighPriorityCompetencyBonus: number;
   /** Score subtracted from a follow-up-family candidate whose target competency's coverage band is already SUFFICIENT (DEEP applies this at 1.5x) — prefers moving to an uncovered competency over yet more probing of an already-covered one (see the "excellent Redis answer, caching already sufficiently covered" example). */
   competencyOverCoveragePenalty: number;
+
+  // ==========================================================================
+  // Phase 5 (5A) — memory-callback candidate SELECTION quality. These tune
+  // which `IMemoryItem`s in `interview.interviewMemory.allItems` are
+  // eligible/how strongly they score once eligible — never a second scoring
+  // path, just centralized knobs for `buildMemoryCallbackCandidates`.
+  // ==========================================================================
+  /** Minimum questions between an eligible item's own `questionNumber` and the current question — below this it's a normal follow-up, not a "callback". */
+  memoryCallbackMinItemAgeGap: number;
+  /** Maximum questions between an eligible item's own `questionNumber` and the current question — beyond this the fact is considered too stale to add continuity value. */
+  memoryCallbackMaxItemAgeGap: number;
+  /** Minimum `IMemoryItem.confidence` (0-1 scale, matches the model's own field) required before an item is callback-worthy. */
+  minMemoryItemConfidenceToCallback: number;
+  /** Hard cap (not a soft penalty) on how many times a single memory item may ever be selected as a MEMORY_CALLBACK source. */
+  maxCallbacksPerMemoryItem: number;
+  /** Hard cap (not a soft penalty) on total MEMORY_CALLBACK moves per interview — counted from persisted `decision.moveType` history, no second counter. */
+  maxMemoryCallbacksPerInterview: number;
+  /** Score bonus applied when an eligible item's own `competencyName` matches the CURRENT target competency (continuity value is highest when it ties back into what's being discussed now). */
+  memoryCallbackSameCompetencyBonus: number;
+  /** Multiplier applied to an eligible item's 0-1 `confidence` to produce a score bonus (max = this value, at confidence 1.0). */
+  memoryCallbackConfidenceWeight: number;
+
+  // ==========================================================================
+  // Phase 5 (dedup) — cross-candidate fact deduplication. A cheap
+  // normalized-word-overlap ratio (never embeddings/heavy NLP) between two
+  // candidates' own reference text (`candidateClaimReference`/
+  // `memoryReference`/the contradiction's own source-phrase text) at/above
+  // this ratio is treated as "the same underlying fact".
+  // ==========================================================================
+  factDedupOverlapRatio: number;
 }
 
 export const nextQuestionDecisionConfig: NextQuestionDecisionConfig = {
@@ -78,4 +115,14 @@ export const nextQuestionDecisionConfig: NextQuestionDecisionConfig = {
   scenarioProductionClaimBonus: intFromEnv('NEXT_QUESTION_SCENARIO_PRODUCTION_CLAIM_BONUS', 25),
   scenarioHighPriorityCompetencyBonus: intFromEnv('NEXT_QUESTION_SCENARIO_HIGH_PRIORITY_BONUS', 15),
   competencyOverCoveragePenalty: intFromEnv('NEXT_QUESTION_OVER_COVERAGE_PENALTY', 220),
+
+  memoryCallbackMinItemAgeGap: intFromEnv('NEXT_QUESTION_MEMORY_CALLBACK_MIN_ITEM_AGE_GAP', 3),
+  memoryCallbackMaxItemAgeGap: intFromEnv('NEXT_QUESTION_MEMORY_CALLBACK_MAX_ITEM_AGE_GAP', 15),
+  minMemoryItemConfidenceToCallback: floatFromEnv('NEXT_QUESTION_MIN_MEMORY_ITEM_CONFIDENCE', 0.6),
+  maxCallbacksPerMemoryItem: intFromEnv('NEXT_QUESTION_MAX_CALLBACKS_PER_MEMORY_ITEM', 1),
+  maxMemoryCallbacksPerInterview: intFromEnv('NEXT_QUESTION_MAX_MEMORY_CALLBACKS_PER_INTERVIEW', 3),
+  memoryCallbackSameCompetencyBonus: intFromEnv('NEXT_QUESTION_MEMORY_CALLBACK_SAME_COMPETENCY_BONUS', 40),
+  memoryCallbackConfidenceWeight: intFromEnv('NEXT_QUESTION_MEMORY_CALLBACK_CONFIDENCE_WEIGHT', 30),
+
+  factDedupOverlapRatio: floatFromEnv('NEXT_QUESTION_FACT_DEDUP_OVERLAP_RATIO', 0.5),
 };

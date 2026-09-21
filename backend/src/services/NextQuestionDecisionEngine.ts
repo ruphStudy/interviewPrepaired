@@ -27,6 +27,7 @@
 import { IQuestion } from '../models/interview.model';
 import { IVerifiableClaim, ClaimType } from '../models/ClaimVerification.model';
 import { IContradiction } from '../models/ContradictionTracking.model';
+import { IInterviewMemory, IMemoryItem } from '../models/InterviewMemory.model';
 import { ICompetencyCoverage, ICompetencyCoverageItem } from '../models/CompetencyCoverage.model';
 import { ICompetency } from '../models/InterviewBlueprint.model';
 import { IDifficultyTracking } from '../models/DifficultyTracking.model';
@@ -38,6 +39,7 @@ import {
   NextInterviewMoveType,
   DifficultyIntent,
   DecisionReasonCode,
+  ClaimProbeType,
   FOLLOW_UP_FAMILY_MOVE_TYPES,
   questionSourceForMoveType,
 } from '../constants/nextQuestionDecision';
@@ -64,13 +66,18 @@ export interface DecisionContext {
   claims?: IVerifiableClaim[];
   /** ALL contradictions on the interview (not pre-filtered), same reasoning. */
   contradictions?: IContradiction[];
+  /** Phase 5 (5A) — the interview's full structured memory store. `buildMemoryCallbackCandidates` reads `allItems` directly (never a duplicate extraction) — undefined for a legacy/uploaded interview with no memory computed yet, which degrades safely to "no memory-callback candidates". */
+  interviewMemory?: IInterviewMemory;
   difficultyTracking?: IDifficultyTracking;
   /** interview.questions as persisted so far (includes the just-answered one) — used for repetition/history scanning. */
   questionHistory: IQuestion[];
   interviewMode?: 'ai-generated' | 'uploaded';
 }
 
-interface Candidate {
+// Exported (not just an internal type) so the Phase 5 dedup pass below can
+// be unit-tested directly against hand-built candidate arrays, independent
+// of the full decideNextMove orchestration.
+export interface Candidate {
   moveType: NextInterviewMoveType;
   score: number;
   reasonCode: DecisionReasonCode;
@@ -78,6 +85,8 @@ interface Candidate {
   targetConcept?: string;
   sourceQuestionIndex?: number;
   followUpType?: FollowUpOpportunityType;
+  /** Phase 5 (5B) — set only for CLAIM_PROBE candidates. */
+  claimProbeType?: ClaimProbeType;
   candidateClaimReference?: string;
   contradictionReference?: string;
   memoryReference?: string;
@@ -117,7 +126,18 @@ const BASE_SCORE: Record<NextInterviewMoveType, number> = {
   CLARIFY: 650,
   SCENARIO: 600,
   CHALLENGE_ASSUMPTION: 600,
-  MEMORY_CALLBACK: 250, // deliberately low so novelty alone never wins
+  // Phase 5 — raised from the pre-Phase-5 value of 250 to match this SAME
+  // file's own documented tier order two paragraphs above ("...scenario/
+  // challenge > memory-callback > switch/continue-blueprint"): at 250 this
+  // could never outscore SWITCH_COMPETENCY(500)/CONTINUE_BLUEPRINT(400)
+  // even with every bonus below applied, so a real MEMORY_CALLBACK could
+  // never actually be selected — a documented-vs-actual mismatch, not an
+  // intentional design choice (see git history's now-removed "deliberately
+  // low" comment, which contradicted the doc comment above it). Still
+  // comfortably the lowest ACTIVE-probe tier — a callback never preempts a
+  // real content-based follow-up/claim/contradiction, only "nothing better
+  // to do" blueprint progression.
+  MEMORY_CALLBACK: 550,
   SWITCH_COMPETENCY: 500,
   CONTINUE_BLUEPRINT: 400,
 };
@@ -141,11 +161,151 @@ const SOFT_PROBE_MOVE_TYPES: NextInterviewMoveType[] = ['FOLLOW_UP', 'DEEPEN', '
 
 const MEANINGFUL_CLAIM_TYPES = new Set<ClaimType>(['achievement', 'leadership', 'technical', 'quantitative']);
 
+// Phase 5 (5A) — memory-item categories worth a callback. Deliberately
+// EXCLUDES 'certification' (trivial for callback purposes — nothing to
+// productively probe deeper on a degree/cert) and 'contradiction' (that's
+// ContradictionTracking's own job via CONTRADICTION_PROBE, never
+// double-handled here) and 'claim' (that's ClaimVerification's own job via
+// CLAIM_PROBE — see the dedup pass below for the cross-system priority
+// resolution when the SAME underlying fact shows up in both stores).
+const MEMORY_CALLBACK_ELIGIBLE_CATEGORIES = new Set<IMemoryItem['category']>([
+  'achievement',
+  'experience',
+  'number',
+  'project',
+  'leadership',
+]);
+
 function truncate(value: string | undefined, max = 160): string | undefined {
   if (!value) return value;
   const trimmed = value.trim();
   if (trimmed.length <= max) return trimmed;
   return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+// ============================================================================
+// Phase 5 (5B) — CLAIM_PROBE sub-type derivation. Deterministic, cheap
+// keyword heuristic (NOT exhaustive/perfect by design — see the master
+// prompt's own framing of this as "a sensible default per claim type", not a
+// rigid spec): a leadership/incident keyword hit on the claim's own text
+// wins regardless of `claimType` (e.g. a 'technical' claim that says "I led
+// the migration" is still fundamentally a LEADERSHIP probe), otherwise falls
+// back to a per-claimType default.
+// ============================================================================
+const LEADERSHIP_KEYWORD_PATTERN = /\b(led|managed|mentored|oversaw|supervised|directed)\b/i;
+const IMPACT_KEYWORD_PATTERN = /\b(reduc\w*|improv\w*|increas\w*|dropp\w*|boost\w*|cut\s)\b/i;
+const INCIDENT_KEYWORD_PATTERN = /\b(incident|outage|bug|failure|downtime|crash(?:ed)?)\b/i;
+const TRADEOFF_KEYWORD_PATTERN = /\b(trade-?off|chose|decided to use|instead of|rather than)\b/i;
+const IMPLEMENTATION_KEYWORD_PATTERN = /\b(invalidat\w*|cach\w*|consisten\w*|implement\w*|architect\w*|built|design\w*)\b/i;
+
+export function deriveClaimProbeType(claim: IVerifiableClaim): ClaimProbeType {
+  const text = claim.claim || '';
+  if (LEADERSHIP_KEYWORD_PATTERN.test(text)) return 'LEADERSHIP';
+  if (INCIDENT_KEYWORD_PATTERN.test(text)) return 'INCIDENT';
+
+  switch (claim.claimType) {
+    case 'leadership':
+      return 'LEADERSHIP';
+    case 'quantitative':
+      return IMPACT_KEYWORD_PATTERN.test(text) ? 'IMPACT' : 'SCALE';
+    case 'achievement':
+      return IMPACT_KEYWORD_PATTERN.test(text) ? 'IMPACT' : 'IMPLEMENTATION_DETAIL';
+    case 'technical':
+      if (TRADEOFF_KEYWORD_PATTERN.test(text)) return 'TRADEOFF';
+      if (IMPLEMENTATION_KEYWORD_PATTERN.test(text)) return 'IMPLEMENTATION_DETAIL';
+      return 'OWNERSHIP';
+    default:
+      return 'OWNERSHIP';
+  }
+}
+
+// ============================================================================
+// Phase 5 (dedup) — cheap normalized-word-overlap ratio between two
+// candidates' own reference text. Never embeddings/heavy NLP — mirrors the
+// SAME lightweight approach `isNearDuplicateOfRecent` (below, in the
+// integration-glue section) already uses for near-duplicate QUESTION text;
+// this is the equivalent check for candidate REFERENCE text instead.
+// ============================================================================
+function normalizedSignificantWords(text: string): Set<string> {
+  return new Set(
+    (text || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4)
+  );
+}
+
+function factReferenceOverlapRatio(a: string, b: string): number {
+  const wordsA = normalizedSignificantWords(a);
+  const wordsB = normalizedSignificantWords(b);
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  const shared = [...wordsA].filter((w) => wordsB.has(w)).length;
+  return shared / Math.min(wordsA.size, wordsB.size);
+}
+
+/** The candidate's own "underlying fact" reference text, per move type — used ONLY by the dedup pass. */
+function factReferenceTextForCandidate(c: Candidate): string | undefined {
+  if (c.moveType === 'CLAIM_PROBE') return c.candidateClaimReference;
+  if (c.moveType === 'MEMORY_CALLBACK') return c.memoryReference;
+  // CONTRADICTION_PROBE's own `contradictionReference` is a META-description
+  // ("Cannot work independently AND lead a team of 8"), not the candidate's
+  // actual words — prefer the real quoted statement (sourcePhraseReference,
+  // set by buildContradictionCandidates below) when present, so this
+  // compares like-for-like against candidateClaimReference/memoryReference.
+  if (c.moveType === 'CONTRADICTION_PROBE') return c.sourcePhraseReference || c.contradictionReference;
+  return undefined;
+}
+
+/** Cross-system fact-priority ranking for the dedup pass — higher wins a collision. Only these three move types ever represent "the same underlying fact" from different subsystems. */
+const FACT_DEDUP_PRIORITY: Partial<Record<NextInterviewMoveType, number>> = {
+  CONTRADICTION_PROBE: 3,
+  CLAIM_PROBE: 2,
+  MEMORY_CALLBACK: 1,
+};
+
+/**
+ * Phase 5 — cross-subsystem fact deduplication, exported as a standalone
+ * PURE function (mutates `candidates` IN PLACE, removing losers) so it's
+ * directly unit-testable against hand-built candidate arrays. Called once
+ * per `decideNextMove` invocation BEFORE scoring/budget-pressure, so a
+ * collision never gets a chance to win under a discounted/boosted score it
+ * shouldn't have competed with in the first place. Deliberately does NOT
+ * compare two candidates of the SAME move type against each other (e.g. two
+ * distinct CLAIM_PROBE candidates) — that's not this pass's job, and a
+ * genuinely small overlap threshold there would risk collapsing two
+ * legitimately distinct claims. Priority on a collision: CONTRADICTION_PROBE
+ * > CLAIM_PROBE > MEMORY_CALLBACK (see FACT_DEDUP_PRIORITY) — matches the
+ * master prompt's stated preference (inconsistency > substantiation >
+ * continuity-only).
+ */
+export function deduplicateFactCandidates(candidates: Candidate[], config: NextQuestionDecisionConfig): void {
+  const entries = candidates
+    .map((c, index) => ({ candidate: c, index, text: factReferenceTextForCandidate(c) }))
+    .filter((e) => e.text && FACT_DEDUP_PRIORITY[e.candidate.moveType] !== undefined);
+
+  if (entries.length < 2) return;
+
+  const toRemove = new Set<number>();
+  for (let i = 0; i < entries.length; i++) {
+    if (toRemove.has(entries[i].index)) continue;
+    for (let j = i + 1; j < entries.length; j++) {
+      if (toRemove.has(entries[j].index)) continue;
+      if (entries[i].candidate.moveType === entries[j].candidate.moveType) continue;
+
+      const ratio = factReferenceOverlapRatio(entries[i].text!, entries[j].text!);
+      if (ratio < config.factDedupOverlapRatio) continue;
+
+      const rankI = FACT_DEDUP_PRIORITY[entries[i].candidate.moveType]!;
+      const rankJ = FACT_DEDUP_PRIORITY[entries[j].candidate.moveType]!;
+      if (rankI >= rankJ) toRemove.add(entries[j].index);
+      else toRemove.add(entries[i].index);
+    }
+  }
+
+  if (toRemove.size === 0) return;
+  // Splice highest index first so earlier indices stay valid mid-loop.
+  for (const idx of [...toRemove].sort((a, b) => b - a)) candidates.splice(idx, 1);
 }
 
 function deriveFollowUpReasonCode(quality: AnswerQuality, repeated: boolean): DecisionReasonCode {
@@ -346,9 +506,16 @@ export class NextQuestionDecisionEngine {
       candidates.push(...this.buildScenarioCandidates(context, signal, history, currentSourceIndex, remainingBudget, config));
       candidates.push(...this.buildClaimCandidates(context, history, config));
       candidates.push(...this.buildContradictionCandidates(context, history));
-      candidates.push(...this.buildMemoryCallbackCandidates(signal, history, currentSourceIndex, config));
+      candidates.push(...this.buildMemoryCallbackCandidates(context, history, config));
     }
     candidates.push(...this.buildCoverageCandidates(context, remainingBudget, history, config));
+
+    // Phase 5 — collapse candidates that reference the SAME underlying fact
+    // across the claim/contradiction/memory subsystems (e.g. a CLAIM_PROBE
+    // and a MEMORY_CALLBACK both about the candidate's own "reduced latency
+    // by 60%" statement) BEFORE scoring/budget pressure, so only the
+    // higher-value/more-specific-intent candidate ever competes to win.
+    deduplicateFactCandidates(candidates, config);
 
     // Budget pressure: as the interview runs low on remaining questions,
     // discount "nice to have" probing and favor guaranteed blueprint
@@ -511,6 +678,7 @@ export class NextQuestionDecisionEngine {
         score: BASE_SCORE.CLAIM_PROBE + (claim.confidence - config.minClaimConfidenceToProbe),
         reasonCode: 'unresolved_claim',
         targetCompetency: history[claimSourceIndex]?.competencyName || context.currentQuestionCompetency,
+        claimProbeType: deriveClaimProbeType(claim),
         candidateClaimReference: truncate(claim.claim),
         sourceQuestionIndex: claimSourceIndex,
       });
@@ -531,47 +699,86 @@ export class NextQuestionDecisionEngine {
         reasonCode: 'contradiction_detected',
         targetCompetency: history[contradictionSourceIndex]?.competencyName || context.currentQuestionCompetency,
         contradictionReference: truncate(c.contradiction),
+        // Phase 5 — the candidate's own actual words (not the meta
+        // description above) so the dedup pass can compare this against
+        // CLAIM_PROBE/MEMORY_CALLBACK reference text like-for-like.
+        sourcePhraseReference: truncate(c.statement2),
         sourceQuestionIndex: contradictionSourceIndex,
       });
     }
     return out;
   }
 
+  /**
+   * Phase 5 (5A) — selects from `interview.interviewMemory.allItems` (the
+   * one structured, per-fact store with `questionNumber`/`confidence`/
+   * `category`/now `competencyName` — see IMemoryItem) rather than the
+   * pre-Phase-5 implementation's purely `answerSignal.concepts`-vs-
+   * `competencyName` overlap scan, which never actually consulted the
+   * structured memory store at all. Eligibility/scoring per the master
+   * prompt: right category, high-enough confidence, old enough to add real
+   * continuity value but not so old it's stale, not already used up to its
+   * reuse cap, and the interview hasn't already spent its total callback
+   * budget — see the individual config values in nextQuestionDecisionConfig.ts.
+   */
   private buildMemoryCallbackCandidates(
-    signal: IAnswerSignal,
+    context: DecisionContext,
     history: IQuestion[],
-    currentSourceIndex: number,
     config: NextQuestionDecisionConfig
   ): Candidate[] {
-    if (!signal.concepts || signal.concepts.length === 0) return [];
+    const memory = context.interviewMemory;
+    if (!memory || !memory.allItems || memory.allItems.length === 0) return [];
     if (questionsSinceLastMemoryCallback(history) < config.memoryCallbackMinGap) return []; // frequency cap — novelty never dominates
 
-    const conceptSet = new Set(signal.concepts);
-    const currentCompetency = history[currentSourceIndex]?.competencyName;
-    // Look only at genuinely OLDER questions (skip the one just answered) so
-    // this is a real callback, not a restatement of what was just discussed.
-    for (let i = 0; i < currentSourceIndex; i++) {
-      const q = history[i];
-      // Defensive — `history` is caller-supplied and, per this module's
-      // "never throws on missing/legacy data" contract, must degrade safely
-      // even if it's ever shorter than `currentSourceIndex` implies.
-      if (!q) continue;
-      const overlap = (q.answerSignal?.concepts || []).find((c) => conceptSet.has(c));
-      if (overlap && q.competencyName && q.competencyName !== currentCompetency) {
-        return [
-          {
-            moveType: 'MEMORY_CALLBACK',
-            score: BASE_SCORE.MEMORY_CALLBACK,
-            reasonCode: 'strong_followup_opportunity',
-            targetCompetency: q.competencyName,
-            targetConcept: overlap,
-            memoryReference: truncate(q.questionText),
-            sourceQuestionIndex: i,
-          },
-        ];
+    const totalCallbacksUsed = history.filter((q) => q.decision?.moveType === 'MEMORY_CALLBACK').length;
+    if (totalCallbacksUsed >= config.maxMemoryCallbacksPerInterview) return []; // hard cap — a chatty interviewer isn't a better one
+
+    const currentQuestionNumber = context.currentQuestionNumber;
+    const currentCompetency = context.currentQuestionCompetency;
+    // Reuses the SAME over-coverage logic every other follow-up-family
+    // candidate already applies (halved — a callback's continuity value
+    // degrades more gently than a direct DEEPEN/CLARIFY on an already-deep
+    // competency would).
+    const overCoverage = this.overCoveragePenalty(currentCompetency, context, config) * 0.5;
+
+    const out: Candidate[] = [];
+    for (const item of memory.allItems) {
+      if (!MEMORY_CALLBACK_ELIGIBLE_CATEGORIES.has(item.category)) continue;
+      const confidence = item.confidence ?? 0.8;
+      if (confidence < config.minMemoryItemConfidenceToCallback) continue;
+      if ((item.callbackUsedCount || 0) >= config.maxCallbacksPerMemoryItem) continue;
+      if (item.questionNumber === undefined) continue;
+
+      // Old enough to be a real "callback" (not just yesterday's follow-up),
+      // not so old it's lost relevance.
+      const gap = currentQuestionNumber - item.questionNumber;
+      if (gap < config.memoryCallbackMinItemAgeGap) continue;
+      if (gap > config.memoryCallbackMaxItemAgeGap) continue;
+
+      let score = BASE_SCORE.MEMORY_CALLBACK;
+      score += confidence * config.memoryCallbackConfidenceWeight;
+      if (item.competencyName && currentCompetency && item.competencyName === currentCompetency) {
+        score += config.memoryCallbackSameCompetencyBonus;
       }
+      score -= overCoverage;
+
+      out.push({
+        moveType: 'MEMORY_CALLBACK',
+        score,
+        reasonCode: 'strong_followup_opportunity',
+        targetCompetency: currentCompetency,
+        // Deliberately NOT set to item.competencyName — `memoryReference`
+        // (the item's own quoted content) is what `questionPlausiblyTargetsMove`
+        // and `buildMoveDirective` must hard-anchor on, per the master
+        // prompt's "must not invent a different earlier fact" requirement. A
+        // competency-name targetConcept here would let validation pass on
+        // competency-word overlap alone, without ever checking the actual
+        // quoted fact made it into the generated question.
+        memoryReference: truncate(item.content),
+        sourceQuestionIndex: item.questionNumber - 1,
+      });
     }
-    return [];
+    return out;
   }
 
   private buildCoverageCandidates(
@@ -674,6 +881,7 @@ export class NextQuestionDecisionEngine {
       priority: Math.round(candidate.score),
       difficultyIntent: this.resolveDifficultyIntent(candidate, context, history),
       followUpType: candidate.followUpType,
+      claimProbeType: candidate.claimProbeType,
       candidateClaimReference: candidate.candidateClaimReference,
       contradictionReference: candidate.contradictionReference,
       memoryReference: candidate.memoryReference,
@@ -758,12 +966,42 @@ const MOVE_DIRECTIVE_BUILDERS: Partial<Record<NextInterviewMoveType, (move: INex
     m.followUpType === 'tradeoff'
       ? `Ask the candidate ONE focused question about what trade-off they made by choosing "${m.targetConcept}"${m.targetCompetency ? ` for ${m.targetCompetency}` : ''} — what did they give up, and would they choose differently under different constraints?`
       : `Respectfully ask the candidate ONE focused question about what would happen if a key assumption in their previous answer${m.targetConcept ? ` about "${m.targetConcept}"` : ''} no longer held.`,
-  CLAIM_PROBE: (m) =>
-    `Ask ONE focused question that asks the candidate to substantiate this specific claim with concrete specifics — the scale/bottleneck involved, their exact individual role, and a measurable outcome: "${m.candidateClaimReference}".`,
+  // Phase 5 (5B) — sub-type-differentiated wording per the master prompt's 7
+  // examples, keyed off `claimProbeType` (deriveClaimProbeType). Falls back
+  // to the original pre-Phase-5 generic wording when claimProbeType is
+  // absent (e.g. a move built by hand/an older persisted move) so this stays
+  // backward compatible.
+  CLAIM_PROBE: (m) => {
+    const ref = m.candidateClaimReference;
+    switch (m.claimProbeType) {
+      case 'OWNERSHIP':
+        return `Ask ONE focused question about this specific claim: "${ref}" — specifically, which decisions or parts were SPECIFICALLY theirs versus the team's.`;
+      case 'SCALE':
+        return `Ask ONE focused question about this specific claim: "${ref}" — specifically, what the main scaling bottleneck or constraint was.`;
+      case 'IMPACT':
+        return `Ask ONE focused question about this specific claim: "${ref}" — specifically, how they measured that improvement (before/after numbers, tooling used).`;
+      case 'IMPLEMENTATION_DETAIL':
+        return `Ask ONE focused question about this specific claim: "${ref}" — specifically, how a key implementation detail (e.g. invalidation, consistency, an edge case) was actually handled.`;
+      case 'TRADEOFF':
+        return `Ask ONE focused question about this specific claim: "${ref}" — specifically, what trade-off they made and what they gave up.`;
+      case 'INCIDENT':
+        return `Ask ONE focused question about this specific claim: "${ref}" — specifically, ask them to walk through ONE concrete incident or example in detail.`;
+      case 'LEADERSHIP':
+        return `Ask ONE focused question about this specific claim: "${ref}" — specifically, how they divided the work and managed the rollout/execution.`;
+      default:
+        return `Ask ONE focused question that asks the candidate to substantiate this specific claim with concrete specifics — the scale/bottleneck involved, their exact individual role, and a measurable outcome: "${ref}".`;
+    }
+  },
   CONTRADICTION_PROBE: (m) =>
-    `Ask ONE neutral, non-accusatory clarifying question about this apparent inconsistency between two of the candidate's answers: ${m.contradictionReference}. Phrase it in the spirit of "Earlier you mentioned X, and here you mentioned Y — can you help me understand how those fit together?" — NEVER say "you contradicted yourself" or imply dishonesty.`,
+    `Ask ONE neutral, non-accusatory clarifying question about this apparent inconsistency between two of the candidate's answers: ${m.contradictionReference}. Phrase it in the spirit of one of: "Earlier you mentioned X, and now you're describing Y — can you clarify how those fit together?", "I just want to make sure I understood correctly...", "Can you help me reconcile those two points?", or "Was that a different part of the system?" — NEVER say "you're contradicting yourself", "that doesn't make sense", "which one is true?", or "you were wrong earlier", and never imply dishonesty.`,
+  // Phase 5 (5A) — hard-anchors on the SPECIFIC memory item's own content
+  // (m.memoryReference IS the item's truncated `content`, set by
+  // buildMemoryCallbackCandidates) so the generator cannot substitute a
+  // different, invented earlier fact — the master prompt's explicit
+  // requirement. Deliberately does NOT reference m.targetConcept (see the
+  // doc comment on buildMemoryCallbackCandidates for why).
   MEMORY_CALLBACK: (m) =>
-    `Reference the candidate's earlier mention of "${m.targetConcept || m.memoryReference}" (they said: "${m.memoryReference}") and ask ONE new, focused question connecting it to the current topic${m.targetCompetency ? ` (${m.targetCompetency})` : ''} — do not repeat a question already asked.`,
+    `Earlier the candidate specifically said: "${m.memoryReference}". Ask ONE NEW, focused question that connects THAT SPECIFIC earlier point to the current competency${m.targetCompetency ? ` (${m.targetCompetency})` : ''} — do not repeat the original question, and do not invent, assume, or reference any other earlier fact beyond the one quoted above.`,
   // SWITCH_COMPETENCY / CONTINUE_BLUEPRINT deliberately have no directive —
   // they keep using the existing priorityCompetency-based soft prompt
   // (OpenAIService.getQuestionUserPrompt), unchanged from pre-Phase-3.
@@ -811,6 +1049,16 @@ const SCORING_LEAKAGE_PHRASES = [
   'well done',
   "you're wrong",
   'you are wrong',
+  // Phase 5 (5C) — the master prompt's explicit CONTRADICTION_PROBE denylist.
+  // Checked here (applied to EVERY move, not just contradiction probes) so
+  // it's a real enforced guard on the generated output, not just directive
+  // wording the generator might ignore.
+  "you're contradicting yourself",
+  'you are contradicting yourself',
+  "that doesn't make sense",
+  'that does not make sense',
+  'which one is true',
+  'you were wrong earlier',
 ];
 const NEAR_DUPLICATE_WINDOW = 5;
 const NEAR_DUPLICATE_WORD_OVERLAP_RATIO = 0.85;
@@ -943,6 +1191,8 @@ export interface QuestionTaggingFromMove {
     difficultyIntent: DifficultyIntent;
     targetConcept?: string;
     sourceQuestionIndex?: number;
+    /** Phase 5 (5B) — additive, set only for CLAIM_PROBE moves. */
+    claimProbeType?: ClaimProbeType;
   };
 }
 
@@ -970,6 +1220,26 @@ export function findContradictionIndexForMove(contradictions: IContradiction[], 
   );
 }
 
+/**
+ * Phase 5 (5A) — locates the exact `IMemoryItem` a finalized MEMORY_CALLBACK
+ * move referenced, so the caller can mark it `callbackUsedCount`/
+ * `lastCallbackAt` (via the existing InterviewMemoryService.markCallbackUsed
+ * — reused, not reimplemented) once the callback question is actually
+ * persisted. Mirrors `findClaimForMove`/`findContradictionIndexForMove`
+ * exactly — matches against the SAME truncated text the engine put on the
+ * move, so it stays correct even when the source content exceeds the
+ * 160-char bound. Deterministic: the SAME (move, memory) pair always
+ * resolves to the SAME item, so a retried/regenerated MEMORY_CALLBACK after
+ * response-loss re-selects the identical item given unchanged persisted
+ * state.
+ */
+export function findMemoryItemForMove(memory: IInterviewMemory | undefined, move: INextInterviewMove): IMemoryItem | undefined {
+  if (move.moveType !== 'MEMORY_CALLBACK' || !move.memoryReference || !memory) return undefined;
+  return memory.allItems.find(
+    (item) => truncate(item.content) === move.memoryReference && (move.sourceQuestionIndex === undefined || item.questionNumber === move.sourceQuestionIndex + 1)
+  );
+}
+
 /** Converts a finalized move into the same tagging shape `buildQuestionTagging` (Phase 1) produces, plus the additive `decision` metadata group. */
 export function buildQuestionTaggingFromMove(move: INextInterviewMove, extra: { difficultyAtGeneration?: string }): QuestionTaggingFromMove {
   return {
@@ -984,6 +1254,7 @@ export function buildQuestionTaggingFromMove(move: INextInterviewMove, extra: { 
       difficultyIntent: move.difficultyIntent,
       targetConcept: move.targetConcept,
       sourceQuestionIndex: move.sourceQuestionIndex,
+      claimProbeType: move.claimProbeType,
     },
   };
 }

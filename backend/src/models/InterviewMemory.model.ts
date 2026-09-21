@@ -14,6 +14,20 @@ export interface IMemoryItem {
   questionNumber?: number;
   timestamp: Date;
   confidence?: number; // How confident AI is about this fact (0-1)
+  // Phase 5 (5A) — additive, optional, no default so every pre-existing
+  // persisted item (and every legacy interview) keeps loading unchanged.
+  // `competencyName` reuses Phase 1's existing per-question field (looked up
+  // by `questionNumber` at extraction time — see
+  // InterviewMemoryService.buildMemoryItemsFromExtraction) — never a second
+  // competency-tagging mechanism. `callbackUsedCount`/`lastCallbackAt` are
+  // written back ONLY when NextQuestionDecisionEngine actually selects this
+  // item as a MEMORY_CALLBACK source (see findMemoryItemForMove /
+  // InterviewMemoryService.markCallbackUsed) — mirrors the existing
+  // followUpAsked/clarificationAsked write-back pattern on claims/
+  // contradictions, so subsequent selection naturally penalizes/caps reuse.
+  competencyName?: string;
+  callbackUsedCount?: number;
+  lastCallbackAt?: Date;
 }
 
 /**
@@ -71,6 +85,20 @@ const memoryItemSchema = new Schema<IMemoryItem>(
       min: 0,
       max: 1,
       default: 0.8,
+    },
+    // Phase 5 (5A) — no `default`, stays genuinely absent on every item that
+    // predates this feature (see IMemoryItem doc comment above).
+    competencyName: {
+      type: String,
+      trim: true,
+      maxlength: [200, 'competencyName cannot exceed 200 characters'],
+    },
+    callbackUsedCount: {
+      type: Number,
+      min: 0,
+    },
+    lastCallbackAt: {
+      type: Date,
     },
   },
   { _id: false }

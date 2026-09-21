@@ -30,6 +30,7 @@ import {
   buildQuestionTaggingFromMove,
   findClaimForMove,
   findContradictionIndexForMove,
+  findMemoryItemForMove,
 } from './NextQuestionDecisionEngine';
 import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode } from '../config/languages';
@@ -989,6 +990,11 @@ export class InterviewService {
           questionNumber: interview.currentQuestion,
           existingMemory: interview.interviewMemory || createEmptyMemory(),
           interviewId: interview._id.toString(),
+          // Phase 5 (5A) — Phase 1's existing per-question competency tag,
+          // stamped onto every new IMemoryItem extracted this turn so
+          // buildMemoryCallbackCandidates can later match a memory item back
+          // to the competency it came from.
+          competencyName: currentQuestion.competencyName,
         });
         
         // Update interview memory
@@ -1277,6 +1283,10 @@ export class InterviewService {
           currentQuestionCompetency: justAnsweredQuestion?.competencyName,
           claims: interview.claimVerification?.claims || [],
           contradictions: interview.contradictionTracking?.contradictions || [],
+          // Phase 5 (5A) — lets buildMemoryCallbackCandidates select from the
+          // real structured memory store instead of never generating a
+          // memory-callback candidate at all.
+          interviewMemory: interview.interviewMemory,
           difficultyTracking: interview.difficultyTracking,
           questionHistory: interview.questions,
           interviewMode: interview.interviewMode,
@@ -1331,8 +1341,19 @@ export class InterviewService {
               interview.markModified('contradictionTracking');
             }
           }
+          // Phase 5 (5A) — same idempotency-marker pattern as claims/
+          // contradictions above: closes the loop on the specific memory
+          // item just used as a MEMORY_CALLBACK source so subsequent
+          // selection naturally respects its reuse cap.
+          if (interview.interviewMemory) {
+            const matchedItem = findMemoryItemForMove(interview.interviewMemory, finalMove);
+            if (matchedItem) {
+              interviewMemoryService.markCallbackUsed(interview.interviewMemory, matchedItem);
+              interview.markModified('interviewMemory');
+            }
+          }
         } catch (markError) {
-          console.error('[InterviewService] Failed to mark claim/contradiction follow-up as asked (non-critical):', markError);
+          console.error('[InterviewService] Failed to mark claim/contradiction/memory follow-up as asked (non-critical):', markError);
         }
         
         // Increment current question counter
