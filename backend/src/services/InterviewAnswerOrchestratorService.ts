@@ -15,7 +15,7 @@ import {
   QuestionResponse,
 } from './OpenAIService';
 import { inferInterviewStyle, mapExperienceYearsToLevel } from './OpenAIAdapter';
-import { InterviewService } from './InterviewService';
+import { InterviewService, buildQuestionTagging } from './InterviewService';
 
 const RECOVERY_CLAIM_STALE_MS = 2 * 60 * 1000;
 // Wraps the entire legacy submission chain (evaluation + memory/claim/
@@ -283,6 +283,9 @@ export class InterviewAnswerOrchestratorService {
     }
 
     const nextQuestion = await this.generateRecoveryQuestion(freshInterview);
+    // Tag the recovered question exactly like the normal next-question path
+    // does (same shared helper — see InterviewService.buildQuestionTagging).
+    const recoveryTagging = buildQuestionTagging(freshInterview);
     await Interview.updateOne(
       {
         _id: freshInterview._id,
@@ -295,6 +298,7 @@ export class InterviewAnswerOrchestratorService {
             questionText: nextQuestion.question,
             questionType: nextQuestion.questionType,
             expectedPoints: nextQuestion.expectedPoints || [],
+            ...recoveryTagging,
           },
         },
         $set: { currentQuestion: params.questionNumber + 1 },

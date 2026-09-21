@@ -36,3 +36,34 @@ export enum InterviewPurpose {
 // cap. Used by InterviewService and QuestionSetService; keep it in one place
 // so the two never drift out of sync.
 export const MAX_UPLOADED_QUESTIONS = 200;
+
+/**
+ * Where a question came from (Phase 1 of the answer-aware-interviewer
+ * effort — see IQuestion in interview.model.ts). `'ai'` and `'uploaded'`
+ * are the original two values and MUST NEVER be removed/renamed: existing
+ * stored questions use them and the schema enum must keep accepting them.
+ *
+ * The remaining values are additive taxonomy for how a question was
+ * decided, most of them reserved for LATER phases' actual decision logic:
+ * - `'blueprint'`: chosen deterministically to target a specific, not-yet-
+ *   covered/least-covered blueprint competency — this is the ONLY new value
+ *   this phase actually sets (see InterviewService.buildQuestionTagging).
+ * - `'answer_followup' | 'claim_probe' | 'contradiction_probe' |
+ *   'coverage_gap' | 'scenario' | 'memory_callback'`: reserved for a later
+ *   phase's answer-aware follow-up/probing decision engine — added to the
+ *   type/enum now so that engine has somewhere to record its decision, but
+ *   nothing in this codebase sets them yet.
+ */
+export const QUESTION_SOURCE_VALUES = [
+  'ai',
+  'uploaded',
+  'blueprint',
+  'answer_followup',
+  'claim_probe',
+  'contradiction_probe',
+  'coverage_gap',
+  'scenario',
+  'memory_callback',
+] as const;
+
+export type QuestionSource = (typeof QUESTION_SOURCE_VALUES)[number];

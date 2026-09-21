@@ -12,7 +12,7 @@ import { userSubscriptionService } from './UserSubscriptionService';
 import { interviewCreditService } from './InterviewCreditService';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
 import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
-import { InterviewStatus, InterviewPurpose, isAnswerableStatus, MAX_UPLOADED_QUESTIONS } from '../constants/interview';
+import { InterviewStatus, InterviewPurpose, isAnswerableStatus, MAX_UPLOADED_QUESTIONS, QuestionSource } from '../constants/interview';
 import { blueprintService } from './BlueprintService';
 import { interviewMemoryService } from './InterviewMemoryService';
 import { createEmptyMemory } from '../models/InterviewMemory.model';
@@ -96,7 +96,10 @@ interface InterviewReport {
     questionText: string;
     expectedPoints?: string[];
     modelAnswer?: string;
-    questionSource?: 'ai' | 'uploaded';
+    questionSource?: QuestionSource;
+    competencyName?: string;
+    sourceReasonCode?: string;
+    difficultyAtGeneration?: string;
     answerSource?: 'uploaded' | 'ai-generated';
     referenceAnswer?: string;
     answerText?: string;
@@ -146,6 +149,58 @@ interface InterviewSession {
     answered: number;
     total: number;
     percentage: number;
+  };
+}
+
+/**
+ * Derives question-path tagging metadata for a question about to be
+ * appended to a blueprint-driven (non-uploaded) interview: which
+ * competency it targets, its source taxonomy, a short machine-readable
+ * reason, and the difficulty level at generation time. This is the ONE
+ * place that decides this tagging — a standalone, dependency-free function
+ * (not a class method) so it can be called identically from the
+ * first-question step of InterviewService.startInterview, the next-question
+ * step of InterviewService.submitAnswer, AND
+ * InterviewAnswerOrchestratorService's retry-recovery question path,
+ * without the latter needing a full InterviewService instance (its unit
+ * tests mock `core` as a narrow object).
+ *
+ * Uploaded-mode interviews never call this — they push questions directly
+ * (buildUploadedQuestions) with `questionSource: 'uploaded'` and no
+ * blueprint competency to target.
+ */
+export function buildQuestionTagging(interview: IInterview): {
+  competencyName?: string;
+  questionSource: QuestionSource;
+  sourceReasonCode?: string;
+  difficultyAtGeneration?: string;
+} {
+  const difficultyAtGeneration = interview.difficultyTracking
+    ? mapLevelToDifficulty(interview.difficultyTracking.currentLevel)
+    : interview.difficulty;
+
+  const competencyName = interview.competencyCoverage
+    ? coverageTrackerService.getNextCompetencyToPrioritize(interview.competencyCoverage)
+    : undefined;
+
+  if (!competencyName) {
+    // No blueprint/coverage to target (shouldn't normally happen for a
+    // non-uploaded interview, but fail safe rather than fabricate one).
+    return { questionSource: 'ai', difficultyAtGeneration };
+  }
+
+  // All-zero coverage (nothing assessed yet) means getNextCompetencyToPrioritize
+  // just returned the first competency in blueprint order — effectively
+  // sequential, not a "least covered" decision yet.
+  const sourceReasonCode = interview.competencyCoverage!.overallCoverage > 0
+    ? 'least_covered_competency'
+    : 'sequential_blueprint_coverage';
+
+  return {
+    competencyName,
+    questionSource: 'blueprint',
+    sourceReasonCode,
+    difficultyAtGeneration,
   };
 }
 
@@ -555,7 +610,8 @@ export class InterviewService {
         // transiently failed, would wrongly trigger a refund for an
         // interview that had, in fact, already succeeded.
         interview.status = InterviewStatus.IN_PROGRESS;
-        await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType);
+        const firstQuestionTagging = buildQuestionTagging(interview);
+        await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType, firstQuestionTagging);
 
         console.log('✅ [InterviewService] Interview started successfully with blueprint');
         return interview;
@@ -1153,8 +1209,10 @@ export class InterviewService {
         );
         nextQuestion = nextQuestionResult.data;
 
-        // Add next question with expected points
-        await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints, nextQuestion.questionType);
+        // Add next question with expected points, tagged with the same
+        // competency/source/difficulty metadata computed above.
+        const nextQuestionTagging = buildQuestionTagging(interview);
+        await interview.addQuestion(nextQuestion.question, nextQuestion.expectedPoints, nextQuestion.questionType, nextQuestionTagging);
         
         // Increment current question counter
         interview.currentQuestion += 1;
@@ -1483,6 +1541,9 @@ export class InterviewService {
         expectedPoints: q.expectedPoints,
         modelAnswer: resolvedAnswers.get(i),
         questionSource: q.questionSource || 'ai',
+        competencyName: q.competencyName,
+        sourceReasonCode: q.sourceReasonCode,
+        difficultyAtGeneration: q.difficultyAtGeneration,
         answerSource: q.answerSource,
         referenceAnswer: isValidModelAnswer(q.referenceAnswer) ? q.referenceAnswer : undefined,
         answerText: q.answerText,

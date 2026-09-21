@@ -6,7 +6,7 @@ import { IClaimVerificationTracking, claimVerificationTrackingSchema, initialize
 import { IContradictionTracking, contradictionTrackingSchema, initializeContradictionTracking } from './ContradictionTracking.model';
 import { ISTARAnalysis } from './STARAnalysis.model';
 import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
-import { InterviewStatus, InterviewPurpose } from '../constants/interview';
+import { InterviewStatus, InterviewPurpose, QuestionSource, QUESTION_SOURCE_VALUES } from '../constants/interview';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -75,7 +75,18 @@ export interface IQuestion {
   questionType?: string; // Type of question: fundamentals, coding, system-design, etc. Also reused as the "category" for hiring-assessment questions (21A) — never a separate/duplicate field.
   expectedPoints?: string[]; // Key points that should be covered in the answer
   modelAnswer?: string; // Complete ideal answer for reference (generated after evaluation)
-  questionSource?: 'ai' | 'uploaded'; // Where the question came from
+  questionSource?: QuestionSource; // Where the question came from — see QUESTION_SOURCE_VALUES for the full taxonomy
+  // Phase 1 (answer-aware-interviewer effort) question-path metadata —
+  // additive, all optional, absent on every question generated before this
+  // field existed and on every uploaded-mode question (uploaded questions
+  // don't target a blueprint competency). Set by
+  // InterviewService.buildQuestionTagging, the single place that decides
+  // this tagging for the first question (startInterview), the next
+  // question (submitAnswer) and the retry-recovery question
+  // (InterviewAnswerOrchestratorService.generateRecoveryQuestion).
+  competencyName?: string; // Which blueprint competency (ICompetency.name / ICompetencyCoverageItem.competencyName) this question was generated to target
+  sourceReasonCode?: string; // Short machine-readable reason, e.g. 'least_covered_competency' | 'sequential_blueprint_coverage'
+  difficultyAtGeneration?: string; // Difficulty level ('beginner'|'intermediate'|'advanced'|'expert') snapshotted at the moment this question was generated
   referenceAnswer?: string; // Reference answer supplied in an uploaded question set
   answerSource?: 'uploaded' | 'ai-generated'; // Where the expected answer came from
   answerText?: string;
@@ -257,7 +268,17 @@ export interface IInterview extends Document {
   progressPercentage: number;
 
   // Instance methods
-  addQuestion(questionText: string, expectedPoints?: string[], questionType?: string): Promise<IInterview>;
+  addQuestion(
+    questionText: string,
+    expectedPoints?: string[],
+    questionType?: string,
+    tagging?: {
+      competencyName?: string;
+      questionSource?: QuestionSource;
+      sourceReasonCode?: string;
+      difficultyAtGeneration?: string;
+    }
+  ): Promise<IInterview>;
   submitAnswer(questionIndex: number, answerText: string, duration?: number): Promise<IInterview>;
   evaluateQuestion(questionIndex: number, evaluation: IEvaluation): Promise<IInterview>;
   generateFinalReport(reportData: {
@@ -435,9 +456,15 @@ const questionSchema = new Schema<IQuestion>(
     },
     questionSource: {
       type: String,
-      enum: ['ai', 'uploaded'],
+      enum: QUESTION_SOURCE_VALUES,
       default: 'ai',
     },
+    // Phase 1 question-path metadata (see IQuestion above) — no `default`,
+    // so these stay genuinely absent on every question that doesn't set
+    // them (legacy questions, uploaded-mode questions).
+    competencyName: { type: String, trim: true, maxlength: [200, 'competencyName cannot exceed 200 characters'] },
+    sourceReasonCode: { type: String, trim: true, maxlength: [100, 'sourceReasonCode cannot exceed 100 characters'] },
+    difficultyAtGeneration: { type: String, trim: true, maxlength: [50, 'difficultyAtGeneration cannot exceed 50 characters'] },
     referenceAnswer: {
       type: String,
       trim: true,
@@ -893,16 +920,23 @@ interviewSchema.methods.addQuestion = async function (
   this: IInterview,
   questionText: string,
   expectedPoints?: string[],
-  questionType?: string
+  questionType?: string,
+  tagging?: {
+    competencyName?: string;
+    questionSource?: QuestionSource;
+    sourceReasonCode?: string;
+    difficultyAtGeneration?: string;
+  }
 ): Promise<IInterview> {
   if (this.questions.length >= this.totalQuestions) {
     throw new Error('Maximum number of questions reached');
   }
 
-  this.questions.push({ 
+  this.questions.push({
     questionText,
     questionType,
-    expectedPoints: expectedPoints || []
+    expectedPoints: expectedPoints || [],
+    ...(tagging || {}),
   } as IQuestion);
   return await this.save();
 };
