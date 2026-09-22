@@ -59,6 +59,19 @@ export interface ConversationPresentationPlan {
   /** true = nothing to say beyond the question itself (no acknowledgement AND no transition phrase) — the frontend's fast path: speak `spokenQuestionText` with no lead-in. */
   silenceOnly: boolean;
   toneHint?: string;
+  /**
+   * Phase 12B — optional, additive. Names one of the frontend's EXISTING
+   * `VoiceDynamicsSegmentCategory` values (frontend/src/config/voiceDynamics.ts)
+   * for the acknowledgement item's rate/pitch preset, reusing that same
+   * shared-string-vocabulary convention `avatarStateHint` already
+   * established between backend/frontend (never a new preset/number —
+   * only ever one of the six category names that table already defines).
+   * Absent whenever personality is PROFESSIONAL (baseline, unmodified) or
+   * the ack category doesn't have a personality-appropriate nudge defined
+   * — the frontend's existing derivation (ack category -> its own default
+   * preset) applies automatically whenever this is absent.
+   */
+  voiceDynamicsHint?: string;
 }
 
 /**
@@ -68,6 +81,21 @@ export interface ConversationPresentationPlan {
  * `IInterview`) so this stays import-cycle-safe: this module is imported by
  * interview.model.ts (for the `ConversationPresentationPlan` type on
  * `IQuestion`), so it must never import interview.model.ts back.
+ *
+ * Phase 12A fix — `organizationId` (institute) is now checked BEFORE
+ * `interviewMode === 'uploaded'`. Before this fix, an institute-assigned
+ * interview (which is ALWAYS created via `createInstituteUploadedInterview`,
+ * setting BOTH `organizationId` and `interviewMode: 'uploaded'` — confirmed
+ * since Phase 1) resolved to `'uploaded'` instead of `'institute'`, silently
+ * losing the business-context signal in favor of an orthogonal
+ * content-source one. Confirmed BEHAVIOR-INERT for every phrase currently in
+ * `phraseLibrary.ts` (practice/uploaded/institute are treated identically by
+ * every category except the practice-only WELCOME warmer, which excludes
+ * uploaded AND institute equally) — this is a correctness fix for future
+ * mode-specific content/policy (see constants/interviewModePolicy.ts), not a
+ * behavior change to any existing phrase selection. A personal (non-org)
+ * uploaded-question-set interview still resolves to `'uploaded'` exactly as
+ * before.
  */
 export function deriveHumanizerMode(interview: {
   purpose?: InterviewPurpose;
@@ -75,7 +103,7 @@ export function deriveHumanizerMode(interview: {
   organizationId?: unknown;
 }): HumanizerInterviewMode {
   if (interview.purpose === InterviewPurpose.HIRING_ASSESSMENT) return 'employer';
-  if (interview.interviewMode === 'uploaded') return 'uploaded';
   if (interview.organizationId) return 'institute';
+  if (interview.interviewMode === 'uploaded') return 'uploaded';
   return 'practice';
 }

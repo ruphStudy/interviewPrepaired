@@ -32,7 +32,8 @@ import {
   deriveInterviewPhase,
 } from './NextQuestionDecisionEngine';
 import { conversationHumanizerService } from './ConversationHumanizerService';
-import { ConversationPresentationPlan, deriveHumanizerMode } from '../constants/conversationHumanizer';
+import { ConversationPresentationPlan } from '../constants/conversationHumanizer';
+import { resolveInterviewModePolicy, resolveInterviewPersonality } from '../constants/interviewModePolicy';
 import { DEFAULT_LANGUAGE_CODE } from '../config/languages';
 
 const RECOVERY_CLAIM_STALE_MS = 2 * 60 * 1000;
@@ -184,9 +185,15 @@ export class InterviewAnswerOrchestratorService {
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
     if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
-      const interviewMode = deriveHumanizerMode(interview);
+      const policy = resolveInterviewModePolicy(interview);
+      const personality = resolveInterviewPersonality(interview);
       const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
-      return conversationHumanizerService.buildClosingPresentationPlan({ interviewMode, recentPhraseHistory });
+      return conversationHumanizerService.buildClosingPresentationPlan({
+        interviewMode: policy.humanizerMode,
+        recentPhraseHistory,
+        personality,
+        interviewerNeutrality: policy.interviewerNeutrality,
+      });
     } catch (humanizerError) {
       console.error('[InterviewAnswerRecovery] Closing presentation plan failed (non-critical):', humanizerError);
       return undefined;
@@ -567,14 +574,17 @@ export class InterviewAnswerOrchestratorService {
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
     if (language === DEFAULT_LANGUAGE_CODE) {
       try {
-        const interviewMode = deriveHumanizerMode(interview);
+        const policy = resolveInterviewModePolicy(interview);
+        const personality = resolveInterviewPersonality(interview);
         const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
         tagging.presentation = conversationHumanizerService.buildPresentationPlan({
           move: finalMove,
           question: { text: response.question },
           answerSignal: justAnsweredQuestion?.answerSignal,
-          interviewMode,
+          interviewMode: policy.humanizerMode,
           recentPhraseHistory,
+          personality,
+          interviewerNeutrality: policy.interviewerNeutrality,
         });
       } catch (humanizerError) {
         console.error('[InterviewAnswerRecovery] Conversation humanizer failed (non-critical):', humanizerError);

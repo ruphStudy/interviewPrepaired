@@ -8,6 +8,7 @@ import {
   INTERVIEW_STYLES,
   StartInterviewRequest,
   ParsedUploadedQuestion,
+  InterviewPersonality,
 } from '../api/interviewApi';
 import { SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE_CODE } from '../config/languages';
 import {
@@ -29,6 +30,16 @@ import {
 // ============================================================================
 
 type InterviewMode = 'ai-generated' | 'uploaded';
+
+// Phase 12B — optional interviewer-personality selector. Presentation-only
+// (tone/pacing of acknowledgements and lead-ins); never sent at all unless
+// the candidate explicitly picks a non-default option, so the backend's own
+// "absent -> PROFESSIONAL" default is exactly what an unset selector means.
+const INTERVIEW_PERSONALITIES: Array<{ value: InterviewPersonality; label: string; description: string }> = [
+  { value: 'PROFESSIONAL', label: 'Professional', description: 'Calm, neutral, straightforward — the default.' },
+  { value: 'FRIENDLY', label: 'Friendly', description: 'Warmer acknowledgements, a more relaxed pace.' },
+  { value: 'CHALLENGING', label: 'Challenging', description: 'More direct, leans into follow-ups a bit more.' },
+];
 
 interface FormErrors {
   topic?: string;
@@ -54,6 +65,9 @@ export const InterviewSetupPage: React.FC = () => {
   const [experienceYears, setExperienceYears] = useState<string>('');
   const [totalQuestions, setTotalQuestions] = useState<string>('5');
   const [interviewLanguage, setInterviewLanguage] = useState<string>(DEFAULT_LANGUAGE_CODE);
+  // Phase 12B — '' means "not explicitly chosen", so nothing is sent and the
+  // backend applies its own PROFESSIONAL default (never inferred here).
+  const [personality, setPersonality] = useState<InterviewPersonality | ''>('');
 
   // Uploaded-mode State
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -212,6 +226,7 @@ export const InterviewSetupPage: React.FC = () => {
               totalQuestions: useAllQuestions ? undefined : parseInt(uploadedQuestionCount),
               shuffleQuestions,
               interviewLanguage,
+              personality: personality || undefined,
             }
           : {
               topic: finalTopic,
@@ -220,6 +235,7 @@ export const InterviewSetupPage: React.FC = () => {
               totalQuestions: parseInt(totalQuestions),
               interviewStyle,
               interviewLanguage,
+              personality: personality || undefined,
             };
 
       console.log('[StartInterviewPayload]', {
@@ -267,6 +283,7 @@ export const InterviewSetupPage: React.FC = () => {
     setExperienceYears('');
     setTotalQuestions('5');
     setInterviewLanguage(DEFAULT_LANGUAGE_CODE);
+    setPersonality('');
     setUploadFile(null);
     setParseError('');
     setParsedQuestions([]);
@@ -364,6 +381,31 @@ export const InterviewSetupPage: React.FC = () => {
                   ))}
                 </select>
                 <p className="helper-text mt-1.5">Used for questions, speech recognition, evaluation and feedback.</p>
+              </div>
+
+              {/* Interviewer Personality — applies to both modes. Presentation-only
+                  (tone/pacing); optional, defaults to Professional when left unset. */}
+              <div>
+                <label htmlFor="personality" className="label">
+                  Interviewer Personality
+                </label>
+                <select
+                  id="personality"
+                  value={personality}
+                  onChange={(e) => setPersonality(e.target.value as InterviewPersonality | '')}
+                  className="input"
+                >
+                  <option value="">Professional (default)</option>
+                  {INTERVIEW_PERSONALITIES.filter((p) => p.value !== 'PROFESSIONAL').map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="helper-text mt-1.5">
+                  {INTERVIEW_PERSONALITIES.find((p) => p.value === personality)?.description ??
+                    'Calm, neutral, straightforward — the default.'}
+                </p>
               </div>
 
               {mode === 'ai-generated' && (

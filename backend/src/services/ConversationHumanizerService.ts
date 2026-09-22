@@ -23,6 +23,7 @@ import { INextInterviewMove, NextInterviewMoveType } from '../constants/nextQues
 import { IAnswerSignal } from '../constants/answerSignal';
 import { ConversationPresentationPlan, PresentationType } from '../constants/conversationHumanizer';
 import { HumanizerInterviewMode, PhraseCategory } from '../constants/phraseLibrary';
+import { DEFAULT_INTERVIEW_PERSONALITY, InterviewerNeutrality, InterviewPersonality } from '../constants/interviewModePolicy';
 import { selectPhrase, SelectedPhrase } from '../utils/phraseSelector';
 import { rewriteToSpokenForm } from '../utils/spokenQuestionRewriter';
 
@@ -35,6 +36,10 @@ export interface BuildPresentationPlanParams {
   recentPhraseHistory: string[];
   /** Injectable random source (default `Math.random`) — inject a deterministic sequence/mock in tests for exactly-repeatable phrase selection. */
   rng?: () => number;
+  /** Phase 12B — additive/optional, defaults to PROFESSIONAL (byte-identical to pre-Phase-12 behavior). See constants/interviewModePolicy.ts. */
+  personality?: InterviewPersonality;
+  /** Phase 12B — additive/optional, defaults to 'relaxed'. Callers should pass `resolveInterviewModePolicy(interview).interviewerNeutrality`. */
+  interviewerNeutrality?: InterviewerNeutrality;
 }
 
 // A move type's transition-family phrase category, if it has one at all.
@@ -79,6 +84,31 @@ const TONE_HINT_BY_PRESENTATION_TYPE: Partial<Record<PresentationType, string>> 
 };
 
 /**
+ * Phase 12B — personality-nudged voice-dynamics hint for the acknowledgement
+ * item only (the most frequent, most "personality-visible" beat of a turn),
+ * naming one of the frontend's EXISTING `VoiceDynamicsSegmentCategory`
+ * values verbatim (frontend/src/config/voiceDynamics.ts) — never a new
+ * preset/number. Deliberately scoped to the plain `NEUTRAL_ACK` category
+ * only: THINKING/NO_ANSWER/LONG_ANSWER already have their own
+ * intentionally-distinct presets that a personality nudge shouldn't
+ * override, and PROFESSIONAL never sets this at all (returns `undefined`,
+ * so the frontend's own existing default derivation applies unchanged).
+ */
+const VOICE_DYNAMICS_HINT_BY_PERSONALITY: Partial<Record<InterviewPersonality, string>> = {
+  // FRIENDLY reuses WELCOME's warmer/slightly-slower preset (0.95/1.0)
+  // instead of NEUTRAL_ACK's own crisp 1.0/1.0.
+  FRIENDLY: 'WELCOME',
+  // CHALLENGING reuses CHALLENGE_SCENARIO's crisper/faster preset (0.9/1.0)
+  // instead of NEUTRAL_ACK's own 1.0/1.0 — "focused" read on the ack beat.
+  CHALLENGING: 'CHALLENGE_SCENARIO',
+};
+
+function deriveVoiceDynamicsHint(ackCategory: PhraseCategory, personality: InterviewPersonality): string | undefined {
+  if (ackCategory !== 'NEUTRAL_ACK') return undefined;
+  return VOICE_DYNAMICS_HINT_BY_PERSONALITY[personality];
+}
+
+/**
  * Picks WHICH acknowledgement-family category best fits this turn's answer
  * signal — never a quality/score judgment, purely a neutral "what kind of
  * brief reaction fits" choice (a no-answer gets a no-answer bridge, a
@@ -114,22 +144,35 @@ function safeFallbackPlan(canonicalText: string): ConversationPresentationPlan {
 }
 
 function buildPlanInternal(params: BuildPresentationPlanParams): ConversationPresentationPlan {
-  const { move, question, answerSignal, interviewMode, recentPhraseHistory, rng = Math.random } = params;
+  const {
+    move,
+    question,
+    answerSignal,
+    interviewMode,
+    recentPhraseHistory,
+    rng = Math.random,
+    personality = DEFAULT_INTERVIEW_PERSONALITY,
+    interviewerNeutrality = 'relaxed',
+  } = params;
   const canonicalText = question?.text ?? '';
   if (!canonicalText.trim()) return safeFallbackPlan(canonicalText);
 
   const ackCategory = pickAckCategory(answerSignal, move);
-  const ack: SelectedPhrase | null = selectPhrase(ackCategory, interviewMode, recentPhraseHistory, rng);
+  const ack: SelectedPhrase | null = selectPhrase(ackCategory, interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality);
 
   const transitionCategory = TRANSITION_CATEGORY_BY_MOVE[move.moveType];
   const transition: SelectedPhrase | null = transitionCategory
-    ? selectPhrase(transitionCategory, interviewMode, recentPhraseHistory, rng)
+    ? selectPhrase(transitionCategory, interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality)
     : null;
 
-  const spokenQuestionText = rewriteToSpokenForm(canonicalText, {
-    targetConcept: move.targetConcept,
-    sourcePhraseReference: move.sourcePhraseReference,
-  });
+  const spokenQuestionText = rewriteToSpokenForm(
+    canonicalText,
+    {
+      targetConcept: move.targetConcept,
+      sourcePhraseReference: move.sourcePhraseReference,
+    },
+    personality
+  );
 
   const presentationType = derivePresentationType(move.moveType, ackCategory, !!ack);
   const silenceOnly = !ack && !transition;
@@ -148,6 +191,8 @@ function buildPlanInternal(params: BuildPresentationPlanParams): ConversationPre
   if (ack) {
     plan.acknowledgementPhraseId = ack.phraseId;
     plan.acknowledgementText = ack.text;
+    const voiceDynamicsHint = deriveVoiceDynamicsHint(ackCategory, personality);
+    if (voiceDynamicsHint) plan.voiceDynamicsHint = voiceDynamicsHint;
   }
   if (transition) {
     plan.transitionPhraseId = transition.phraseId;
@@ -202,12 +247,14 @@ function buildWelcomePlanInternal(params: {
   questionText: string;
   interviewMode: HumanizerInterviewMode;
   rng?: () => number;
+  personality?: InterviewPersonality;
+  interviewerNeutrality?: InterviewerNeutrality;
 }): ConversationPresentationPlan {
-  const { questionText, interviewMode, rng = Math.random } = params;
+  const { questionText, interviewMode, rng = Math.random, personality = DEFAULT_INTERVIEW_PERSONALITY, interviewerNeutrality = 'relaxed' } = params;
   const canonicalText = questionText ?? '';
   if (!canonicalText.trim()) return safeFallbackPlan(canonicalText);
 
-  const greeting = selectPhrase('WELCOME', interviewMode, [], rng);
+  const greeting = selectPhrase('WELCOME', interviewMode, [], rng, personality, interviewerNeutrality);
   if (!greeting) return safeFallbackPlan(canonicalText);
 
   return {
@@ -236,9 +283,17 @@ function buildClosingPlanInternal(params: {
   interviewMode: HumanizerInterviewMode;
   recentPhraseHistory?: string[];
   rng?: () => number;
+  personality?: InterviewPersonality;
+  interviewerNeutrality?: InterviewerNeutrality;
 }): ConversationPresentationPlan {
-  const { interviewMode, recentPhraseHistory = [], rng = Math.random } = params;
-  const closing = selectPhrase('CLOSING', interviewMode, recentPhraseHistory, rng);
+  const {
+    interviewMode,
+    recentPhraseHistory = [],
+    rng = Math.random,
+    personality = DEFAULT_INTERVIEW_PERSONALITY,
+    interviewerNeutrality = 'relaxed',
+  } = params;
+  const closing = selectPhrase('CLOSING', interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality);
   if (!closing) return safeFallbackPlan('');
 
   return {
@@ -282,7 +337,13 @@ export class ConversationHumanizerService {
   }
 
   /** Phase 11 — see `buildWelcomePlanInternal`. Never throws. */
-  buildWelcomePresentationPlan(params: { questionText: string; interviewMode: HumanizerInterviewMode; rng?: () => number }): ConversationPresentationPlan {
+  buildWelcomePresentationPlan(params: {
+    questionText: string;
+    interviewMode: HumanizerInterviewMode;
+    rng?: () => number;
+    personality?: InterviewPersonality;
+    interviewerNeutrality?: InterviewerNeutrality;
+  }): ConversationPresentationPlan {
     let canonicalTextForFallback = '';
     try {
       canonicalTextForFallback = params?.questionText ?? '';
@@ -298,7 +359,13 @@ export class ConversationHumanizerService {
   }
 
   /** Phase 11 — see `buildClosingPlanInternal`. Never throws. */
-  buildClosingPresentationPlan(params: { interviewMode: HumanizerInterviewMode; recentPhraseHistory?: string[]; rng?: () => number }): ConversationPresentationPlan {
+  buildClosingPresentationPlan(params: {
+    interviewMode: HumanizerInterviewMode;
+    recentPhraseHistory?: string[];
+    rng?: () => number;
+    personality?: InterviewPersonality;
+    interviewerNeutrality?: InterviewerNeutrality;
+  }): ConversationPresentationPlan {
     try {
       return buildClosingPlanInternal(params);
     } catch (error) {

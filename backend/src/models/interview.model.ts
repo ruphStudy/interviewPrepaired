@@ -26,6 +26,7 @@ import {
   CLAIM_PROBE_TYPE_VALUES,
 } from '../constants/nextQuestionDecision';
 import { ConversationPresentationPlan, PRESENTATION_TYPE_VALUES } from '../constants/conversationHumanizer';
+import { INTERVIEW_PERSONALITY_VALUES, InterviewPersonality } from '../constants/interviewModePolicy';
 
 // ============================================================================
 // TypeScript Interfaces
@@ -314,6 +315,16 @@ export interface IInterview extends Document {
   // discipline.
   warmUpAnsweredAt?: Date;
   interviewMode?: 'ai-generated' | 'uploaded';
+  // Phase 12B — additive/optional, no default/migration needed (absent on
+  // every interview created before this feature, exactly like
+  // `interviewPhase`/`warmUpAnsweredAt` above). Read exclusively via
+  // `resolveInterviewPersonality` (constants/interviewModePolicy.ts), which
+  // resolves an absent value to `'PROFESSIONAL'` — never read as a raw
+  // field anywhere else. PRESENTATION-ONLY: never accepted as a parameter
+  // by NextQuestionDecisionEngine.decideNextMove/DifficultyManagerService/
+  // AnswerSignalService/ClaimVerificationService/ContradictionDetectorService/
+  // CoverageTrackerService — see this phase's report for the structural proof.
+  personality?: InterviewPersonality;
   // Absent on interviews created before this feature — schema `default` below
   // makes those hydrate as 'en-IN', so no migration/backfill is needed.
   interviewLanguage?: SupportedLanguageCode;
@@ -598,6 +609,8 @@ const presentationSchema = new Schema(
     avatarStateHint: { type: String, required: true, trim: true, maxlength: [50, 'avatarStateHint cannot exceed 50 characters'] },
     silenceOnly: { type: Boolean, required: true, default: false },
     toneHint: { type: String, trim: true, maxlength: [50, 'toneHint cannot exceed 50 characters'] },
+    // Phase 12B — additive/optional, no default. See ConversationPresentationPlan's own doc comment (constants/conversationHumanizer.ts).
+    voiceDynamicsHint: { type: String, trim: true, maxlength: [50, 'voiceDynamicsHint cannot exceed 50 characters'] },
   },
   { _id: false }
 );
@@ -989,6 +1002,13 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       type: String,
       enum: ['ai-generated', 'uploaded'],
       default: 'ai-generated',
+    },
+    // Phase 12B — additive/optional, no default. See IInterview's own doc
+    // comment above for the "presentation-only, never reaches decision/
+    // scoring code" contract this field must uphold.
+    personality: {
+      type: String,
+      enum: { values: INTERVIEW_PERSONALITY_VALUES, message: '{VALUE} is not a valid interview personality' },
     },
     interviewLanguage: {
       type: String,

@@ -45,6 +45,7 @@ export class InterviewController {
       questionSetId,
       shuffleQuestions,
       interviewLanguage,
+      personality,
     } = req.body;
 
     const isUploadedMode = interviewMode === 'uploaded';
@@ -67,6 +68,7 @@ export class InterviewController {
         questionSetId: isUploadedMode ? questionSetId : undefined,
         shuffleQuestions: shuffleQuestions === true,
         interviewLanguage,
+        personality,
       });
     } catch (error) {
       if (error instanceof InsufficientCreditsError) {

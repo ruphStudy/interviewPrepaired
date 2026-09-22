@@ -36,7 +36,8 @@ import {
 } from './NextQuestionDecisionEngine';
 import { INextInterviewMove } from '../constants/nextQuestionDecision';
 import { conversationHumanizerService } from './ConversationHumanizerService';
-import { ConversationPresentationPlan, deriveHumanizerMode } from '../constants/conversationHumanizer';
+import { ConversationPresentationPlan } from '../constants/conversationHumanizer';
+import { InterviewPersonality, resolveInterviewModePolicy, resolveInterviewPersonality } from '../constants/interviewModePolicy';
 import { buildAICostReport, AICostReport } from './AIUsageService';
 import { normalizeLanguageCode, DEFAULT_LANGUAGE_CODE } from '../config/languages';
 import { ParsedQuestion, normalizeUploadedQuestions } from './QuestionFileParserService';
@@ -76,6 +77,10 @@ interface StartInterviewParams {
   questionSetId?: string;
   shuffleQuestions?: boolean;
   interviewLanguage?: string;
+  // Phase 12B — optional. Absent/undefined resolves to 'PROFESSIONAL' via
+  // `resolveInterviewPersonality` wherever it's read; never inferred/
+  // defaulted to anything else here.
+  personality?: InterviewPersonality;
 }
 
 interface SubmitAnswerParams {
@@ -805,6 +810,7 @@ export class InterviewService {
         difficultyTracking: initialDifficulty,
         interviewLanguage,
         interviewMode: 'ai-generated',
+        personality: params.personality,
       });
 
       // Persist the shell now (before any AI call) so interview._id already
@@ -944,6 +950,7 @@ export class InterviewService {
       interviewPhase: InterviewPhase.WELCOME,
       currentQuestion: 1,
       questions,
+      personality: params.personality,
     });
 
     if (interview.questions[0]) {
@@ -999,6 +1006,7 @@ export class InterviewService {
     interviewStyle?: string;
     interviewLanguage?: string;
     questions: ParsedQuestion[];
+    personality?: InterviewPersonality;
   }): Promise<IInterview> {
     const interviewLanguage = normalizeLanguageCode(params.interviewLanguage);
     const finalInterviewStyle = params.interviewStyle || inferInterviewStyle(params.topic);
@@ -1024,6 +1032,7 @@ export class InterviewService {
       interviewPhase: InterviewPhase.WELCOME,
       currentQuestion: 1,
       questions,
+      personality: params.personality,
     });
 
     if (interview.questions[0]) {
@@ -1157,14 +1166,17 @@ export class InterviewService {
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
     if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
-      const interviewMode = deriveHumanizerMode(interview);
+      const policy = resolveInterviewModePolicy(interview);
+      const personality = resolveInterviewPersonality(interview);
       const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
       return conversationHumanizerService.buildPresentationPlan({
         move,
         question: { text: questionText },
         answerSignal,
-        interviewMode,
+        interviewMode: policy.humanizerMode,
         recentPhraseHistory,
+        personality,
+        interviewerNeutrality: policy.interviewerNeutrality,
       });
     } catch (humanizerError) {
       console.error('[InterviewService] Conversation humanizer failed (non-critical):', humanizerError);
@@ -1184,8 +1196,14 @@ export class InterviewService {
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
     if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
-      const interviewMode = deriveHumanizerMode(interview);
-      return conversationHumanizerService.buildWelcomePresentationPlan({ questionText, interviewMode });
+      const policy = resolveInterviewModePolicy(interview);
+      const personality = resolveInterviewPersonality(interview);
+      return conversationHumanizerService.buildWelcomePresentationPlan({
+        questionText,
+        interviewMode: policy.humanizerMode,
+        personality,
+        interviewerNeutrality: policy.interviewerNeutrality,
+      });
     } catch (humanizerError) {
       console.error('[InterviewService] Welcome presentation plan failed (non-critical):', humanizerError);
       return undefined;
@@ -1203,9 +1221,15 @@ export class InterviewService {
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
     if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
-      const interviewMode = deriveHumanizerMode(interview);
+      const policy = resolveInterviewModePolicy(interview);
+      const personality = resolveInterviewPersonality(interview);
       const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
-      return conversationHumanizerService.buildClosingPresentationPlan({ interviewMode, recentPhraseHistory });
+      return conversationHumanizerService.buildClosingPresentationPlan({
+        interviewMode: policy.humanizerMode,
+        recentPhraseHistory,
+        personality,
+        interviewerNeutrality: policy.interviewerNeutrality,
+      });
     } catch (humanizerError) {
       console.error('[InterviewService] Closing presentation plan failed (non-critical):', humanizerError);
       return undefined;

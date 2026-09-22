@@ -29,7 +29,12 @@
  */
 
 import { ConversationPresentationPlan } from '../api/interviewApi';
-import { VOICE_DYNAMICS_BY_SEGMENT_CATEGORY } from '../config/voiceDynamics';
+import { VOICE_DYNAMICS_BY_SEGMENT_CATEGORY, VoiceDynamicsSegmentCategory } from '../config/voiceDynamics';
+
+/** Type guard for `ConversationPresentationPlan.voiceDynamicsHint` (Phase 12B) — a plain, unvalidated string on the wire; only forward it into the EXISTING preset table when it names one of that table's real keys, otherwise fall back to the category the caller already derived. */
+function isKnownVoiceDynamicsCategory(value: string | undefined): value is VoiceDynamicsSegmentCategory {
+  return !!value && Object.prototype.hasOwnProperty.call(VOICE_DYNAMICS_BY_SEGMENT_CATEGORY, value);
+}
 
 export type AudioItemMethod = 'asset' | 'dynamic_tts' | 'browser_tts' | 'skip';
 
@@ -164,7 +169,12 @@ export function buildAudioPlan(
 
   if (presentationPlan.acknowledgementText) {
     if (presentationPlan.prePauseMs > 0) items.push({ type: 'pause', durationMs: presentationPlan.prePauseMs });
-    const ackCategory = presentationPlan.presentationType === 'think_then_ask' ? 'THINKING' : 'NEUTRAL_ACK';
+    const defaultAckCategory: VoiceDynamicsSegmentCategory = presentationPlan.presentationType === 'think_then_ask' ? 'THINKING' : 'NEUTRAL_ACK';
+    // Phase 12B — a personality-nudged hint from the backend overrides the
+    // default category ONLY when it names a real, already-existing preset
+    // key (never a new number) — absent/unrecognized falls back to the
+    // exact pre-Phase-12 derivation above, unchanged.
+    const ackCategory = isKnownVoiceDynamicsCategory(presentationPlan.voiceDynamicsHint) ? presentationPlan.voiceDynamicsHint : defaultAckCategory;
     const ackItem = toFixedPhraseItem(
       presentationPlan.acknowledgementText,
       presentationPlan.acknowledgementPhraseId,

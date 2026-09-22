@@ -13,6 +13,14 @@ export interface InterviewTopic {
   label: string;
 }
 
+/**
+ * Phase 12B — mirrors backend `InterviewPersonality`
+ * (backend/src/constants/interviewModePolicy.ts) exactly. Presentation-only:
+ * affects only the interviewer's acknowledgement/lead-in tone and voice
+ * pacing, never scoring/difficulty/evaluation.
+ */
+export type InterviewPersonality = 'PROFESSIONAL' | 'FRIENDLY' | 'CHALLENGING';
+
 export interface StartInterviewRequest {
   topic: string;
   difficulty: string;
@@ -24,6 +32,8 @@ export interface StartInterviewRequest {
   questions?: Array<{ questionText: string; referenceAnswer?: string }>;
   shuffleQuestions?: boolean;
   interviewLanguage?: string;
+  // Phase 12B — optional. Absent resolves to 'PROFESSIONAL' server-side.
+  personality?: InterviewPersonality;
 }
 
 export interface ParsedUploadedQuestion {
@@ -172,6 +182,14 @@ export interface ConversationPresentationPlan {
   avatarStateHint: string;
   silenceOnly: boolean;
   toneHint?: string;
+  /**
+   * Phase 12B — optional. Names one of `VoiceDynamicsSegmentCategory`'s
+   * existing values (config/voiceDynamics.ts) for the acknowledgement
+   * item's rate/pitch preset, reusing that same EXISTING bounded preset
+   * table — never a new/unbounded value. See audioPlanBuilder.ts's
+   * consumption of this field.
+   */
+  voiceDynamicsHint?: string;
 }
 
 export interface SubmitAnswerResponse {

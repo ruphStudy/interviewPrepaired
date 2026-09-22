@@ -7,6 +7,7 @@ import { body, param, query } from 'express-validator';
 import { SUPPORTED_LANGUAGE_CODES } from '../config/languages';
 import { InterviewStyle } from '../services/OpenAIService';
 import { InterviewStatus, MAX_UPLOADED_QUESTIONS } from '../constants/interview';
+import { INTERVIEW_PERSONALITY_VALUES } from '../constants/interviewModePolicy';
 
 const router = Router();
 
@@ -81,6 +82,11 @@ const startInterviewValidation = [
     .optional()
     .isIn(Object.values(InterviewStyle))
     .withMessage(`Interview style must be one of: ${Object.values(InterviewStyle).join(', ')}`),
+  // Phase 12B — optional. Absent resolves to 'PROFESSIONAL' server-side.
+  body('personality')
+    .optional()
+    .isIn(INTERVIEW_PERSONALITY_VALUES)
+    .withMessage(`Personality must be one of: ${INTERVIEW_PERSONALITY_VALUES.join(', ')}`),
 ];
 
 const submitAnswerValidation = [

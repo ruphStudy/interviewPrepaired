@@ -26,7 +26,20 @@
  * `IQuestion.questionText`) is NEVER mutated by this function — callers
  * only ever use its return value as a NEW, presentation-only
  * `spokenQuestionText`, never writing it back over the canonical field.
+ *
+ * Phase 12B adds a `personality` parameter (default `'PROFESSIONAL'`,
+ * additive/optional — every pre-Phase-12 call site keeps working unchanged)
+ * that selects among per-personality lead-in VARIANTS for the SAME matched
+ * opener. The `'PROFESSIONAL'` variant for every pattern below is BYTE-
+ * IDENTICAL to this function's pre-Phase-12 (sole) replacement string, so
+ * the existing test suite's expectations hold with zero changes. Exactly
+ * like the opener-only discipline this file already established: only the
+ * REPLACEMENT clause differs per personality — `rest` (everything after the
+ * matched opener — the technical terms/nouns/quoted phrases/proper nouns)
+ * is sliced once and copied through byte-for-byte regardless of personality.
  */
+
+import { DEFAULT_INTERVIEW_PERSONALITY, InterviewPersonality } from '../constants/interviewModePolicy';
 
 export interface SpokenRewriteContext {
   targetConcept?: string;
@@ -36,7 +49,8 @@ export interface SpokenRewriteContext {
 interface RewritePattern {
   /** Anchored to the start of the string; matches the opening verb + trailing whitespace ONLY. */
   pattern: RegExp;
-  replacement: string;
+  /** One replacement clause per personality — see the file header for why 'PROFESSIONAL' is always the original, unmodified baseline string. */
+  replacementByPersonality: Record<InterviewPersonality, string>;
 }
 
 // Patterns are checked in order; the FIRST match wins (they are mutually
@@ -50,14 +64,70 @@ interface RewritePattern {
 // "Compare"/"List"/"Discuss"/"Outline") that read as written-prompt style
 // rather than spoken-interviewer style.
 const REWRITE_PATTERNS: RewritePattern[] = [
-  { pattern: /^Explain\s+/i, replacement: 'How would you explain ' },
-  { pattern: /^Describe\s+/i, replacement: 'Can you walk me through ' },
-  { pattern: /^Define\s+/i, replacement: 'How would you define ' },
-  { pattern: /^Compare\s+/i, replacement: 'How would you compare ' },
-  { pattern: /^Discuss\s+/i, replacement: 'Could you discuss ' },
-  { pattern: /^Outline\s+/i, replacement: 'Could you outline ' },
-  { pattern: /^List\s+/i, replacement: 'Could you list ' },
-  { pattern: /^Summarize\s+/i, replacement: 'Could you summarize ' },
+  {
+    pattern: /^Explain\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'How would you explain ',
+      FRIENDLY: "I'd love to hear how you'd explain ",
+      CHALLENGING: 'Go ahead and explain ',
+    },
+  },
+  {
+    pattern: /^Describe\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'Can you walk me through ',
+      FRIENDLY: "I'd love for you to walk me through ",
+      CHALLENGING: 'Walk me through ',
+    },
+  },
+  {
+    pattern: /^Define\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'How would you define ',
+      FRIENDLY: "I'm curious how you'd define ",
+      CHALLENGING: 'Define, precisely, ',
+    },
+  },
+  {
+    pattern: /^Compare\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'How would you compare ',
+      FRIENDLY: "I'd love to know how you'd compare ",
+      CHALLENGING: 'Compare, in detail, ',
+    },
+  },
+  {
+    pattern: /^Discuss\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'Could you discuss ',
+      FRIENDLY: 'Feel free to discuss ',
+      CHALLENGING: 'I want you to discuss ',
+    },
+  },
+  {
+    pattern: /^Outline\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'Could you outline ',
+      FRIENDLY: 'Would you mind outlining ',
+      CHALLENGING: 'Outline, specifically, ',
+    },
+  },
+  {
+    pattern: /^List\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'Could you list ',
+      FRIENDLY: 'Would you mind listing ',
+      CHALLENGING: 'List out ',
+    },
+  },
+  {
+    pattern: /^Summarize\s+/i,
+    replacementByPersonality: {
+      PROFESSIONAL: 'Could you summarize ',
+      FRIENDLY: 'Could you briefly summarize ',
+      CHALLENGING: 'Summarize, concisely, ',
+    },
+  },
 ];
 
 /**
@@ -65,17 +135,22 @@ const REWRITE_PATTERNS: RewritePattern[] = [
  * form when a known, safe pattern matches; otherwise returns it unchanged.
  * Pure, synchronous, deterministic — no AI call, no randomness, no I/O.
  */
-export function rewriteToSpokenForm(canonicalText: string, _context?: SpokenRewriteContext): string {
+export function rewriteToSpokenForm(
+  canonicalText: string,
+  _context?: SpokenRewriteContext,
+  personality: InterviewPersonality = DEFAULT_INTERVIEW_PERSONALITY
+): string {
   if (typeof canonicalText !== 'string') return canonicalText;
   const trimmed = canonicalText.trim();
   if (trimmed.length === 0) return canonicalText;
 
-  for (const { pattern, replacement } of REWRITE_PATTERNS) {
+  for (const { pattern, replacementByPersonality } of REWRITE_PATTERNS) {
     const match = canonicalText.match(pattern);
     if (!match) continue;
     const rest = canonicalText.slice(match[0].length);
     // Never produce a dangling rewrite with no object following the verb.
     if (!rest.trim()) continue;
+    const replacement = replacementByPersonality[personality] ?? replacementByPersonality.PROFESSIONAL;
     return `${replacement}${rest}`;
   }
 
