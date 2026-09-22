@@ -7,10 +7,10 @@ import { interviewApi, ConversationPresentationPlan } from '../api/interviewApi'
 import { getInterviewPhrase } from '../config/interviewPhrases';
 import {
   useInterviewPresentationState,
-  presentationStateToAvatarState,
   presentationStateToLegacyPhase,
   type LegacyInterviewPhase as InterviewPhase,
 } from '../hooks/useInterviewPresentationState';
+import { useAvatarPresentationController } from '../hooks/useAvatarPresentationController';
 import {
   derivePredictiveBranches,
   matchPreparedBranch,
@@ -62,6 +62,7 @@ export const InterviewScreen: React.FC = () => {
   // said "Preparing next question".
   const {
     presentationState,
+    sessionGeneration,
     isRequestCurrent,
     startInterview: presentationStartInterview,
     beginAsking,
@@ -73,6 +74,7 @@ export const InterviewScreen: React.FC = () => {
     questionTextAvailable,
     submitFailed,
     resetToPreStart,
+    closingSpoken,
   } = useInterviewPresentationState();
 
   const phase: InterviewPhase = presentationStateToLegacyPhase(presentationState);
@@ -121,13 +123,32 @@ export const InterviewScreen: React.FC = () => {
   // speak after the component is gone.
   useEffect(() => () => audioPlaybackQueue.cancel(), [audioPlaybackQueue.cancel]);
 
-  // Phase 7A — the InterviewAvatar's video/chip and the phase badge below it
-  // are both pure derivations of the single presentation state machine;
-  // `isListening` (Phase 2/pre-existing, actual mic recording) resolves the
-  // one genuine ambiguity the coarser 5-value AvatarState can't express on
-  // its own (LISTENING presentation state covers both "your turn, not
-  // recording yet" and "actively recording").
-  const avatarState = presentationStateToAvatarState(presentationState, isListening);
+  // Phase 10A — the CURRENT question turn's presentation flavour
+  // (`ConversationPresentationPlan.presentationType`), set right before
+  // playing that turn's lead-in/question audio (see speakPresentationSequence
+  // below) and left in place through the subsequent LISTENING for that same
+  // question — purely presentation-only, read only by the micro-behavior
+  // scheduler's safety gate (utils/avatarSemanticState.ts) to suppress
+  // cosmetic overlays during a probe/challenge/contradiction/closing turn.
+  // Never sent anywhere, never read by any decision/scoring logic.
+  const [currentPresentationType, setCurrentPresentationType] = useState<string | undefined>(undefined);
+
+  // Phase 7A/10A/10C — the InterviewAvatar's video/chip and the phase badge
+  // below it are both pure derivations of the single presentation state
+  // machine; `isListening` (Phase 2/pre-existing, actual mic recording)
+  // resolves the one genuine ambiguity the coarser 5-value AvatarState
+  // can't express on its own (LISTENING presentation state covers both
+  // "your turn, not recording yet" and "actively recording"). This is now
+  // the ONE place resolving avatar state, extended (additively) to also
+  // resolve the purely cosmetic `currentMicroBehavior` overlay — see
+  // useAvatarPresentationController.ts's header for why this cannot desync
+  // from or delay a real presentationState transition.
+  const { avatarState, currentMicroBehavior } = useAvatarPresentationController({
+    presentationState,
+    isActivelyListening: isListening,
+    sessionGeneration,
+    currentPresentationType,
+  });
 
   // Phase 7C — recompute bounded speculative branches whenever Phase 2's
   // already-debounced detectedConcepts (or the current question's known
@@ -155,6 +176,7 @@ export const InterviewScreen: React.FC = () => {
       setCurrentQuestionContext({});
       setTotalQuestions(interview.totalQuestions || 5);
       resetToPreStart();
+      setCurrentPresentationType(undefined);
       return;
     }
 
@@ -185,6 +207,7 @@ export const InterviewScreen: React.FC = () => {
         setCurrentQuestionContext({ expectedPoints: session.currentQuestion.expectedPoints });
         setTotalQuestions(session.totalQuestions);
         resetToPreStart();
+        setCurrentPresentationType(undefined);
       } catch (err: any) {
         if (!cancelled) setLoadError(err.message || 'Failed to load interview. Please return to setup and try again.');
       }
@@ -257,6 +280,13 @@ export const InterviewScreen: React.FC = () => {
         await askCurrentQuestion(fallbackQuestionText);
         return;
       }
+
+      // Phase 10A — record this turn's flavour for the micro-behavior
+      // scheduler's safety gate BEFORE any of its audio plays, and leave it
+      // set through the subsequent LISTENING for this same question (only
+      // overwritten by the NEXT turn's presentation plan, or cleared on a
+      // fresh session below).
+      setCurrentPresentationType(presentation.presentationType);
 
       const plan = buildAudioPlan(presentation, fallbackQuestionText);
       const { leadIn } = splitLeadInAndQuestion(plan);
@@ -405,6 +435,13 @@ export const InterviewScreen: React.FC = () => {
           } catch {
             // Navigation to the report is the important part.
           }
+          // Phase 10A — the closing narration has now genuinely finished:
+          // advance CLOSING -> COMPLETED so the avatar's video/state (which
+          // showed SPEAKING throughout the three phrases above, not the
+          // static COMPLETED visual) settles back to idle before navigating
+          // away. Generation-guarded like every other resumed-after-await
+          // action here — a late/stale call is a silent no-op.
+          if (isMountedRef.current && isRequestCurrent(requestGeneration)) closingSpoken(requestGeneration);
           if (isMountedRef.current) window.setTimeout(() => navigate(`/report/${interviewId}`), 800);
           return;
         }
@@ -527,7 +564,7 @@ export const InterviewScreen: React.FC = () => {
 
       <div className="flex-1 w-full max-w-[1440px] mx-auto px-4 md:px-7 py-5 md:py-6 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-5 md:gap-6 min-h-0">
         <div className="card p-0 overflow-hidden flex flex-col min-h-[380px] sm:min-h-[440px] lg:min-h-0">
-          <div className="flex-1 min-h-0"><InterviewAvatar currentState={avatarState} /></div>
+          <div className="flex-1 min-h-0"><InterviewAvatar currentState={avatarState} currentMicroBehavior={currentMicroBehavior} /></div>
           <div className="px-5 py-3 border-t border-mentor-border flex items-center justify-center shrink-0"><span className={`badge ${getPhaseChipClass(phase)}`}>{getPhaseLabel(phase)}</span></div>
         </div>
 

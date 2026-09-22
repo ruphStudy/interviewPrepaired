@@ -46,6 +46,26 @@ export interface PlayAudioPlanOptions {
   speak: (text: string, onEnd?: () => void, options?: { rate?: number; pitch?: number }) => Promise<void>;
   locale?: string;
   ttsCache?: TtsCache;
+  /**
+   * Phase 10B — real item-boundary lifecycle hooks, so a consumer (the
+   * avatar controller) can react to genuine start/end events instead of a
+   * guessed timeout. Both are called ONLY when `isCurrent()` is still true
+   * at the moment of the call (checked immediately before invoking each) —
+   * a stale item event (an outer generation that has since moved on) is
+   * always a silent no-op, matching every other callback in this module.
+   * `onItemStart` fires for every item (including `pause`/`silence`, with
+   * no useful `avatarState` on those); `onItemEnd` fires once that item's
+   * own action has settled (even when it threw — TTS failure must never
+   * block progression, matching this function's existing contract), UNLESS
+   * `isCurrent()` went false while the item's action was in flight, in
+   * which case — same as every other point in this loop — the event is
+   * dropped rather than reporting a stale item as finished. A consumer
+   * should therefore treat `onItemStart`/`onItemEnd` as paired only while
+   * the plan keeps running to completion, never assume a start it saw is
+   * guaranteed a matching end once the plan has been cancelled.
+   */
+  onItemStart?: (item: AudioPlanItem) => void;
+  onItemEnd?: (item: AudioPlanItem) => void;
 }
 
 export type PlaybackOutcome = 'completed' | 'cancelled';
@@ -68,6 +88,7 @@ export async function executeAudioPlan(plan: AudioPlanItem[], options: PlayAudio
 
   for (const item of plan) {
     if (!options.isCurrent()) return 'cancelled';
+    if (options.isCurrent()) options.onItemStart?.(item);
 
     switch (item.type) {
       case 'pause': {
@@ -125,6 +146,7 @@ export async function executeAudioPlan(plan: AudioPlanItem[], options: PlayAudio
         break;
     }
 
+    if (options.isCurrent()) options.onItemEnd?.(item);
     if (!options.isCurrent()) return 'cancelled';
   }
 

@@ -33,6 +33,30 @@ import { VOICE_DYNAMICS_BY_SEGMENT_CATEGORY } from '../config/voiceDynamics';
 
 export type AudioItemMethod = 'asset' | 'dynamic_tts' | 'browser_tts' | 'skip';
 
+/**
+ * Phase 10B — an optional per-item semantic hint, reusing
+ * `PresentationState`'s exact vocabulary (useInterviewPresentationState.ts)
+ * string-for-string, mirroring `ConversationPresentationPlan.avatarStateHint`
+ * (backend/src/constants/conversationHumanizer.ts) field-for-field — never a
+ * second/parallel vocabulary. `buildAudioPlan` below sets this from the
+ * REAL `presentationPlan.avatarStateHint` the backend already computed
+ * (previously read by nothing on the frontend), not a re-derived guess.
+ *
+ * Deliberately a single value shared by every item in one plan today,
+ * exactly matching `ConversationPresentationPlan.avatarStateHint`'s own
+ * "always `'ASKING_QUESTION'`" contract (see that field's doc comment) —
+ * differentiating it per item (e.g. showing "ACKNOWLEDGING" for the
+ * acknowledgement item and "ASKING_QUESTION" only for the question item)
+ * would reintroduce the exact flicker this whole lead-in+question span was
+ * deliberately made continuous to avoid: `InterviewScreen.tsx` already
+ * calls `beginAsking()` (entering the reducer's own `ASKING_QUESTION`)
+ * BEFORE any lead-in item plays, so the avatar is genuinely, correctly
+ * "speaking" for the acknowledgement/transition/question alike — there is
+ * no real distinct visual for "speaking an acknowledgement" vs "speaking
+ * the question" today (one looping video, see InterviewAvatar.tsx).
+ */
+export type AudioPlanAvatarHint = string;
+
 export interface PauseItem {
   type: 'pause';
   durationMs: number;
@@ -51,6 +75,7 @@ export interface AssetItem {
   fallbackText: string;
   rate?: number;
   pitch?: number;
+  avatarState?: AudioPlanAvatarHint;
 }
 
 export interface DynamicTtsItem {
@@ -58,6 +83,7 @@ export interface DynamicTtsItem {
   text: string;
   rate?: number;
   pitch?: number;
+  avatarState?: AudioPlanAvatarHint;
 }
 
 export interface BrowserTtsItem {
@@ -65,6 +91,7 @@ export interface BrowserTtsItem {
   text: string;
   rate?: number;
   pitch?: number;
+  avatarState?: AudioPlanAvatarHint;
 }
 
 export type AudioPlanItem = PauseItem | SilenceItem | AssetItem | DynamicTtsItem | BrowserTtsItem;
@@ -80,16 +107,17 @@ function toFixedPhraseItem(
   text: string,
   phraseId: string | undefined,
   method: AudioItemMethod,
-  preset: { rate: number; pitch: number }
+  preset: { rate: number; pitch: number },
+  avatarState: AudioPlanAvatarHint
 ): AudioPlanItem | null {
   if (method === 'skip') return null;
   if (method === 'asset' && phraseId) {
-    return { type: 'asset', phraseId, fallbackText: text, rate: preset.rate, pitch: preset.pitch };
+    return { type: 'asset', phraseId, fallbackText: text, rate: preset.rate, pitch: preset.pitch, avatarState };
   }
   if (method === 'dynamic_tts') {
-    return { type: 'dynamic_tts', text, rate: preset.rate, pitch: preset.pitch };
+    return { type: 'dynamic_tts', text, rate: preset.rate, pitch: preset.pitch, avatarState };
   }
-  return { type: 'browser_tts', text, rate: preset.rate, pitch: preset.pitch };
+  return { type: 'browser_tts', text, rate: preset.rate, pitch: preset.pitch, avatarState };
 }
 
 /**
@@ -121,10 +149,11 @@ export function buildAudioPlan(
         : 'TECHNICAL_QUESTION';
     const preset = VOICE_DYNAMICS_BY_SEGMENT_CATEGORY[category];
     const method = routing.question ?? 'browser_tts';
+    const avatarState = presentationPlan.avatarStateHint;
     items.push(
       method === 'dynamic_tts'
-        ? { type: 'dynamic_tts', text: questionText, rate: preset.rate, pitch: preset.pitch }
-        : { type: 'browser_tts', text: questionText, rate: preset.rate, pitch: preset.pitch }
+        ? { type: 'dynamic_tts', text: questionText, rate: preset.rate, pitch: preset.pitch, avatarState }
+        : { type: 'browser_tts', text: questionText, rate: preset.rate, pitch: preset.pitch, avatarState }
     );
   };
 
@@ -140,7 +169,8 @@ export function buildAudioPlan(
       presentationPlan.acknowledgementText,
       presentationPlan.acknowledgementPhraseId,
       routing.acknowledgement ?? 'browser_tts',
-      VOICE_DYNAMICS_BY_SEGMENT_CATEGORY[ackCategory]
+      VOICE_DYNAMICS_BY_SEGMENT_CATEGORY[ackCategory],
+      presentationPlan.avatarStateHint
     );
     if (ackItem) items.push(ackItem);
   }
@@ -152,7 +182,8 @@ export function buildAudioPlan(
       presentationPlan.transitionText,
       presentationPlan.transitionPhraseId,
       routing.transition ?? 'browser_tts',
-      VOICE_DYNAMICS_BY_SEGMENT_CATEGORY.NEUTRAL_ACK
+      VOICE_DYNAMICS_BY_SEGMENT_CATEGORY.NEUTRAL_ACK,
+      presentationPlan.avatarStateHint
     );
     if (transitionItem) items.push(transitionItem);
   }

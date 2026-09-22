@@ -8,16 +8,33 @@ const INTERVIEWER_IMAGE = '/src/assets/media/interviewer-idle.png';
 interface InterviewAvatarProps {
   currentState: AvatarState;
   className?: string;
+  /**
+   * Phase 10C — optional, purely cosmetic scheduling output from
+   * `useAvatarPresentationController`/`utils/microBehaviorScheduler.ts`.
+   * No visual asset exists for `BLINK`/`DISTRACTED_LOOK` today, so only
+   * `SMALL_NOD` gets a real (subtle, CSS-only, asset-free) treatment here;
+   * the others are honestly scheduled but not yet visually realized.
+   * Omitting this prop entirely preserves the exact pre-Phase-10 contract.
+   */
+  currentMicroBehavior?: 'SMALL_NOD' | 'BLINK' | 'DISTRACTED_LOOK' | null;
 }
 
 export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
   currentState,
   className = '',
+  currentMicroBehavior = null,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [showVideo, setShowVideo] = useState(false);
   const [mediaError, setMediaError] = useState(false);
+  // Phase 10B — distinct from `mediaError` (missing/corrupt file, permanent):
+  // this tracks a rejected `play()` call (autoplay policy, transient) for
+  // the CURRENT attempt only, so a failed play falls back to the idle image
+  // instead of leaving the video element visible-but-frozen/silent, which
+  // would look like the avatar is mid-speech when nothing is playing.
+  const [videoPlaybackBlocked, setVideoPlaybackBlocked] = useState(false);
+  const [nodPulse, setNodPulse] = useState(false);
 
   // Preload video on component mount
   useEffect(() => {
@@ -42,12 +59,20 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
   // Control video playback based on state
   useEffect(() => {
     const shouldPlayVideo = currentState === AvatarState.SPEAKING;
+    // Every fresh attempt to show the video starts unblocked — a previous
+    // rejection must never permanently pin the avatar to the idle fallback
+    // once a NEW SPEAKING span begins.
+    if (shouldPlayVideo) setVideoPlaybackBlocked(false);
     setShowVideo(shouldPlayVideo);
 
     if (videoRef.current && isVideoLoaded) {
       if (shouldPlayVideo) {
         videoRef.current.play().catch(err => {
           console.warn('Video play failed:', err);
+          // Autoplay-blocked (or any other rejection): fall back to the
+          // static idle image for THIS attempt rather than leaving a
+          // paused/silent video element visually presented as "speaking".
+          setVideoPlaybackBlocked(true);
         });
       } else {
         videoRef.current.pause();
@@ -55,6 +80,20 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
       }
     }
   }, [currentState, isVideoLoaded]);
+
+  // SMALL_NOD is the one micro-behavior with a real, honest, asset-free
+  // visual today — a brief, subtle vertical nudge on the existing idle
+  // image. BLINK/DISTRACTED_LOOK intentionally render nothing (see the
+  // `currentMicroBehavior` prop doc above) — an unconvincing half-effect
+  // would be worse than doing nothing, per this phase's explicit guidance.
+  useEffect(() => {
+    if (currentMicroBehavior !== 'SMALL_NOD') return undefined;
+    setNodPulse(true);
+    const timer = window.setTimeout(() => setNodPulse(false), 550);
+    return () => window.clearTimeout(timer);
+  }, [currentMicroBehavior]);
+
+  const effectiveShowVideo = showVideo && !videoPlaybackBlocked;
 
   // Presentation-only: a compact video-call-style state indicator overlaid
   // on the media itself. Does not touch avatar/interview state logic.
@@ -80,7 +119,7 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
     <div className={`relative w-full h-full bg-gray-900 overflow-hidden ${className}`}>
       {!mediaError ? (
         <>
-          {/* Video - shown when SPEAKING */}
+          {/* Video - shown when SPEAKING and actually playing */}
           <video
             ref={videoRef}
             src={INTERVIEWER_VIDEO}
@@ -88,20 +127,20 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
             muted
             playsInline
             className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
-              showVideo ? 'opacity-100' : 'opacity-0'
+              effectiveShowVideo ? 'opacity-100' : 'opacity-0'
             }`}
-            style={{ display: showVideo ? 'block' : 'none' }}
+            style={{ display: effectiveShowVideo ? 'block' : 'none' }}
           />
 
-          {/* Static Image - shown when NOT speaking */}
+          {/* Static Image - shown whenever the video isn't (not speaking, OR play() was rejected) */}
           <img
             src={INTERVIEWER_IMAGE}
             alt="Interviewer"
             onError={() => setMediaError(true)}
-            className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
-              !showVideo ? 'opacity-100' : 'opacity-0'
-            }`}
-            style={{ display: !showVideo ? 'block' : 'none' }}
+            className={`absolute inset-0 w-full h-full object-cover object-center transition-all duration-300 ${
+              !effectiveShowVideo ? 'opacity-100' : 'opacity-0'
+            } ${nodPulse ? 'translate-y-1' : 'translate-y-0'}`}
+            style={{ display: !effectiveShowVideo ? 'block' : 'none' }}
           />
         </>
       ) : (

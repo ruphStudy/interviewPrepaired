@@ -17,7 +17,7 @@ import { getLatencyTier } from '../config/latencyTiers';
  * State chain (happy path):
  *   PRE_START -> WELCOME -> ASKING_QUESTION -> LISTENING -> ANSWER_FINALIZING
  *   -> ACKNOWLEDGING -> [THINKING_SHORT] -> [THINKING_LONG] -> PREPARING_QUESTION
- *   -> QUESTION_READY -> ASKING_QUESTION -> LISTENING -> ... -> COMPLETED
+ *   -> QUESTION_READY -> ASKING_QUESTION -> LISTENING -> ... -> CLOSING -> COMPLETED
  * ERROR_RECOVERY is reachable from any waiting/preparing state.
  *
  * Staleness guard: every event that resumes after an async gap (a TTS
@@ -28,6 +28,30 @@ import { getLatencyTier } from '../config/latencyTiers';
  * response for an abandoned question, or a cancelled utterance, from ever
  * moving the state machine. Generation ids are minted by the hook (a
  * monotonic ref counter, not persisted, not sent to the backend).
+ *
+ * Phase 10A — `CLOSING`: before this phase, a successful "isCompleted"
+ * submit jumped straight to `COMPLETED`, then `InterviewScreen.tsx` spoke
+ * three closing phrases (thankYou/congratulations/reportReady) WHILE
+ * already in `COMPLETED` — since `presentationStateToAvatarState` maps
+ * `COMPLETED` to the static `AvatarState.COMPLETED` (not `SPEAKING`), the
+ * avatar showed its idle-family visual for several seconds of audible
+ * narration. `CLOSING` is a real, distinct, additive state that sits
+ * between the completed submit and the terminal `COMPLETED`: it maps to
+ * `AvatarState.SPEAKING` (correct — audio is genuinely playing) and only
+ * advances to `COMPLETED` once the caller explicitly reports the closing
+ * narration has finished (`CLOSING_SPOKEN`), mirroring the exact
+ * generation-guarded "onEnd -> dispatch" pattern `QUESTION_SPOKEN` already
+ * uses for `ASKING_QUESTION -> LISTENING`.
+ *
+ * Phase 10A — `sessionGeneration`: a monotonic counter bumped only by
+ * `RESET_TO_PRE_START` (i.e. loading a genuinely new/different interview
+ * session — see the effect in `InterviewScreen.tsx` that calls
+ * `resetToPreStart()` whenever `interviewId`/the loaded session changes).
+ * Unlike `requestGeneration`/`questionGeneration` (which legitimately
+ * change on every single question within the SAME interview), this is the
+ * one counter that stays fixed for an entire interview — exactly the
+ * session boundary the Phase 10C micro-behavior scheduler needs to reset
+ * `DISTRACTED_LOOK`'s per-session budget on, and nothing finer-grained.
  */
 
 export enum PresentationState {
@@ -42,6 +66,7 @@ export enum PresentationState {
   PREPARING_QUESTION = 'PREPARING_QUESTION',
   QUESTION_READY = 'QUESTION_READY',
   ERROR_RECOVERY = 'ERROR_RECOVERY',
+  CLOSING = 'CLOSING',
   COMPLETED = 'COMPLETED',
 }
 
@@ -70,6 +95,8 @@ export interface PresentationReducerState {
   waitStartedAt: number | null;
   /** Last observed elapsed wait time, for consumers that want to render it. */
   elapsedMs: number;
+  /** Bumped only by RESET_TO_PRE_START — see this file's header. */
+  sessionGeneration: number;
 }
 
 export type PresentationAction =
@@ -88,7 +115,8 @@ export type PresentationAction =
   | { type: 'QUESTION_TEXT_AVAILABLE'; requestGeneration: number; questionGeneration: number }
   | { type: 'SUBMIT_FAILED'; requestGeneration: number }
   | { type: 'RESET_FOR_QUESTION'; questionGeneration: number }
-  | { type: 'RESET_TO_PRE_START' };
+  | { type: 'RESET_TO_PRE_START' }
+  | { type: 'CLOSING_SPOKEN'; requestGeneration: number };
 
 const WAITING_STATES = new Set<PresentationState>([
   PresentationState.ACKNOWLEDGING,
@@ -113,6 +141,7 @@ export function createInitialPresentationState(): PresentationReducerState {
     questionGeneration: 0,
     waitStartedAt: null,
     elapsedMs: 0,
+    sessionGeneration: 0,
   };
 }
 
@@ -197,7 +226,9 @@ export function presentationReducer(
       if (!WAITING_STATES.has(state.presentationState)) return state;
       if (action.requestGeneration !== state.requestGeneration) return state; // stale response for an abandoned submit
       if (action.outcome === 'completed') {
-        return { ...state, presentationState: PresentationState.COMPLETED, waitStartedAt: null };
+        // Phase 10A: CLOSING, not COMPLETED directly — the caller still has
+        // closing narration to speak; see this file's header.
+        return { ...state, presentationState: PresentationState.CLOSING, waitStartedAt: null };
       }
       return {
         ...state,
@@ -238,7 +269,17 @@ export function presentationReducer(
     }
 
     case 'RESET_TO_PRE_START': {
-      return createInitialPresentationState();
+      return { ...createInitialPresentationState(), sessionGeneration: state.sessionGeneration + 1 };
+    }
+
+    case 'CLOSING_SPOKEN': {
+      // Mirrors QUESTION_SPOKEN's exact shape: only valid from the one state
+      // it terminates, and only for the still-current request generation —
+      // a stale closing-narration `onEnd` (component already unmounted/
+      // navigated away, or a new session started) is a silent no-op.
+      if (state.presentationState !== PresentationState.CLOSING) return state;
+      if (action.requestGeneration !== state.requestGeneration) return state;
+      return { ...state, presentationState: PresentationState.COMPLETED };
     }
 
     default:
@@ -269,6 +310,10 @@ export function presentationStateToAvatarState(
       return AvatarState.IDLE;
     case PresentationState.ERROR_RECOVERY:
       return AvatarState.IDLE;
+    case PresentationState.CLOSING:
+      // Closing narration is genuinely playing — same treatment as
+      // WELCOME/ASKING_QUESTION, not the static COMPLETED visual.
+      return AvatarState.SPEAKING;
     case PresentationState.COMPLETED:
       return AvatarState.COMPLETED;
     default:
@@ -300,6 +345,11 @@ export function presentationStateToLegacyPhase(presentationState: PresentationSt
       // InterviewScreen.tsx already renders (submissionError + Start
       // Answer/Type Answer) rather than a second error surface.
       return 'LISTENING';
+    case PresentationState.CLOSING:
+      // Same completion screen as COMPLETED (the legacy phase union gets no
+      // new value — additive-only) — only the AVATAR's video/state changes
+      // between CLOSING and COMPLETED, not this JSX branch.
+      return 'COMPLETED';
     case PresentationState.COMPLETED:
       return 'COMPLETED';
     default:
@@ -310,6 +360,8 @@ export function presentationStateToLegacyPhase(presentationState: PresentationSt
 export interface UseInterviewPresentationStateReturn {
   presentationState: PresentationState;
   elapsedMs: number;
+  /** Bumped only when a genuinely new interview session is loaded (resetToPreStart) — see this file's header. */
+  sessionGeneration: number;
   /** Current question generation id — pass to isQuestionCurrent() from any async callback before it mutates state. */
   currentQuestionGeneration: () => number;
   /** Current request generation id — pass to isRequestCurrent() from any async callback before it mutates state. */
@@ -327,6 +379,8 @@ export interface UseInterviewPresentationStateReturn {
   submitFailed: (requestGeneration: number) => void;
   resetForQuestion: () => number;
   resetToPreStart: () => void;
+  /** Reports the CLOSING narration (thankYou/congratulations/reportReady) has finished speaking — advances CLOSING -> COMPLETED. Generation-guarded like every other async-resuming action here. */
+  closingSpoken: (requestGeneration: number) => void;
 }
 
 /**
@@ -443,9 +497,14 @@ export function useInterviewPresentationState(): UseInterviewPresentationStateRe
     dispatch({ type: 'RESET_TO_PRE_START' });
   }, []);
 
+  const closingSpoken = useCallback((requestGeneration: number) => {
+    dispatch({ type: 'CLOSING_SPOKEN', requestGeneration });
+  }, []);
+
   return {
     presentationState: state.presentationState,
     elapsedMs: state.elapsedMs,
+    sessionGeneration: state.sessionGeneration,
     currentQuestionGeneration: () => questionGenRef.current,
     currentRequestGeneration: () => requestGenRef.current,
     isQuestionCurrent,
@@ -461,5 +520,6 @@ export function useInterviewPresentationState(): UseInterviewPresentationStateRe
     submitFailed,
     resetForQuestion,
     resetToPreStart,
+    closingSpoken,
   };
 }
