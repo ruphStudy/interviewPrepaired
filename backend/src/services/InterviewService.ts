@@ -46,6 +46,7 @@ import InstituteStudentInterviewAssignment from '../models/InstituteStudentInter
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
 import { OperationalJobType } from '../constants/operationalJob';
 import { TransientOperationalError } from '../utils/operationalError';
+import { recordEvent, recordMoveDecisionEvents } from './InterviewConversationAnalyticsService';
 
 /** Same validity rule the frontend/report/PDF must all agree on — never treat a stringified "undefined"/"null"/placeholder/empty value as a real expected answer. */
 function isValidModelAnswer(value: unknown): value is string {
@@ -1517,6 +1518,17 @@ export class InterviewService {
         console.log('[InterviewService] Interview saved with status: completed');
         await this.syncInstituteAssignmentOnCompletion(interview);
 
+        // Phase 13 (13A) — recorded strictly AFTER the completing save above,
+        // idempotent via the model's own partial-unique index (a retried
+        // submit for an already-completed interview is a safe no-op here).
+        await recordEvent({
+          interviewId: interview._id.toString(),
+          eventType: 'INTERVIEW_COMPLETED',
+          mode: resolveInterviewModePolicy(interview).mode,
+          phase: InterviewPhase.COMPLETED,
+          personality: resolveInterviewPersonality(interview),
+        });
+
         // Reload the interview to refresh the _original tracking
         const reloadedInterview = await Interview.findById(interview._id);
         if (!reloadedInterview) {
@@ -1532,7 +1544,14 @@ export class InterviewService {
         // Phase 11 — uploaded mode never calls the decision engine, so
         // there's no move to derive CORE/DEEP_PROBING from; it settles into
         // a fixed CORE once the welcome/first-question period is over.
+        const previousPhaseUploaded = interview.interviewPhase;
         interview.interviewPhase = InterviewPhase.CORE;
+
+        // Phase 13 (13A) — declared here (rather than inside the
+        // `if (upcoming)` block below) so the analytics call after save()
+        // can still reference the SAME synthetic move; stays undefined for
+        // the (defensive-only) case where there is no upcoming question.
+        let uploadedSyntheticMove: INextInterviewMove | undefined;
 
         const upcoming = interview.questions[interview.currentQuestion - 1];
         if (upcoming) {
@@ -1553,7 +1572,7 @@ export class InterviewService {
           // rewrite) — this is never a real decision and never influences
           // which question is shown; canonical `upcoming.questionText`
           // stays authoritative/unchanged.
-          const uploadedSyntheticMove: INextInterviewMove = {
+          uploadedSyntheticMove = {
             moveType: 'CONTINUE_BLUEPRINT',
             reasonCode: 'uploaded_sequence_fixed',
             priority: 0,
@@ -1573,6 +1592,25 @@ export class InterviewService {
           }
         }
         await interview.save();
+
+        // Phase 13 (13A) — uploaded mode never calls the real decision
+        // engine, but the phase transition (WELCOME -> CORE) and the fixed
+        // 'uploaded' questionSource are still genuine, worth-recording
+        // facts — reuses the SAME synthetic move already built above for
+        // the presentation plan, never a second decision.
+        if (uploadedSyntheticMove) {
+          await recordMoveDecisionEvents({
+            interviewId: interview._id.toString(),
+            questionNumber: interview.currentQuestion,
+            mode: resolveInterviewModePolicy(interview).mode,
+            finalMove: uploadedSyntheticMove,
+            previousPhase: previousPhaseUploaded,
+            newPhase: interview.interviewPhase,
+            answerSignal: interview.questions[currentQuestionIndex]?.answerSignal,
+            history: interview.questions,
+            personality: resolveInterviewPersonality(interview),
+          });
+        }
       } else {
         console.log(`[InterviewService] More questions remaining. Current: ${interview.currentQuestion}, Total: ${interview.totalQuestions}`);
 
@@ -1680,6 +1718,13 @@ export class InterviewService {
         );
         nextQuestion = nextQuestionResponse;
 
+        // Phase 13 (13A) — snapshot BEFORE addQuestion below mutates
+        // interview.questions, so the analytics event recorded after save
+        // observes the EXACT SAME history decideNextMove itself just read
+        // (never a post-mutation re-derivation).
+        const historyBeforeMove = interview.questions.slice();
+        const previousInterviewPhase = interview.interviewPhase;
+
         // Phase 11 — derived from finalMove (the move actually acted on,
         // post-degrade) rather than nextMove, so a validation-degraded move
         // is labeled consistently with what was actually asked. Persisted
@@ -1752,6 +1797,22 @@ export class InterviewService {
         
         // Save interview with new question and updated memory
         await interview.save();
+
+        // Phase 13 (13A) — recorded strictly AFTER the save above, from the
+        // SAME finalMove/phase/history already computed for this turn (no
+        // new decision, no re-derivation). High-volume per-turn event: a
+        // plain insert, no uniqueness constraint (see recordMoveDecisionEvents).
+        await recordMoveDecisionEvents({
+          interviewId: interview._id.toString(),
+          questionNumber: interview.currentQuestion,
+          mode: resolveInterviewModePolicy(interview).mode,
+          finalMove,
+          previousPhase: previousInterviewPhase,
+          newPhase: interview.interviewPhase,
+          answerSignal: justAnsweredQuestion?.answerSignal,
+          history: historyBeforeMove,
+          personality: resolveInterviewPersonality(interview),
+        });
       }
 
       console.log('[InterviewService] Returning response with isCompleted:', isCompleted);
@@ -1830,6 +1891,17 @@ export class InterviewService {
     // CORE/DEEP_PROBING as normal the moment a real move is decided.
     interview.interviewPhase = InterviewPhase.WARM_UP;
     await interview.save();
+
+    // Phase 13 (13A) — idempotent via the model's own partial-unique index
+    // (defense in depth on top of the `warmUpAnsweredAt` short-circuit
+    // above, which already makes this method itself a no-op on retry).
+    await recordEvent({
+      interviewId: interview._id.toString(),
+      eventType: 'WARM_UP_ANSWERED',
+      mode: resolveInterviewModePolicy(interview).mode,
+      phase: InterviewPhase.WARM_UP,
+      personality: resolveInterviewPersonality(interview),
+    });
 
     return { alreadyAnswered: false };
   }

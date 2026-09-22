@@ -17,13 +17,30 @@ interface InterviewAvatarProps {
    * Omitting this prop entirely preserves the exact pre-Phase-10 contract.
    */
   currentMicroBehavior?: 'SMALL_NOD' | 'BLINK' | 'DISTRACTED_LOOK' | null;
+  /**
+   * Phase 13 (13B) — optional, purely observational. Called at this
+   * component's OWN already-existing video-load/autoplay/fallback
+   * checkpoints (never a new classification) so a caller can batch these as
+   * client telemetry (see hooks/useClientTelemetry.ts). Omitting this prop
+   * entirely preserves the exact pre-Phase-13 contract — every call site is
+   * wrapped so a throwing callback can never affect avatar rendering.
+   */
+  onTelemetryEvent?: (eventType: string, data?: Record<string, string | number | boolean>) => void;
 }
 
 export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
   currentState,
   className = '',
   currentMicroBehavior = null,
+  onTelemetryEvent,
 }) => {
+  const emitTelemetry = (eventType: string, data?: Record<string, string | number | boolean>) => {
+    try {
+      onTelemetryEvent?.(eventType, data);
+    } catch {
+      // Telemetry must never affect avatar rendering/playback.
+    }
+  };
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [showVideo, setShowVideo] = useState(false);
@@ -44,6 +61,7 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
       const handleError = () => {
         console.warn('Video failed to load, using fallback');
         setMediaError(true);
+        emitTelemetry('AVATAR_VIDEO_LOAD_FAILED');
       };
 
       videoRef.current.addEventListener('canplaythrough', handleCanPlay);
@@ -73,6 +91,8 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
           // static idle image for THIS attempt rather than leaving a
           // paused/silent video element visually presented as "speaking".
           setVideoPlaybackBlocked(true);
+          emitTelemetry('AVATAR_AUTOPLAY_BLOCKED', { reason: err?.name ? String(err.name) : 'unknown' });
+          emitTelemetry('AVATAR_FALLBACK_USED', { fallbackType: 'autoplay_blocked' });
         });
       } else {
         videoRef.current.pause();
@@ -87,10 +107,17 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
   // `currentMicroBehavior` prop doc above) — an unconvincing half-effect
   // would be worse than doing nothing, per this phase's explicit guidance.
   useEffect(() => {
+    if (!currentMicroBehavior) return undefined;
+    // Phase 13 (13B) — observes the ALREADY-selected micro-behavior
+    // (utils/microBehaviorScheduler.ts's own output, passed down via
+    // useAvatarPresentationController) — never a second selection/
+    // classification of its own.
+    emitTelemetry('MICRO_BEHAVIOR_TRIGGERED', { type: currentMicroBehavior });
     if (currentMicroBehavior !== 'SMALL_NOD') return undefined;
     setNodPulse(true);
     const timer = window.setTimeout(() => setNodPulse(false), 550);
     return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMicroBehavior]);
 
   const effectiveShowVideo = showVideo && !videoPlaybackBlocked;
@@ -136,7 +163,10 @@ export const InterviewAvatar: React.FC<InterviewAvatarProps> = ({
           <img
             src={INTERVIEWER_IMAGE}
             alt="Interviewer"
-            onError={() => setMediaError(true)}
+            onError={() => {
+              setMediaError(true);
+              emitTelemetry('AVATAR_FALLBACK_USED', { fallbackType: 'media_missing' });
+            }}
             className={`absolute inset-0 w-full h-full object-cover object-center transition-all duration-300 ${
               !effectiveShowVideo ? 'opacity-100' : 'opacity-0'
             } ${nodPulse ? 'translate-y-1' : 'translate-y-0'}`}

@@ -17,7 +17,9 @@ import {
   type PredictiveBranch,
   type PredictiveBranchQuestionContext,
 } from '../utils/predictiveBranches';
-import { buildAudioPlan, splitLeadInAndQuestion } from '../utils/audioPlanBuilder';
+import { buildAudioPlan, splitLeadInAndQuestion, type AudioPlanItem } from '../utils/audioPlanBuilder';
+import { useClientTelemetry } from '../hooks/useClientTelemetry';
+import { getLatencyTier } from '../config/latencyTiers';
 import {
   PlayCircle,
   Mic,
@@ -162,6 +164,27 @@ export const InterviewScreen: React.FC = () => {
     sessionGeneration,
     currentPresentationType,
   });
+
+  // Phase 13 (13B) — batched, fire-and-forget client telemetry. `record`
+  // never blocks/throws into the interview flow (see useClientTelemetry.ts);
+  // every call site below is purely observational.
+  const telemetry = useClientTelemetry(interviewId);
+
+  // Phase 13 (13B) — observes `useAvatarPresentationController`'s ALREADY-
+  // computed `avatarState` (never a second derivation) purely to batch its
+  // transitions as telemetry. Skips the very first render (avatarState
+  // starts at its own initial value with nothing to compare against).
+  const previousAvatarStateRef = useRef<typeof avatarState | undefined>(undefined);
+  useEffect(() => {
+    if (previousAvatarStateRef.current !== undefined && previousAvatarStateRef.current !== avatarState) {
+      telemetry.record('AVATAR_STATE_CHANGED', {
+        questionNumber: currentQuestionNumber || undefined,
+        data: { from: String(previousAvatarStateRef.current), to: String(avatarState) },
+      });
+    }
+    previousAvatarStateRef.current = avatarState;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatarState]);
 
   // Phase 7C — recompute bounded speculative branches whenever Phase 2's
   // already-debounced detectedConcepts (or the current question's known
@@ -312,14 +335,45 @@ export const InterviewScreen: React.FC = () => {
       const { leadIn } = splitLeadInAndQuestion(plan);
 
       if (leadIn.length > 0) {
-        const outcome = await audioPlaybackQueue.play(leadIn, { isCurrent, speak, locale: lang });
-        if (outcome === 'cancelled') return;
+        // Phase 13 (13B) — observes useAudioPlaybackQueue's OWN existing
+        // item-boundary hooks (never a second TTS-outcome classification).
+        // `asset`/`dynamic_tts` items always honestly degrade to browser
+        // speech internally (see AudioRoutingService.ts/executeAudioPlan's
+        // own header — no real provider exists), so those are reported as
+        // TTS_BROWSER_FALLBACK; a genuine `browser_tts` item (the routing
+        // this app actually uses today) is reported as a real
+        // started/completed pair.
+        const describeItem = (item: AudioPlanItem): { eventType: 'TTS_PLAYBACK_STARTED' | 'TTS_PLAYBACK_COMPLETED' | 'TTS_BROWSER_FALLBACK' | null; data?: Record<string, string> } => {
+          if (item.type === 'asset') return { eventType: 'TTS_BROWSER_FALLBACK', data: { fallbackType: 'asset_unavailable' } };
+          if (item.type === 'dynamic_tts') return { eventType: 'TTS_BROWSER_FALLBACK', data: { fallbackType: 'no_dynamic_provider', cacheHit: 'false' } };
+          if (item.type === 'browser_tts') return { eventType: 'TTS_PLAYBACK_STARTED' };
+          return { eventType: null };
+        };
+        const outcome = await audioPlaybackQueue.play(leadIn, {
+          isCurrent,
+          speak,
+          locale: lang,
+          onItemStart: (item) => {
+            const described = describeItem(item);
+            if (described.eventType) telemetry.record(described.eventType, { questionNumber: currentQuestionNumber || undefined, data: described.data });
+          },
+          onItemEnd: (item) => {
+            if (item.type === 'browser_tts') telemetry.record('TTS_PLAYBACK_COMPLETED', { questionNumber: currentQuestionNumber || undefined });
+          },
+        });
+        if (outcome === 'cancelled') {
+          // Phase 13 (13B) — observes executeAudioPlan's OWN existing
+          // isCurrent()-false early-return (a generation the candidate has
+          // since moved past) — never a new staleness check of its own.
+          telemetry.record('STALE_AUDIO_PLAN_DISCARDED', { questionNumber: currentQuestionNumber || undefined });
+          return;
+        }
       }
       if (!isCurrent()) return;
 
       await askCurrentQuestion(presentation.spokenQuestionText || fallbackQuestionText);
     },
-    [speak, askCurrentQuestion, isRequestCurrent, audioPlaybackQueue.play]
+    [speak, askCurrentQuestion, isRequestCurrent, audioPlaybackQueue.play, telemetry.record, currentQuestionNumber]
   );
 
   // Phase 11 — `interviewData.presentation` is the server-driven welcome
@@ -456,12 +510,24 @@ export const InterviewScreen: React.FC = () => {
 
     const attemptSubmit = async (attempt: number): Promise<void> => {
       try {
+        // Phase 13 (13B) — `performance.now()` (monotonic, client-only) on
+        // both sides of the ONE opaque server round-trip; this deliberately
+        // never attempts to attribute sub-durations inside the server call
+        // (per the master prompt's "measure this whole span as ONE
+        // client-side duration" rule) and never mixes this with any
+        // server-reported timestamp.
+        const roundTripStartedAt = performance.now();
         const response = await interviewApi.submitAnswer({
           interviewId,
           answer: normalizedAnswer,
           duration,
           questionNumber: currentQuestionNumber,
           detectedConcepts: submittedDetectedConcepts && submittedDetectedConcepts.length > 0 ? submittedDetectedConcepts : undefined,
+        });
+        const roundTripMs = performance.now() - roundTripStartedAt;
+        telemetry.record('ANSWER_ROUND_TRIP_MEASURED', {
+          questionNumber: currentQuestionNumber || undefined,
+          data: { durationMs: Math.round(roundTripMs), latencyTier: getLatencyTier(roundTripMs).tier, attempt },
         });
 
         if (!isMountedRef.current || !isRequestCurrent(requestGeneration)) return;
@@ -554,6 +620,9 @@ export const InterviewScreen: React.FC = () => {
           // away. Generation-guarded like every other resumed-after-await
           // action here — a late/stale call is a silent no-op.
           if (isMountedRef.current && isRequestCurrent(requestGeneration)) closingSpoken(requestGeneration);
+          // Phase 13 (13B) — flush any still-buffered telemetry before
+          // navigating away; best-effort/fire-and-forget, never awaited.
+          telemetry.flush();
           if (isMountedRef.current) window.setTimeout(() => navigate(`/report/${interviewId}`), 800);
           return;
         }
@@ -678,7 +747,15 @@ export const InterviewScreen: React.FC = () => {
 
       <div className="flex-1 w-full max-w-[1440px] mx-auto px-4 md:px-7 py-5 md:py-6 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-5 md:gap-6 min-h-0">
         <div className="card p-0 overflow-hidden flex flex-col min-h-[380px] sm:min-h-[440px] lg:min-h-0">
-          <div className="flex-1 min-h-0"><InterviewAvatar currentState={avatarState} currentMicroBehavior={currentMicroBehavior} /></div>
+          <div className="flex-1 min-h-0">
+            <InterviewAvatar
+              currentState={avatarState}
+              currentMicroBehavior={currentMicroBehavior}
+              onTelemetryEvent={(eventType, data) =>
+                telemetry.record(eventType as any, { questionNumber: currentQuestionNumber || undefined, data })
+              }
+            />
+          </div>
           <div className="px-5 py-3 border-t border-mentor-border flex items-center justify-center shrink-0"><span className={`badge ${getPhaseChipClass(phase)}`}>{getPhaseLabel(phase)}</span></div>
         </div>
 

@@ -342,6 +342,21 @@ export interface GetInterviewHistoryResponse {
   };
 }
 
+/**
+ * Phase 13 (13B) — one batched client-telemetry event (latency/TTS/avatar
+ * outcomes only — see utils/clientTelemetry.ts for the full discipline
+ * around what this never carries). Mirrors the backend's client-origin
+ * eventType allowlist (InterviewConversationAnalyticsService.
+ * CLIENT_EVENT_TYPES) as a plain string here so an older/newer frontend
+ * build can never fail to compile against a backend event-type addition.
+ */
+export interface ClientTelemetryEventPayload {
+  eventType: string;
+  questionNumber?: number;
+  occurredAt: number;
+  data?: Record<string, string | number | boolean>;
+}
+
 type InterviewApiError = Error & { code?: string; balance?: number };
 
 function preserveInterviewApiError(error: any, fallbackMessage: string): InterviewApiError {
@@ -468,6 +483,17 @@ class InterviewApiService {
     } catch (error: any) {
       throw preserveInterviewApiError(error, 'Failed to load interview history');
     }
+  }
+
+  /**
+   * Phase 13 (13B) — the ONE call site that sends batched client telemetry.
+   * Deliberately does NOT go through `preserveInterviewApiError`/the
+   * response interceptor's error-shaping: callers (see useClientTelemetry.ts)
+   * always `.catch()` this themselves and never surface it to the interview
+   * UI, so there is nothing here worth wrapping into a friendlier message.
+   */
+  async postClientTelemetry(interviewId: string, events: ClientTelemetryEventPayload[]): Promise<void> {
+    await this.api.post(`/interview/${interviewId}/client-telemetry`, { events });
   }
 }
 

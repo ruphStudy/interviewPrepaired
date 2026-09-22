@@ -18,6 +18,7 @@ import { emailDeliveryAdminService } from '../services/EmailDeliveryAdminService
 import { storageDiagnosticsService } from '../services/StorageDiagnosticsService';
 import { accountDeletionService } from '../services/AccountDeletionService';
 import { PrivacyActionAudit } from '../models/PrivacyActionAudit.model';
+import { getEventTypeCountsSince, getInterviewPathSummary } from '../services/InterviewConversationAnalyticsService';
 
 /** Shared by the three usage endpoints — malformed from/to must fail clearly rather than silently produce a wrong range. */
 function parseUsageDateRange(query: Record<string, unknown>): UsageDateRange {
@@ -410,6 +411,36 @@ export const getGlobalAIUsage = catchAsync(async (req: AuthRequest, res: Respons
   const range = parseUsageDateRange(req.query as Record<string, unknown>);
   const usage = await getGlobalUsage(range);
   res.status(200).json(successResponse('Global AI usage retrieved successfully', usage));
+});
+
+// ============================================================================
+// Phase 13 (13A/13B) — read-only interview-conversation analytics. Purely
+// observational data (InterviewConversationEvent), admin-gated by the SAME
+// `protect, authorize('admin')` guard admin.routes.ts already applies to
+// every route in this file — never a candidate-facing endpoint.
+// ============================================================================
+
+/**
+ * Aggregate event-type counts across ALL interviews in the last N days.
+ * GET /api/admin/conversation-analytics/event-counts?days=7
+ */
+export const getConversationEventCountsAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const days = req.query.days !== undefined ? parseInt(req.query.days as string, 10) : 7;
+  const counts = await getEventTypeCountsSince(Number.isFinite(days) && days > 0 ? days : 7);
+  res.status(200).json(successResponse('Conversation event counts retrieved successfully', { days, counts }));
+});
+
+/**
+ * Compact, derived-on-demand interview-path summary for ONE interview.
+ * GET /api/admin/conversation-analytics/interviews/:interviewId
+ */
+export const getInterviewPathSummaryAdmin = catchAsync(async (req: AuthRequest, res: Response) => {
+  const { interviewId } = req.params;
+  const summary = await getInterviewPathSummary(interviewId);
+  if (!summary) {
+    throw new ApiError(400, 'Invalid interview ID');
+  }
+  res.status(200).json(successResponse('Interview path summary retrieved successfully', summary));
 });
 
 // ============================================================================

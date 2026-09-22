@@ -25,6 +25,8 @@ import {
   getEmailDeliveryAdmin,
   runStorageOrphanScanAdmin,
   listPrivacyAuditAdmin,
+  getConversationEventCountsAdmin,
+  getInterviewPathSummaryAdmin,
 } from '../controllers/admin.controller';
 import {
   listOperationalJobsAdmin,
@@ -79,6 +81,23 @@ router.get(
 );
 
 router.get('/usage', usageDateRangeValidation, validate, getGlobalAIUsage);
+
+// Phase 13 (13A/13B) — read-only interview-conversation/client-telemetry
+// analytics. Gated by this router's own existing `protect, authorize('admin')`
+// guard above — never a new/weaker auth check.
+router.get(
+  '/conversation-analytics/event-counts',
+  [query('days').optional().isInt({ min: 1, max: 90 }).withMessage('days must be between 1 and 90')],
+  validate,
+  getConversationEventCountsAdmin
+);
+
+router.get(
+  '/conversation-analytics/interviews/:interviewId',
+  [param('interviewId').isMongoId().withMessage('Invalid interview ID')],
+  validate,
+  getInterviewPathSummaryAdmin
+);
 
 // User Management
 router.get(

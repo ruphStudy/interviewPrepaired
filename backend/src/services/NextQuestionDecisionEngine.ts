@@ -397,7 +397,12 @@ function deriveDifficultyIntent(signal?: IAnswerSignal): DifficultyIntent {
  * index — "no more than maxFollowUpsPerQuestion follow-ups in a row before
  * forcing blueprint/coverage progression".
  */
-function countConsecutiveFollowUpFamilyMoves(history: IQuestion[]): number {
+// Phase 13 (13A) — exported (additive, `function` -> unchanged body) purely
+// so InterviewConversationAnalyticsService's FOLLOW_UP_LIMIT_REACHED event
+// can reuse this EXACT same predicate the engine's own
+// `buildFollowUpCandidates`/`buildScenarioCandidates` hard cap already uses,
+// rather than re-implementing/guessing an equivalent check at the call site.
+export function countConsecutiveFollowUpFamilyMoves(history: IQuestion[]): number {
   let streak = 0;
   for (let i = history.length - 1; i >= 0; i--) {
     const decision = history[i].decision;

@@ -33,8 +33,10 @@ import {
 } from './NextQuestionDecisionEngine';
 import { conversationHumanizerService } from './ConversationHumanizerService';
 import { ConversationPresentationPlan } from '../constants/conversationHumanizer';
+import { INextInterviewMove } from '../constants/nextQuestionDecision';
 import { resolveInterviewModePolicy, resolveInterviewPersonality } from '../constants/interviewModePolicy';
 import { DEFAULT_LANGUAGE_CODE } from '../config/languages';
+import { recordEvent, recordMoveDecisionEvents } from './InterviewConversationAnalyticsService';
 
 const RECOVERY_CLAIM_STALE_MS = 2 * 60 * 1000;
 // Wraps the entire legacy submission chain (evaluation + memory/claim/
@@ -345,6 +347,18 @@ export class InterviewAnswerOrchestratorService {
       );
       await this.syncInstituteAssignment(freshInterview);
 
+      // Phase 13 (13A) — idempotent via the model's own partial-unique
+      // index: if the ORIGINAL request also reached InterviewService.
+      // submitAnswer's own completing branch before its response was lost,
+      // this is a safe, silent no-op rather than a duplicate row.
+      await recordEvent({
+        interviewId: freshInterview._id.toString(),
+        eventType: 'INTERVIEW_COMPLETED',
+        mode: resolveInterviewModePolicy(freshInterview).mode,
+        phase: InterviewPhase.COMPLETED,
+        personality: resolveInterviewPersonality(freshInterview),
+      });
+
       // getInterviewReport has its own idempotent COMPLETED->report recovery.
       // A report-provider failure must not turn a successfully recovered
       // answer into another failed answer submission.
@@ -413,7 +427,12 @@ export class InterviewAnswerOrchestratorService {
       };
     }
 
-    const { question: nextQuestion, tagging: recoveryTagging, interviewPhase: recoveredPhase } = await this.generateRecoveryQuestion(freshInterview);
+    // Phase 13 (13A) — snapshot BEFORE the $push below mutates
+    // freshInterview.questions server-side, so the analytics event records
+    // the EXACT SAME history generateRecoveryQuestion's own decideNextMove
+    // call just read.
+    const historyBeforeRecoveryMove = freshInterview.questions.slice();
+    const { question: nextQuestion, tagging: recoveryTagging, interviewPhase: recoveredPhase, finalMove: recoveredMove, previousPhase: previousPhaseRecovery, answerSignal: recoveredAnswerSignal } = await this.generateRecoveryQuestion(freshInterview);
     await Interview.updateOne(
       {
         _id: freshInterview._id,
@@ -435,6 +454,21 @@ export class InterviewAnswerOrchestratorService {
         $set: { currentQuestion: params.questionNumber + 1, interviewPhase: recoveredPhase },
       }
     );
+
+    // Phase 13 (13A) — recorded strictly AFTER the $push/$set above
+    // persists, from the SAME finalMove/phase/history the recovery path
+    // just computed (never a new/second decision, never re-derived).
+    await recordMoveDecisionEvents({
+      interviewId: freshInterview._id.toString(),
+      questionNumber: params.questionNumber + 1,
+      mode: resolveInterviewModePolicy(freshInterview).mode,
+      finalMove: recoveredMove,
+      previousPhase: previousPhaseRecovery,
+      newPhase: recoveredPhase,
+      answerSignal: recoveredAnswerSignal,
+      history: historyBeforeRecoveryMove,
+      personality: resolveInterviewPersonality(freshInterview),
+    });
 
     freshInterview = (await Interview.findById(freshInterview._id)) || freshInterview;
     return {
@@ -494,9 +528,18 @@ export class InterviewAnswerOrchestratorService {
    * one generated on the "happy path" (see the shared tagging test in this
    * file's own test suite).
    */
-  private async generateRecoveryQuestion(
-    interview: IInterview
-  ): Promise<{ question: QuestionResponse; tagging: QuestionTaggingFromMove & { presentation?: ConversationPresentationPlan }; interviewPhase: InterviewPhase }> {
+  private async generateRecoveryQuestion(interview: IInterview): Promise<{
+    question: QuestionResponse;
+    tagging: QuestionTaggingFromMove & { presentation?: ConversationPresentationPlan };
+    interviewPhase: InterviewPhase;
+    // Phase 13 (13A) — additive; the caller uses these (plus the history
+    // snapshot it already has) to record the SAME move-decision analytics
+    // event the happy path records, without this method needing to know
+    // anything about analytics itself.
+    finalMove: INextInterviewMove;
+    previousPhase: InterviewPhase | undefined;
+    answerSignal?: IAnswerSignal;
+  }> {
     const experienceLevel = interview.experienceLevel || mapExperienceYearsToLevel(interview.experienceYears);
     const interviewStyle = interview.interviewStyle || inferInterviewStyle(interview.topic);
     const sessionConfig = {
@@ -651,7 +694,7 @@ export class InterviewAnswerOrchestratorService {
     // above.
     const interviewPhase = deriveInterviewPhase(interview.interviewPhase, finalMove, justAnsweredQuestion?.answerSignal);
 
-    return { question: response, tagging, interviewPhase };
+    return { question: response, tagging, interviewPhase, finalMove, previousPhase: interview.interviewPhase, answerSignal: justAnsweredQuestion?.answerSignal };
   }
 
   private toQuestionResponse(question: any): QuestionResponse {

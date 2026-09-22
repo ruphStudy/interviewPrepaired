@@ -7,6 +7,8 @@ import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
 import { successResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
 import { interviewCreditService } from '../services/InterviewCreditService';
+import { recordEvent, recordClientTelemetryBatch } from '../services/InterviewConversationAnalyticsService';
+import { resolveInterviewModePolicy, resolveInterviewPersonality } from '../constants/interviewModePolicy';
 
 interface AuthRequest extends Request {
   user?: {
@@ -90,6 +92,29 @@ export class InterviewController {
 
     const creditsRemaining = await interviewCreditService.getBalance(userId);
 
+    // Phase 11 (11A) — deterministic, template-based (never AI-generated)
+    // warm-up prompt, absent for uploaded-mode interviews (skip straight
+    // from WELCOME to the fixed uploaded sequence, per the master design's
+    // own explicit instruction).
+    const warmUpPrompt = shouldOfferWarmUp(interview) ? buildWarmUpPrompt(interview) : undefined;
+
+    // Phase 13 (13A) — recorded strictly AFTER the interview is already
+    // durably created above; a genuinely once-per-interview lifecycle event
+    // (a fresh POST /start always creates a NEW interview document, so
+    // there is no meaningful "retry" that could double-fire this for the
+    // SAME interviewId — the model's own partial-unique index is defense
+    // in depth regardless). Never emitted for uploaded-mode interviews,
+    // which never receive a warmUpPrompt at all — no false/empty pair.
+    if (warmUpPrompt) {
+      await recordEvent({
+        interviewId: interview._id.toString(),
+        eventType: 'WARM_UP_PRESENTED',
+        mode: resolveInterviewModePolicy(interview).mode,
+        phase: interview.interviewPhase,
+        personality: resolveInterviewPersonality(interview),
+      });
+    }
+
     res.status(201).json(
       successResponse('Interview started successfully', {
         interview: {
@@ -114,11 +139,7 @@ export class InterviewController {
           // as submitAnswer's own `presentation` field below).
           interviewPhase: interview.interviewPhase,
           presentation: currentQuestionObj.presentation,
-          // Phase 11 (11A) — deterministic, template-based (never AI-
-          // generated) warm-up prompt, absent for uploaded-mode interviews
-          // (skip straight from WELCOME to the fixed uploaded sequence, per
-          // the master design's own explicit instruction).
-          warmUpPrompt: shouldOfferWarmUp(interview) ? buildWarmUpPrompt(interview) : undefined,
+          warmUpPrompt,
         },
         creditsRemaining,
       })
@@ -199,6 +220,26 @@ export class InterviewController {
     });
 
     res.status(200).json(successResponse('Warm-up answer recorded', { alreadyAnswered: result.alreadyAnswered }));
+  });
+
+  /**
+   * Phase 13 (13B) — the ONE endpoint the frontend's batched client
+   * telemetry (latency/TTS/avatar outcomes) reports to. Fail-open by
+   * construction (`recordClientTelemetryBatch` never throws) and always
+   * responds success regardless of what was actually recorded — the
+   * frontend caller treats this as fire-and-forget and never blocks the
+   * interview UI on it either way (see useClientTelemetry.ts).
+   */
+  public submitClientTelemetry = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    const userId = req.user?.id;
+    if (!userId) throw new ApiError(401, 'Authentication required');
+    const { id } = req.params;
+    if (!id) throw new ApiError(400, 'Interview ID is required');
+
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+    await recordClientTelemetryBatch({ interviewId: id, userId, events });
+
+    res.status(202).json(successResponse('Telemetry accepted', { accepted: true }));
   });
 
   public getSession = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {

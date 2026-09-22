@@ -175,6 +175,20 @@ router.post('/answer', protect, ...submitAnswerValidation, validate, interviewCo
 
 router.post('/:id/warmup-answer', protect, ...mongoIdValidation, ...warmUpAnswerValidation, validate, interviewController.submitWarmUpAnswer);
 
+// Phase 13 (13B) — bounded, best-effort client telemetry batch (latency/TTS/
+// avatar outcomes only; never candidate answer/question content). Minimal
+// validation only (array shape + bounded size) — deeper per-event
+// validation/allowlisting happens in recordClientTelemetryBatch itself,
+// which is fail-open by construction.
+router.post(
+  '/:id/client-telemetry',
+  protect,
+  ...mongoIdValidation,
+  body('events').isArray({ max: 50 }).withMessage('events must be an array of at most 50 items'),
+  validate,
+  interviewController.submitClientTelemetry
+);
+
 router.get('/report/:id', protect, ...mongoIdValidation, validate, interviewController.getReport);
 
 router.get('/report/:id/pdf', protect, ...mongoIdValidation, validate, interviewController.exportPDF);
