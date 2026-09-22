@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { InterviewAvatar } from '../components/InterviewAvatar/InterviewAvatar';
 import { useSpeechInterview } from '../hooks/useSpeechInterview';
+import { useAudioPlaybackQueue } from '../hooks/useAudioPlaybackQueue';
 import { interviewApi, ConversationPresentationPlan } from '../api/interviewApi';
 import { getInterviewPhrase } from '../config/interviewPhrases';
 import {
@@ -16,6 +17,7 @@ import {
   type PredictiveBranch,
   type PredictiveBranchQuestionContext,
 } from '../utils/predictiveBranches';
+import { buildAudioPlan, splitLeadInAndQuestion } from '../utils/audioPlanBuilder';
 import {
   PlayCircle,
   Mic,
@@ -30,19 +32,6 @@ import {
 
 interface LocationState {
   interview?: any;
-}
-
-/**
- * Phase 8 — a small, bounded (always <= a presentation plan's own
- * prePauseMs/betweenPauseMs, never a multi-second/artificial delay) pacing
- * pause between spoken filler phrases. This is audio pacing ONLY — it never
- * gates the question TEXT (already visible before this is ever called, per
- * Phase 7's fix) and every caller re-checks staleness immediately after it
- * resolves.
- */
-function wait(ms: number): Promise<void> {
-  if (!ms || ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 export const InterviewScreen: React.FC = () => {
@@ -121,6 +110,16 @@ export const InterviewScreen: React.FC = () => {
     onQuestionSpoken: handleQuestionSpoken,
     language: interviewData?.interviewLanguage,
   });
+
+  // Phase 9C — the single controlled queue that executes a presentation
+  // plan's lead-in (ack/pause/transition) items; see speakPresentationSequence.
+  const audioPlaybackQueue = useAudioPlaybackQueue();
+  // Cancellation on unmount — extends useSpeechInterview's own unmount
+  // cleanup (which already calls voiceService.stopSpeaking()) rather than
+  // duplicating it: this additionally retires the queue's internal play
+  // token immediately, so a pending inter-item pause can never resume and
+  // speak after the component is gone.
+  useEffect(() => () => audioPlaybackQueue.cancel(), [audioPlaybackQueue.cancel]);
 
   // Phase 7A — the InterviewAvatar's video/chip and the phase badge below it
   // are both pure derivations of the single presentation state machine;
@@ -215,18 +214,24 @@ export const InterviewScreen: React.FC = () => {
     }
   }, [currentQuestion, speak, beginAsking, presentationQuestionSpoken]);
 
-  // Phase 8 — sequences the Conversation Humanizer's presentation plan
+  // Phase 9C — executes the Conversation Humanizer's presentation plan
   // (acknowledgement -> pause -> transition -> pause -> spoken question)
   // WITHIN the same continuous ASKING_QUESTION span the caller already
-  // entered via beginAsking() before this runs; `askCurrentQuestion` (the
-  // ONE place that mints the "final" questionGeneration + calls
-  // presentationQuestionSpoken, per Phase 7) is always the last step, so
-  // the SAME staleness guard Phase 7 already built protects this too.
+  // entered via beginAsking() before this runs, via the typed
+  // `buildAudioPlan` (utils/audioPlanBuilder.ts, pure) + the new
+  // `useAudioPlaybackQueue` (extracted from Phase 8's inline sequential
+  // `await voiceService.speak(...)` calls — same externally observable
+  // behavior for en-IN, now a testable module instead of ad hoc inline
+  // logic). `askCurrentQuestion` (the ONE place that mints the "final"
+  // questionGeneration + calls presentationQuestionSpoken, per Phase 7) is
+  // always the last step regardless of how the lead-in played, so the SAME
+  // staleness guard Phase 7 already built still protects this too.
   // `presentation` is additive/optional (older cached responses simply omit
   // it): absent -> the exact pre-Phase-8 generic thank-you/transition
-  // phrase fallback; `silenceOnly` -> no lead-in at all, straight to the
-  // question (Phase 7's existing fast path); otherwise -> the humanizer's
-  // own short, neutral phrases, never the two combined.
+  // phrase fallback (unchanged, not part of buildAudioPlan's scope);
+  // `silenceOnly` -> no lead-in at all, straight to the question (Phase 7's
+  // existing fast path); otherwise -> the humanizer's own short, neutral
+  // phrases, never the two combined.
   const speakPresentationSequence = useCallback(
     async (
       presentation: ConversationPresentationPlan | undefined,
@@ -234,7 +239,7 @@ export const InterviewScreen: React.FC = () => {
       lang: string | undefined,
       requestGeneration: number
     ) => {
-      const isStale = () => !isMountedRef.current || !isRequestCurrent(requestGeneration);
+      const isCurrent = () => isMountedRef.current && isRequestCurrent(requestGeneration);
 
       if (!presentation) {
         try {
@@ -242,48 +247,29 @@ export const InterviewScreen: React.FC = () => {
         } catch {
           // Non-blocking — text is already visible.
         }
-        if (isStale()) return;
+        if (!isCurrent()) return;
         try {
           await speak(getInterviewPhrase('nextQuestion', lang));
         } catch {
           // Non-blocking.
         }
-        if (isStale()) return;
+        if (!isCurrent()) return;
         await askCurrentQuestion(fallbackQuestionText);
         return;
       }
 
-      if (presentation.silenceOnly) {
-        if (isStale()) return;
-        await askCurrentQuestion(presentation.spokenQuestionText || fallbackQuestionText);
-        return;
-      }
+      const plan = buildAudioPlan(presentation, fallbackQuestionText);
+      const { leadIn } = splitLeadInAndQuestion(plan);
 
-      if (presentation.acknowledgementText) {
-        await wait(presentation.prePauseMs);
-        if (isStale()) return;
-        try {
-          await speak(presentation.acknowledgementText);
-        } catch {
-          // Non-blocking.
-        }
+      if (leadIn.length > 0) {
+        const outcome = await audioPlaybackQueue.play(leadIn, { isCurrent, speak, locale: lang });
+        if (outcome === 'cancelled') return;
       }
-      if (isStale()) return;
-
-      if (presentation.transitionText) {
-        await wait(presentation.betweenPauseMs);
-        if (isStale()) return;
-        try {
-          await speak(presentation.transitionText);
-        } catch {
-          // Non-blocking.
-        }
-      }
-      if (isStale()) return;
+      if (!isCurrent()) return;
 
       await askCurrentQuestion(presentation.spokenQuestionText || fallbackQuestionText);
     },
-    [speak, askCurrentQuestion, isRequestCurrent]
+    [speak, askCurrentQuestion, isRequestCurrent, audioPlaybackQueue.play]
   );
 
   const startWelcomeSequence = useCallback(async (topic: string, questionText: string) => {
@@ -318,6 +304,10 @@ export const InterviewScreen: React.FC = () => {
 
     setSubmissionError('');
     setIsProcessing(true);
+    // A new submit attempt (first try OR a retry after a failed one) means
+    // any still-playing/queued lead-in audio from a prior, now-abandoned
+    // turn must stop immediately rather than linger into this one.
+    audioPlaybackQueue.cancel();
     beginAnswerFinalizing();
     // requestGeneration is this specific submit attempt's identity — every
     // async continuation below (including the bounded 409 retry loop) must

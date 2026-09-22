@@ -116,7 +116,11 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
     };
   }, [currentAnswer]);
 
-  const speak = useCallback((text: string, onEnd?: () => void) => {
+  // Phase 9D — `options` is additive/optional and passed straight through to
+  // `voiceService.speak`; every pre-Phase-9 call site omits it, so behavior
+  // is unchanged unless a caller (the new audio playback queue) explicitly
+  // opts in to a bounded rate/pitch preset.
+  const speak = useCallback((text: string, onEnd?: () => void, options?: { rate?: number; pitch?: number }) => {
     return new Promise<void>((resolve) => {
       setIsSpeaking(true);
       setAvatarState(AvatarState.SPEAKING);
@@ -127,7 +131,7 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
         if (onEnd) onEnd();
         onQuestionSpoken();
         resolve();
-      }, resolvedLanguage);
+      }, resolvedLanguage, options);
     });
   }, [resolvedLanguage, onQuestionSpoken]);
 

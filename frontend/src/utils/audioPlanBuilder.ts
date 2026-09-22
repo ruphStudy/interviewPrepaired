@@ -1,0 +1,185 @@
+/**
+ * Phase 9C — the typed, pure, directly-unit-testable Audio Plan builder.
+ *
+ * Extracted from Phase 8's inline `speakPresentationSequence` sequencing
+ * logic in `pages/InterviewScreen.tsx` (ack -> pause -> transition -> pause
+ * -> question), which this module now OWNS as a pure function. It never
+ * calls `voiceService`/`speak()` itself and has no side effects — the
+ * playback queue (`hooks/useAudioPlaybackQueue.ts`) is the only consumer
+ * that executes a plan.
+ *
+ * Structural guarantee: `ConversationPresentationPlan`
+ * (api/interviewApi.ts, mirroring backend/src/constants/conversationHumanizer.ts)
+ * has exactly ONE optional `acknowledgementText` field and exactly ONE
+ * optional `transitionText` field — there is no array, no list, nothing
+ * that could ever hold a second one. Since `buildAudioPlan` below reads
+ * each of those fields exactly once, it is structurally (not just
+ * conventionally) impossible for the returned plan to contain more than
+ * one acknowledgement-family item or more than one transition-family item
+ * before the question item — see `audioPlanBuilder.scratch.ts` for the
+ * property proof referenced in this phase's report.
+ *
+ * Routing: every item defaults to `'browser_tts'` — the only real,
+ * honestly-available method today (no backend TTS/asset provider exists —
+ * see `backend/src/services/AudioRoutingService.ts`'s header). An optional
+ * `AudioPlanRoutingDecisions` override exists purely so the architecture is
+ * ready to be driven by a real routing decision once one exists; it is
+ * never populated by any real call site in this phase (see this phase's
+ * report for why no manifest-fetch endpoint was added).
+ */
+
+import { ConversationPresentationPlan } from '../api/interviewApi';
+import { VOICE_DYNAMICS_BY_SEGMENT_CATEGORY } from '../config/voiceDynamics';
+
+export type AudioItemMethod = 'asset' | 'dynamic_tts' | 'browser_tts' | 'skip';
+
+export interface PauseItem {
+  type: 'pause';
+  durationMs: number;
+}
+
+export interface SilenceItem {
+  type: 'silence';
+}
+
+export interface AssetItem {
+  type: 'asset';
+  phraseId: string;
+  /** A real, retrievable audio URL — always `undefined` today (no manifest entry is ever `enabled` yet). */
+  url?: string;
+  /** The exact text to fall back to if `url` is absent/unplayable — every `AssetItem` the queue ever actually executes today degrades through this, never silently drops the segment. */
+  fallbackText: string;
+  rate?: number;
+  pitch?: number;
+}
+
+export interface DynamicTtsItem {
+  type: 'dynamic_tts';
+  text: string;
+  rate?: number;
+  pitch?: number;
+}
+
+export interface BrowserTtsItem {
+  type: 'browser_tts';
+  text: string;
+  rate?: number;
+  pitch?: number;
+}
+
+export type AudioPlanItem = PauseItem | SilenceItem | AssetItem | DynamicTtsItem | BrowserTtsItem;
+
+export interface AudioPlanRoutingDecisions {
+  acknowledgement?: AudioItemMethod;
+  transition?: AudioItemMethod;
+  /** Dynamic question text can never genuinely route to `'asset'` (it is never a fixed library phrase) — `'skip'` is also excluded since visible question text is always shown separately (Phase 7) regardless of audio. */
+  question?: 'dynamic_tts' | 'browser_tts';
+}
+
+function toFixedPhraseItem(
+  text: string,
+  phraseId: string | undefined,
+  method: AudioItemMethod,
+  preset: { rate: number; pitch: number }
+): AudioPlanItem | null {
+  if (method === 'skip') return null;
+  if (method === 'asset' && phraseId) {
+    return { type: 'asset', phraseId, fallbackText: text, rate: preset.rate, pitch: preset.pitch };
+  }
+  if (method === 'dynamic_tts') {
+    return { type: 'dynamic_tts', text, rate: preset.rate, pitch: preset.pitch };
+  }
+  return { type: 'browser_tts', text, rate: preset.rate, pitch: preset.pitch };
+}
+
+/**
+ * Builds the full ordered plan — `[pause?, ack?, pause?, transition?,
+ * question]` — for one presentation turn. `fallbackQuestionText` mirrors
+ * `speakPresentationSequence`'s existing `presentation.spokenQuestionText
+ * || fallbackQuestionText` precedent (an older/degraded plan could in
+ * principle carry an empty `spokenQuestionText`).
+ *
+ * Callers that need to preserve Phase 7's "askCurrentQuestion is always the
+ * final step that mints the question generation" contract (see
+ * `InterviewScreen.tsx`) should play everything EXCEPT the last item
+ * through the queue, then invoke `askCurrentQuestion` themselves for the
+ * question — `splitLeadInAndQuestion` below does exactly that split.
+ */
+export function buildAudioPlan(
+  presentationPlan: ConversationPresentationPlan,
+  fallbackQuestionText: string,
+  routing: AudioPlanRoutingDecisions = {}
+): AudioPlanItem[] {
+  const items: AudioPlanItem[] = [];
+  const questionText = presentationPlan.spokenQuestionText || fallbackQuestionText;
+
+  const pushQuestionItem = () => {
+    if (!questionText) return; // matches askCurrentQuestion's own `if (!question) return;` guard — no dead-air item for genuinely empty text
+    const category =
+      presentationPlan.presentationType === 'challenge' || presentationPlan.presentationType === 'contradiction_clarification'
+        ? 'CHALLENGE_SCENARIO'
+        : 'TECHNICAL_QUESTION';
+    const preset = VOICE_DYNAMICS_BY_SEGMENT_CATEGORY[category];
+    const method = routing.question ?? 'browser_tts';
+    items.push(
+      method === 'dynamic_tts'
+        ? { type: 'dynamic_tts', text: questionText, rate: preset.rate, pitch: preset.pitch }
+        : { type: 'browser_tts', text: questionText, rate: preset.rate, pitch: preset.pitch }
+    );
+  };
+
+  if (presentationPlan.silenceOnly) {
+    pushQuestionItem();
+    return items;
+  }
+
+  if (presentationPlan.acknowledgementText) {
+    if (presentationPlan.prePauseMs > 0) items.push({ type: 'pause', durationMs: presentationPlan.prePauseMs });
+    const ackCategory = presentationPlan.presentationType === 'think_then_ask' ? 'THINKING' : 'NEUTRAL_ACK';
+    const ackItem = toFixedPhraseItem(
+      presentationPlan.acknowledgementText,
+      presentationPlan.acknowledgementPhraseId,
+      routing.acknowledgement ?? 'browser_tts',
+      VOICE_DYNAMICS_BY_SEGMENT_CATEGORY[ackCategory]
+    );
+    if (ackItem) items.push(ackItem);
+  }
+
+  if (presentationPlan.transitionText) {
+    if (presentationPlan.betweenPauseMs > 0) items.push({ type: 'pause', durationMs: presentationPlan.betweenPauseMs });
+    // Transition phrases are short, neutral filler — same treatment as an acknowledgement, never a parallel preset table entry.
+    const transitionItem = toFixedPhraseItem(
+      presentationPlan.transitionText,
+      presentationPlan.transitionPhraseId,
+      routing.transition ?? 'browser_tts',
+      VOICE_DYNAMICS_BY_SEGMENT_CATEGORY.NEUTRAL_ACK
+    );
+    if (transitionItem) items.push(transitionItem);
+  }
+
+  pushQuestionItem();
+  return items;
+}
+
+/**
+ * Splits a built plan into everything BEFORE the final (question) item and
+ * the question item itself — `InterviewScreen.tsx` plays `leadIn` through
+ * `useAudioPlaybackQueue`, then always calls its own `askCurrentQuestion`
+ * for `question` (or the fallback text if the plan produced none), keeping
+ * Phase 7's exact "askCurrentQuestion is the one place that mints the final
+ * question generation" contract intact.
+ */
+export function splitLeadInAndQuestion(plan: AudioPlanItem[]): {
+  leadIn: AudioPlanItem[];
+  questionItem: DynamicTtsItem | BrowserTtsItem | undefined;
+} {
+  if (plan.length === 0) return { leadIn: [], questionItem: undefined };
+  const last = plan[plan.length - 1];
+  if (last.type === 'dynamic_tts' || last.type === 'browser_tts') {
+    return { leadIn: plan.slice(0, -1), questionItem: last };
+  }
+  // Defensive only — buildAudioPlan always ends on a dynamic_tts/browser_tts
+  // question item (or produces an empty plan for empty text), so this
+  // branch is unreachable in practice.
+  return { leadIn: plan, questionItem: undefined };
+}

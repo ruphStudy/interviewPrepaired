@@ -137,7 +137,15 @@ export class VoiceService {
   }
 
   // Text to Speech
-  speak(text: string, onEnd?: () => void, lang: string = 'en-IN'): void {
+  //
+  // Phase 9D — `options.rate`/`options.pitch` are ADDITIVE: every pre-Phase-9
+  // call site omits `options`, so `rate`/`pitch` fall back to the exact
+  // 0.9/1.0 values this method has always hardcoded — zero behavior change
+  // for any existing caller. Only the new presentation-plan audio queue
+  // (hooks/useAudioPlaybackQueue.ts, via utils/audioPlanBuilder.ts's bounded
+  // per-segment-category presets in config/voiceDynamics.ts) ever passes
+  // `options` explicitly.
+  speak(text: string, onEnd?: () => void, lang: string = 'en-IN', options?: { rate?: number; pitch?: number }): void {
     // Cancel any ongoing speech
     this.synthesis.cancel();
 
@@ -157,8 +165,8 @@ export class VoiceService {
     }
 
     // Voice parameters
-    utterance.rate = 0.9;   // Slightly slower for clarity
-    utterance.pitch = 1.0;  // Natural pitch
+    utterance.rate = options?.rate ?? 0.9;   // Slightly slower for clarity by default
+    utterance.pitch = options?.pitch ?? 1.0; // Natural pitch by default
     utterance.volume = 1.0; // Full volume
 
     // Critical fix: Ensure callback is ALWAYS called

@@ -9,6 +9,14 @@ export enum StoredFileCategory {
   GENERATED_REPORT = 'generated_report',
   EXPORT = 'export',
   OTHER = 'other',
+  // Phase 9 ("Hybrid Audio Architecture") — the confirmed seam for a FUTURE
+  // prerecorded interviewer-audio CDN (see constants/audioAssetManifest.ts's
+  // `ManifestEntry.assetPath`). Added now because it is genuinely additive
+  // (a category value + retention entry, nothing else in this codebase
+  // branches on category-exhaustiveness) so the seam exists for later —
+  // deliberately NOT exercised with any real upload/file this phase (no
+  // manifest entry ever references it; `enabled` stays `false` everywhere).
+  AUDIO_ASSET = 'audio_asset',
 }
 
 export type StorageProviderName = 's3' | 'local';
@@ -23,6 +31,8 @@ export const RETENTION_DAYS_BY_CATEGORY: Record<StoredFileCategory, number | nul
   [StoredFileCategory.GENERATED_REPORT]: 30,
   [StoredFileCategory.EXPORT]: 7,
   [StoredFileCategory.OTHER]: 30,
+  // Shared/global asset (not owned by a single user record) — retain while referenced, same treatment as KNOWLEDGE_BASE.
+  [StoredFileCategory.AUDIO_ASSET]: null,
 };
 
 export const DEFAULT_SIGNED_URL_TTL_SECONDS = 600; // 10 minutes
