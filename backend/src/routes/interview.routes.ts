@@ -121,6 +121,20 @@ const mongoIdValidation = [
   param('id').notEmpty().withMessage('ID is required').isMongoId().withMessage('Invalid ID format'),
 ];
 
+// Phase 11 (11A) — the optional warm-up exchange's answer. Deliberately a
+// separate, smaller validation set from submitAnswerValidation (no
+// questionNumber/detectedConcepts — this never touches questions[]).
+const warmUpAnswerValidation = [
+  body('answer')
+    .notEmpty()
+    .withMessage('Answer is required')
+    .isString()
+    .withMessage('Answer must be a string')
+    .isLength({ min: 1, max: 5000 })
+    .withMessage('Answer must be at most 5000 characters'),
+  body('duration').optional().isInt({ min: 0 }).withMessage('Duration must be a positive number'),
+];
+
 const historyQueryValidation = [
   query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
@@ -152,6 +166,8 @@ router.get('/:id/session', protect, ...mongoIdValidation, validate, interviewCon
 router.post('/parse-question-file', protect, questionFileUpload.single('file'), interviewController.parseQuestionFile);
 
 router.post('/answer', protect, ...submitAnswerValidation, validate, interviewController.submitAnswer);
+
+router.post('/:id/warmup-answer', protect, ...mongoIdValidation, ...warmUpAnswerValidation, validate, interviewController.submitWarmUpAnswer);
 
 router.get('/report/:id', protect, ...mongoIdValidation, validate, interviewController.getReport);
 

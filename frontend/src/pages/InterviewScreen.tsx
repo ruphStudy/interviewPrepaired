@@ -52,6 +52,19 @@ export const InterviewScreen: React.FC = () => {
   const [typedAnswer, setTypedAnswer] = useState('');
   const [useTypedAnswer, setUseTypedAnswer] = useState(false);
 
+  // Phase 11 (11A) — the optional, presentation-only warm-up exchange
+  // before question 1. `isWarmUpTurn`/`warmUpDisplayText` are deliberately
+  // NOT routed through the `useInterviewPresentationState` machine (per the
+  // master design: "no need to route it through the full
+  // ConversationPresentationPlan machinery") — they only borrow the
+  // existing mic/typed-answer UI (`showQuestion` below) and the existing
+  // `handleAnswerCompleteRef` capture path, exactly like a normal question
+  // turn, but this turn's answer goes to the separate `warmup-answer`
+  // endpoint, never to `submitAnswer` — it never touches `questions[]`/
+  // `currentQuestion`/`totalQuestions`.
+  const [isWarmUpTurn, setIsWarmUpTurn] = useState(false);
+  const [warmUpDisplayText, setWarmUpDisplayText] = useState('');
+
   // Phase 7A — single source of truth for "what is the avatar/UI doing
   // right now". `phase` (legacy JSX branching) and `avatarState` (the
   // InterviewAvatar video/chip) below are both PURE derivations of this one
@@ -177,6 +190,8 @@ export const InterviewScreen: React.FC = () => {
       setTotalQuestions(interview.totalQuestions || 5);
       resetToPreStart();
       setCurrentPresentationType(undefined);
+      setIsWarmUpTurn(false);
+      setWarmUpDisplayText('');
       return;
     }
 
@@ -208,6 +223,11 @@ export const InterviewScreen: React.FC = () => {
         setTotalQuestions(session.totalQuestions);
         resetToPreStart();
         setCurrentPresentationType(undefined);
+        // A resumed session never carries a fresh `warmUpPrompt` (the
+        // InterviewSession DTO doesn't include one) — the warm-up turn only
+        // ever happens once, immediately after a fresh startInterview.
+        setIsWarmUpTurn(false);
+        setWarmUpDisplayText('');
       } catch (err: any) {
         if (!cancelled) setLoadError(err.message || 'Failed to load interview. Please return to setup and try again.');
       }
@@ -302,25 +322,77 @@ export const InterviewScreen: React.FC = () => {
     [speak, askCurrentQuestion, isRequestCurrent, audioPlaybackQueue.play]
   );
 
+  // Phase 11 — `interviewData.presentation` is the server-driven welcome
+  // greeting attached to the FIRST question (ConversationHumanizerService.
+  // buildWelcomePresentationPlan, English-only). Additive/optional: absent
+  // whenever the humanizer didn't run (non-English/legacy/failure, or a
+  // resumed session that never carried it — see the resume-path load effect
+  // above), in which case this falls back to the EXACT pre-Phase-11
+  // hardcoded phrase sequence, unchanged. Extracted out of
+  // `startWelcomeSequence` so the warm-up turn below can speak the SAME
+  // greeting exactly once, ahead of either the warm-up prompt or question 1
+  // — never both.
+  const speakGreeting = useCallback(async (topic: string) => {
+    const presentation: ConversationPresentationPlan | undefined = interviewData?.presentation;
+    try {
+      if (presentation?.acknowledgementText) {
+        await speak(presentation.acknowledgementText);
+      } else {
+        const lang = interviewData?.interviewLanguage;
+        await speak(getInterviewPhrase('welcome', lang, { topic }));
+        await speak(getInterviewPhrase('intro', lang));
+        await speak(getInterviewPhrase('instructions', lang));
+        await speak(getInterviewPhrase('begin', lang));
+      }
+    } catch {
+      // Fall through even when TTS is unavailable — the caller always
+      // proceeds regardless.
+    }
+  }, [speak, interviewData]);
+
   const startWelcomeSequence = useCallback(async (topic: string, questionText: string) => {
     presentationStartInterview();
-    try {
-      const lang = interviewData?.interviewLanguage;
-      await speak(getInterviewPhrase('welcome', lang, { topic }));
-      await speak(getInterviewPhrase('intro', lang));
-      await speak(getInterviewPhrase('instructions', lang));
-      await speak(getInterviewPhrase('begin', lang));
-    } catch {
-      // Fall through to the persisted question even when TTS is unavailable.
-    }
-    if (isMountedRef.current) await askCurrentQuestion(questionText);
-  }, [speak, interviewData, askCurrentQuestion, presentationStartInterview]);
+    await speakGreeting(topic);
+    const presentation: ConversationPresentationPlan | undefined = interviewData?.presentation;
+    if (isMountedRef.current) await askCurrentQuestion(presentation?.spokenQuestionText || questionText);
+  }, [speakGreeting, interviewData, askCurrentQuestion, presentationStartInterview]);
+
+  // Phase 11 (11A) — the optional warm-up turn. Speaks the SAME greeting as
+  // `startWelcomeSequence`, then the server-provided, deterministic
+  // `warmUpPrompt` (a plain string — never routed through
+  // `ConversationPresentationPlan`), then hands off to the existing mic/
+  // typed-answer UI via `isWarmUpTurn`/`warmUpDisplayText`. The captured
+  // answer is intercepted at the top of `handleAnswerCompleteRef` below and
+  // sent to the separate warmup-answer endpoint — this function itself never
+  // touches `questions[]`/`currentQuestion`/`totalQuestions`.
+  const beginWarmUpTurn = useCallback(async (topic: string, warmUpPrompt: string) => {
+    presentationStartInterview();
+    await speakGreeting(topic);
+    if (!isMountedRef.current) return;
+    setIsWarmUpTurn(true);
+    setWarmUpDisplayText(warmUpPrompt);
+    // Reuses `askCurrentQuestion` (the SAME beginAsking -> speak ->
+    // presentationQuestionSpoken sequence every real question already uses)
+    // purely for its state-machine/staleness-guard mechanics — WELCOME ->
+    // ASKING_QUESTION -> LISTENING is exactly the transition that already
+    // surfaces the mic/typed-answer controls, so the warm-up turn needs no
+    // new UI state of its own. `currentQuestion` state itself is left
+    // untouched (still holds the real question 1 text) — only
+    // `warmUpDisplayText`/`isWarmUpTurn` (read at the JSX render site) show
+    // the prompt instead of the question while this turn is active.
+    await askCurrentQuestion(warmUpPrompt);
+  }, [speakGreeting, askCurrentQuestion, presentationStartInterview]);
 
   const handleStartInterview = useCallback(async () => {
     if (interviewStarted || !interviewData || !currentQuestion) return;
     setInterviewStarted(true);
-    await startWelcomeSequence(interviewData.topic, currentQuestion);
-  }, [interviewStarted, interviewData, currentQuestion, startWelcomeSequence]);
+    const warmUpPrompt: string | undefined = interviewData?.warmUpPrompt;
+    if (warmUpPrompt) {
+      await beginWarmUpTurn(interviewData.topic, warmUpPrompt);
+    } else {
+      await startWelcomeSequence(interviewData.topic, currentQuestion);
+    }
+  }, [interviewStarted, interviewData, currentQuestion, beginWarmUpTurn, startWelcomeSequence]);
 
   handleAnswerCompleteRef.current = async (answer: string, duration: number, submittedDetectedConcepts?: string[]) => {
     if (!interviewId || isProcessing) return;
@@ -329,6 +401,34 @@ export const InterviewScreen: React.FC = () => {
       // Presentation state never left LISTENING/ERROR_RECOVERY for this
       // path — nothing to transition.
       setSubmissionError('Please provide a longer answer before submitting.');
+      return;
+    }
+
+    // Phase 11 (11A) — the warm-up turn's answer never reaches
+    // `submitAnswer`/the main presentation-state reducer at all: it goes to
+    // the separate, best-effort `warmup-answer` endpoint, then hands off
+    // straight into question 1 exactly as the no-warm-up path already does.
+    // A failure here is non-critical (matches the endpoint's own best-effort
+    // memory-extraction contract) — the interview always proceeds.
+    if (isWarmUpTurn) {
+      setSubmissionError('');
+      setIsProcessing(true);
+      try {
+        await interviewApi.submitWarmUpAnswer({ interviewId, answer: normalizedAnswer, duration });
+      } catch (error) {
+        console.error('[InterviewScreen] Warm-up answer submission failed (non-critical):', error);
+      } finally {
+        if (isMountedRef.current) setIsProcessing(false);
+      }
+      if (!isMountedRef.current) return;
+      setIsWarmUpTurn(false);
+      setWarmUpDisplayText('');
+      setTypedAnswer('');
+      clearSpeechError();
+      // The greeting was already spoken once ahead of the warm-up prompt —
+      // proceed straight into question 1 (already in `currentQuestion`
+      // state), never re-greeting.
+      await askCurrentQuestion(currentQuestion);
       return;
     }
 
@@ -421,19 +521,31 @@ export const InterviewScreen: React.FC = () => {
         }
 
         if (isCompleted) {
-          // Completion has no next question to present, so Phase 8's
-          // presentation plan never applies here (the backend never builds
-          // one for this turn either) — unchanged pre-Phase-8 phrasing.
-          try {
-            await speak(getInterviewPhrase('thankYou', lang));
-          } catch {
-            // Keep progressing even if voice output fails — text is already visible above.
-          }
-          try {
-            await speak(getInterviewPhrase('congratulations', lang));
-            await speak(getInterviewPhrase('reportReady', lang));
-          } catch {
-            // Navigation to the report is the important part.
+          // Phase 11 — the server-driven, mode-aware closing sign-off
+          // (ConversationHumanizerService.buildClosingPresentationPlan,
+          // English-only) replaces the old hardcoded thankYou/
+          // congratulations/reportReady sequence whenever it's present.
+          // Additive/optional: absent -> the EXACT pre-Phase-11 fallback
+          // phrasing below, unchanged.
+          const closing = response.data.presentation;
+          if (closing?.spokenQuestionText) {
+            try {
+              await speak(closing.spokenQuestionText);
+            } catch {
+              // Keep progressing even if voice output fails — text is already visible above.
+            }
+          } else {
+            try {
+              await speak(getInterviewPhrase('thankYou', lang));
+            } catch {
+              // Keep progressing even if voice output fails — text is already visible above.
+            }
+            try {
+              await speak(getInterviewPhrase('congratulations', lang));
+              await speak(getInterviewPhrase('reportReady', lang));
+            } catch {
+              // Navigation to the report is the important part.
+            }
           }
           // Phase 10A — the closing narration has now genuinely finished:
           // advance CLOSING -> COMPLETED so the avatar's video/state (which
@@ -555,9 +667,11 @@ export const InterviewScreen: React.FC = () => {
           <span className="badge badge-info mt-1.5">{interviewData.difficulty?.charAt(0).toUpperCase() + interviewData.difficulty?.slice(1)} Level</span>
         </div>
         <div className="text-right shrink-0">
-          <p className="text-xs md:text-sm font-medium text-mentor-text-secondary mb-2">Question {currentQuestionNumber} of {totalQuestions}</p>
+          <p className="text-xs md:text-sm font-medium text-mentor-text-secondary mb-2">
+            {isWarmUpTurn ? 'Warm-up' : `Question ${currentQuestionNumber} of ${totalQuestions}`}
+          </p>
           <div className="w-28 md:w-44 bg-mentor-surface rounded-full h-1.5">
-            <div className="bg-primary-600 h-1.5 rounded-full transition-all duration-500" style={{ width: `${totalQuestions ? (currentQuestionNumber / totalQuestions) * 100 : 0}%` }} />
+            <div className="bg-primary-600 h-1.5 rounded-full transition-all duration-500" style={{ width: `${isWarmUpTurn ? 0 : totalQuestions ? (currentQuestionNumber / totalQuestions) * 100 : 0}%` }} />
           </div>
         </div>
       </header>
@@ -581,9 +695,12 @@ export const InterviewScreen: React.FC = () => {
             {phase === 'WELCOME' && <div className="h-full flex flex-col items-center justify-center text-center p-6"><Loader2 size={28} className="text-primary-600 animate-spin mb-3" /><p className="text-sm font-medium text-mentor-text-secondary">Your interviewer is getting started...</p></div>}
             {phase === 'COMPLETED' && <div className="h-full flex flex-col items-center justify-center text-center p-6"><CheckCircle2 size={40} className="text-mentor-success mb-3" /><h2 className="section-title text-lg mb-2">Interview complete</h2><p className="text-sm text-mentor-text-secondary">Opening your feedback...</p></div>}
             {showQuestion && (
-              <div className="p-5 md:p-6 h-full flex flex-col" key={`question-${currentQuestionNumber}`}>
-                <div className="flex items-center justify-between gap-3 mb-4"><h2 className="section-title">Current Question</h2><span className="badge badge-info shrink-0">Question {currentQuestionNumber} of {totalQuestions}</span></div>
-                <p className="text-[19px] md:text-[21px] font-semibold text-mentor-text leading-relaxed">{currentQuestion}</p>
+              <div className="p-5 md:p-6 h-full flex flex-col" key={isWarmUpTurn ? 'warmup' : `question-${currentQuestionNumber}`}>
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <h2 className="section-title">{isWarmUpTurn ? 'Before we begin' : 'Current Question'}</h2>
+                  <span className="badge badge-info shrink-0">{isWarmUpTurn ? 'Warm-up' : `Question ${currentQuestionNumber} of ${totalQuestions}`}</span>
+                </div>
+                <p className="text-[19px] md:text-[21px] font-semibold text-mentor-text leading-relaxed">{isWarmUpTurn ? warmUpDisplayText : currentQuestion}</p>
                 {isListening && currentAnswer && <div className="mt-5 surface-muted p-3"><p className="text-xs text-mentor-text-muted mb-1">Captured answer</p><p className="text-sm text-mentor-text-secondary">{currentAnswer}</p></div>}
               </div>
             )}

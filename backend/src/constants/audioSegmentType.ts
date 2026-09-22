@@ -31,12 +31,12 @@ export type AudioSegmentType = (typeof AUDIO_SEGMENT_TYPE_VALUES)[number];
  * `AudioSegmentType`. Every PHRASE_LIBRARY category is FIXED (a bounded,
  * pre-recordable set of short phrases) by construction — only the runtime
  * `spokenQuestionText` (and a future contextual follow-up, not built by any
- * phase yet) is ever DYNAMIC. `FIXED_WELCOME`/`FIXED_CLOSING` have no
- * PhraseCategory counterpart today (the welcome/closing sequence is driven
- * by `frontend/src/config/interviewPhrases.ts`, a separate, older, static
- * phrase table Phase 8 never touched) — they exist in this union for
- * completeness/forward-compatibility, not because anything routes through
- * them yet.
+ * phase yet) is ever DYNAMIC. Phase 11 finally wires up `FIXED_WELCOME`/
+ * `FIXED_CLOSING` to their now-real `PhraseCategory` counterparts
+ * (`phraseLibrary.ts`'s `WELCOME`/`CLOSING`) — the frontend's older, static
+ * `interviewPhrases.ts` table remains only as the absent-`presentation`
+ * fallback (see InterviewScreen.tsx's `startWelcomeSequence`/completion
+ * handling), never the routing source of truth.
  */
 export const AUDIO_SEGMENT_TYPE_BY_PHRASE_CATEGORY: Record<PhraseCategory, AudioSegmentType> = {
   NEUTRAL_ACK: 'FIXED_REACTION',
@@ -50,4 +50,6 @@ export const AUDIO_SEGMENT_TYPE_BY_PHRASE_CATEGORY: Record<PhraseCategory, Audio
   CALLBACK: 'FIXED_TRANSITION',
   CONTRADICTION_NEUTRAL: 'FIXED_TRANSITION',
   CHALLENGE: 'FIXED_TRANSITION',
+  WELCOME: 'FIXED_WELCOME',
+  CLOSING: 'FIXED_CLOSING',
 };

@@ -61,7 +61,42 @@ export interface StartInterviewResponse {
       totalQuestions: number;
       createdAt: string;
       interviewLanguage?: string;
+      // Phase 11 — additive/optional. Server-authoritative phase label
+      // ('WELCOME' for every freshly-started interview) and the welcome
+      // greeting attached to this first question (absent for non-English/
+      // failure cases — falls back to the existing hardcoded phrase
+      // sequence, same contract as `presentation` below).
+      interviewPhase?: string;
+      presentation?: ConversationPresentationPlan;
+      // Phase 11 (11A) — additive/optional. A deterministic, template-based
+      // (never AI-generated) warm-up prompt to show/speak before question 1,
+      // absent for uploaded/institute-uploaded-mode interviews (those skip
+      // straight from the welcome greeting to their fixed sequence). See
+      // `submitWarmUpAnswer` below for where the candidate's reply goes.
+      warmUpPrompt?: string;
     };
+  };
+}
+
+/**
+ * Phase 11 (11A) — the optional warm-up exchange's answer submission.
+ * Deliberately a SEPARATE request/response shape from `SubmitAnswerRequest`/
+ * `SubmitAnswerResponse` — this never touches `questions[]`/`currentQuestion`/
+ * `totalQuestions`, is never evaluated, and never goes through the decision
+ * engine (see backend InterviewService.submitWarmUpAnswer).
+ */
+export interface WarmUpAnswerRequest {
+  interviewId: string;
+  answer: string;
+  duration?: number;
+}
+
+export interface WarmUpAnswerResponse {
+  success: boolean;
+  message: string;
+  data: {
+    /** true when this call was a no-op replay of an already-recorded warm-up answer (idempotent retry). */
+    alreadyAnswered: boolean;
   };
 }
 
@@ -149,6 +184,8 @@ export interface SubmitAnswerResponse {
       totalQuestions: number;
       status: string;
       isCompleted: boolean;
+      // Phase 11 — additive/optional; absent on legacy interviews.
+      interviewPhase?: string;
     };
     evaluation: EvaluationResult;
     nextQuestion?: {
@@ -349,6 +386,19 @@ class InterviewApiService {
       return response.data;
     } catch (error: any) {
       throw preserveInterviewApiError(error, 'Failed to submit answer');
+    }
+  }
+
+  /** Phase 11 (11A) — see WarmUpAnswerRequest's own doc comment. */
+  async submitWarmUpAnswer(data: WarmUpAnswerRequest): Promise<WarmUpAnswerResponse> {
+    try {
+      const response = await this.api.post<WarmUpAnswerResponse>(`/interview/${data.interviewId}/warmup-answer`, {
+        answer: data.answer,
+        duration: data.duration,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw preserveInterviewApiError(error, 'Failed to submit warm-up answer');
     }
   }
 

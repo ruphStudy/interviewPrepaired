@@ -33,7 +33,7 @@ import { ICompetency } from '../models/InterviewBlueprint.model';
 import { IDifficultyTracking } from '../models/DifficultyTracking.model';
 import { IAnswerSignal, AnswerQuality, FollowUpOpportunityType } from '../constants/answerSignal';
 import { detectConcepts } from '../constants/conceptRegistry';
-import { QuestionSource } from '../constants/interview';
+import { QuestionSource, InterviewPhase } from '../constants/interview';
 import {
   INextInterviewMove,
   NextInterviewMoveType,
@@ -99,6 +99,69 @@ export interface Candidate {
 // ============================================================================
 
 export type CoverageBand = 'UNTOUCHED' | 'LOW' | 'PARTIAL' | 'SUFFICIENT' | 'DEEP';
+
+// ============================================================================
+// Phase 11 ("Interview Phase Controller") — `interviewPhase` derivation.
+// A THIN, DERIVED LABEL computed from the move THIS engine already decided
+// (decideNextMove runs first; this reuses its output) — never a second
+// decision system, never an input to decideNextMove itself. See
+// InterviewPhase's own doc comment (constants/interview.ts) for the full
+// state taxonomy and which states this function ever actually returns.
+// ============================================================================
+
+/**
+ * CORE vs DEEP_PROBING for the move `decideNextMove` just picked.
+ *
+ * - SWITCH_COMPETENCY / CONTINUE_BLUEPRINT are breadth-oriented by
+ *   definition -> CORE. This is also how "budget pressure forces a return
+ *   to CORE" falls out for free: `applyBudgetPressure` already discounts
+ *   every follow-up-family candidate and boosts these two under low budget,
+ *   so the move itself already reflects the budget-aware choice by the time
+ *   it reaches this function — no separate budget check needed here.
+ * - CLAIM_PROBE / CONTRADICTION_PROBE / MEMORY_CALLBACK only ever exist as
+ *   candidates once the engine's own confidence/severity/frequency gates
+ *   (buildClaimCandidates/buildContradictionCandidates/
+ *   buildMemoryCallbackCandidates) already passed — always a genuine deep
+ *   probe, never gated further here.
+ * - A CLARIFY issued for `no_answer`/`off_topic` is a recovery bridge, not
+ *   a probe into a strong answer — stays CORE regardless of the candidate
+ *   ever having been in FOLLOW_UP_FAMILY_MOVE_TYPES.
+ * - The remaining follow-up-family moves (FOLLOW_UP/DEEPEN/CLARIFY/
+ *   CHALLENGE_ASSUMPTION/SCENARIO) only count as DEEP_PROBING when this
+ *   turn's own `answerSignal.probeWorthiness` cleared the 'high' bar —
+ *   reusing Phase 2's own documented probe-worthiness signal rather than
+ *   inventing a parallel one, so a trivial keyword-only follow-up opportunity
+ *   never flips the label to DEEP_PROBING.
+ */
+export function deriveInterviewPhase(
+  currentPhase: InterviewPhase | undefined,
+  move: INextInterviewMove,
+  answerSignal?: IAnswerSignal
+): InterviewPhase {
+  if (move.moveType === 'SWITCH_COMPETENCY' || move.moveType === 'CONTINUE_BLUEPRINT') {
+    return InterviewPhase.CORE;
+  }
+
+  if (move.moveType === 'CLARIFY' && (move.reasonCode === 'no_answer' || move.reasonCode === 'off_topic')) {
+    return InterviewPhase.CORE;
+  }
+
+  if (move.moveType === 'CLAIM_PROBE' || move.moveType === 'CONTRADICTION_PROBE' || move.moveType === 'MEMORY_CALLBACK') {
+    return InterviewPhase.DEEP_PROBING;
+  }
+
+  if (FOLLOW_UP_FAMILY_MOVE_TYPES.includes(move.moveType)) {
+    return answerSignal?.probeWorthiness === 'high' ? InterviewPhase.DEEP_PROBING : InterviewPhase.CORE;
+  }
+
+  // No other moveType reaches decideNextMove's output today — fail safe to
+  // whatever's already persisted (or CORE for a never-yet-set interview)
+  // rather than silently regressing to WELCOME/WARM_UP.
+  if (currentPhase && currentPhase !== InterviewPhase.WELCOME && currentPhase !== InterviewPhase.WARM_UP) {
+    return currentPhase;
+  }
+  return InterviewPhase.CORE;
+}
 
 export function deriveCoverageBand(coveragePercentage: number, config: NextQuestionDecisionConfig = nextQuestionDecisionConfig): CoverageBand {
   if (coveragePercentage <= 0) return 'UNTOUCHED';

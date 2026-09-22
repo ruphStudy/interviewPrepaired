@@ -67,3 +67,47 @@ export const QUESTION_SOURCE_VALUES = [
 ] as const;
 
 export type QuestionSource = (typeof QUESTION_SOURCE_VALUES)[number];
+
+/**
+ * Phase 11 ("Interview Phase Controller") — a NEW, additive, server-
+ * authoritative field on `Interview` (`interview.interviewPhase`),
+ * ORTHOGONAL to `InterviewStatus` above (a `COMPLETED` interview's
+ * `interviewPhase` is `COMPLETED` too, but the two track different things:
+ * `status` is lifecycle/persistence state, `interviewPhase` is a coarse,
+ * human-readable label for "what part of the conversation are we in").
+ *
+ * This is a THIN, DERIVED LABEL — never a second decision system. It is
+ * computed from `NextQuestionDecisionEngine.decideNextMove`'s ALREADY-
+ * decided output (see `deriveInterviewPhase` in NextQuestionDecisionEngine.ts)
+ * and never influences that engine's own choice of move.
+ *
+ * - `WELCOME`: set at interview creation (`InterviewService.startInterview`
+ *   and its uploaded/institute-assignment siblings) — before the first
+ *   answer is submitted.
+ * - `WARM_UP`: reserved for a future optional interactive warm-up exchange.
+ *   Deliberately UNUSED today (see InterviewService's own header comment on
+ *   why Phase 11 scoped that specific sub-feature out) — kept in the enum
+ *   for the same "define the full taxonomy now, wire it up later" reason
+ *   `QUESTION_SOURCE_VALUES` above already documents for its own reserved
+ *   values, and the same reason phraseLibrary.ts's `DELAY_BRIDGE` category
+ *   is defined-but-not-currently-selected.
+ * - `CORE`: breadth-oriented progression (SWITCH_COMPETENCY/
+ *   CONTINUE_BLUEPRINT moves).
+ * - `DEEP_PROBING`: a genuine follow-up/claim/contradiction/memory-callback
+ *   probe that cleared the engine's own worthiness bar — never set for a
+ *   trivial follow-up.
+ * - `WRAP_UP`: reserved — see `deriveInterviewPhase`'s doc comment for why
+ *   the actually-persisted terminal value is `COMPLETED` directly rather
+ *   than a separate WRAP_UP step (the existing `isCompleted` response flag
+ *   already carries the "this is the closing turn" signal the frontend
+ *   needs, so a distinct persisted WRAP_UP state would be redundant).
+ * - `COMPLETED`: terminal — mirrors `InterviewStatus.COMPLETED`/`EVALUATED`.
+ */
+export enum InterviewPhase {
+  WELCOME = 'WELCOME',
+  WARM_UP = 'WARM_UP',
+  CORE = 'CORE',
+  DEEP_PROBING = 'DEEP_PROBING',
+  WRAP_UP = 'WRAP_UP',
+  COMPLETED = 'COMPLETED',
+}

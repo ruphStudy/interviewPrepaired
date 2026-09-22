@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { InterviewService } from '../services/InterviewService';
+import { InterviewService, buildWarmUpPrompt, shouldOfferWarmUp } from '../services/InterviewService';
 import { InterviewAnswerOrchestratorService } from '../services/InterviewAnswerOrchestratorService';
 import { PDFService } from '../services/PDFService';
 import { questionFileParserService } from '../services/QuestionFileParserService';
@@ -104,6 +104,19 @@ export class InterviewController {
           totalQuestions: interview.totalQuestions,
           createdAt: interview.createdAt,
           interviewLanguage: interview.interviewLanguage,
+          // Phase 11 — additive/optional. `interviewPhase` mirrors the
+          // server-authoritative label persisted on the interview
+          // (`WELCOME` for every freshly-started interview); `presentation`
+          // is the welcome greeting attached to this very first question
+          // (absent for non-English/failure cases, same fallback contract
+          // as submitAnswer's own `presentation` field below).
+          interviewPhase: interview.interviewPhase,
+          presentation: currentQuestionObj.presentation,
+          // Phase 11 (11A) — deterministic, template-based (never AI-
+          // generated) warm-up prompt, absent for uploaded-mode interviews
+          // (skip straight from WELCOME to the fixed uploaded sequence, per
+          // the master design's own explicit instruction).
+          warmUpPrompt: shouldOfferWarmUp(interview) ? buildWarmUpPrompt(interview) : undefined,
         },
         creditsRemaining,
       })
@@ -146,6 +159,8 @@ export class InterviewController {
           totalQuestions: result.interview.totalQuestions,
           status: result.interview.status,
           isCompleted: result.isCompleted,
+          // Phase 11 — additive, optional; absent on legacy interviews.
+          interviewPhase: result.interview.interviewPhase,
         },
         evaluation: result.evaluation,
         nextQuestion: result.nextQuestion,
@@ -156,6 +171,32 @@ export class InterviewController {
         presentation: result.presentation,
       })
     );
+  });
+
+  /**
+   * Phase 11 (11A) — the optional warm-up exchange's answer. Deliberately a
+   * SEPARATE endpoint from `submitAnswer`: see InterviewService.
+   * submitWarmUpAnswer's own doc comment for the full non-negotiable list of
+   * things this must never do (append to questions[]/consume credit/call
+   * evaluateAnswer/run the decision engine).
+   */
+  public submitWarmUpAnswer = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {
+    const userId = req.user?.id;
+    if (!userId) throw new ApiError(401, 'Authentication required');
+    const { id } = req.params;
+    if (!id) throw new ApiError(400, 'Interview ID is required');
+
+    const { answer, duration } = req.body;
+    if (!answer || typeof answer !== 'string') throw new ApiError(400, 'Missing required field: answer');
+
+    const result = await this.interviewService.submitWarmUpAnswer({
+      interviewId: id,
+      userId,
+      answer,
+      duration: typeof duration === 'number' ? duration : undefined,
+    });
+
+    res.status(200).json(successResponse('Warm-up answer recorded', { alreadyAnswered: result.alreadyAnswered }));
   });
 
   public getSession = catchAsync(async (req: AuthRequest, res: Response, _next: NextFunction) => {

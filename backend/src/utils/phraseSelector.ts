@@ -35,6 +35,11 @@ const SILENCE_WEIGHT: Record<PhraseCategory, number> = {
   NO_ANSWER: 1,
   LONG_ANSWER: 3,
   DELAY_BRIDGE: 2,
+  // Phase 11 — WELCOME/CLOSING are one-time scripted moments, never
+  // mid-interview filler: silence is never an acceptable outcome for
+  // either, unlike every category above.
+  WELCOME: 0,
+  CLOSING: 0,
 };
 
 function isOnCooldown(phrase: Phrase, recentPhraseHistory: string[]): boolean {

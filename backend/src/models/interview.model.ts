@@ -6,7 +6,7 @@ import { IClaimVerificationTracking, claimVerificationTrackingSchema, initialize
 import { IContradictionTracking, contradictionTrackingSchema, initializeContradictionTracking } from './ContradictionTracking.model';
 import { ISTARAnalysis } from './STARAnalysis.model';
 import { SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
-import { InterviewStatus, InterviewPurpose, QuestionSource, QUESTION_SOURCE_VALUES } from '../constants/interview';
+import { InterviewStatus, InterviewPurpose, QuestionSource, QUESTION_SOURCE_VALUES, InterviewPhase } from '../constants/interview';
 import {
   IAnswerSignal,
   ANSWER_QUALITY_VALUES,
@@ -300,6 +300,19 @@ export interface IInterview extends Document {
   totalQuestions: number;
   currentQuestion: number;
   status: InterviewStatus;
+  // Phase 11 — additive, optional (absent on every interview created before
+  // this feature). Server-authoritative, derived label — see InterviewPhase's
+  // own doc comment (constants/interview.ts) for what sets/reads this and why
+  // it never competes with `status` or the decision engine above.
+  interviewPhase?: InterviewPhase;
+  // Phase 11 (11A) — set once the optional warm-up exchange's answer has
+  // been recorded (InterviewService.submitWarmUpAnswer). Absent for every
+  // interview that never got/used a warm-up turn (uploaded/institute-
+  // uploaded mode, or a candidate who never answered it). The SOLE
+  // idempotency guard for that endpoint — a duplicate/retried call is a
+  // safe no-op once this is set, mirroring this phase's other retry-safety
+  // discipline.
+  warmUpAnsweredAt?: Date;
   interviewMode?: 'ai-generated' | 'uploaded';
   // Absent on interviews created before this feature — schema `default` below
   // makes those hydrate as 'en-IN', so no migration/backfill is needed.
@@ -957,6 +970,20 @@ const interviewSchema = new Schema<IInterview, IInterviewModel>(
       },
       default: InterviewStatus.CREATED,
       index: true,
+    },
+    // Phase 11 — additive/optional, no default (a legacy interview simply
+    // has this field absent, which every consumer already treats as a safe
+    // "unknown/not tracked" case, same discipline as `competencyCoverage`
+    // above having no default).
+    interviewPhase: {
+      type: String,
+      enum: { values: Object.values(InterviewPhase), message: '{VALUE} is not a valid interview phase' },
+    },
+    // Phase 11 (11A) — additive/optional, no default. See IInterview's own
+    // doc comment above for why this is the warm-up-answer endpoint's sole
+    // idempotency guard.
+    warmUpAnsweredAt: {
+      type: Date,
     },
     interviewMode: {
       type: String,

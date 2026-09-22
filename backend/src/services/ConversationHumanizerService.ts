@@ -178,6 +178,79 @@ export function deriveRecentPhraseHistory(questions: IQuestion[] | undefined, wi
   return ids;
 }
 
+// ============================================================================
+// Phase 11 — WELCOME (before the first question) and CLOSING (after the
+// final answer) presentation plans. Both reuse the EXACT SAME
+// `ConversationPresentationPlan` shape `buildPlanInternal` above already
+// produces for every mid-interview turn — no parallel type. Both are pure,
+// deterministic-given-`rng`, and never throw (mirroring
+// `buildPresentationPlan`'s own try/catch discipline) — a failure here must
+// never block interview start/completion.
+// ============================================================================
+
+/**
+ * The interview's opening greeting, attached to the FIRST question's own
+ * `presentation` field (never a separate endpoint/turn) — `acknowledgementText`
+ * carries the whole scripted opening beat (see the WELCOME category's own
+ * doc comment in phraseLibrary.ts for why it's one combined phrase rather
+ * than split across ack/transition), `spokenQuestionText` is the first
+ * question verbatim. `presentationType: 'acknowledge_then_ask'` is the
+ * SAME existing enum value a mid-interview NEUTRAL_ACK-led turn already
+ * uses — no new PresentationType needed.
+ */
+function buildWelcomePlanInternal(params: {
+  questionText: string;
+  interviewMode: HumanizerInterviewMode;
+  rng?: () => number;
+}): ConversationPresentationPlan {
+  const { questionText, interviewMode, rng = Math.random } = params;
+  const canonicalText = questionText ?? '';
+  if (!canonicalText.trim()) return safeFallbackPlan(canonicalText);
+
+  const greeting = selectPhrase('WELCOME', interviewMode, [], rng);
+  if (!greeting) return safeFallbackPlan(canonicalText);
+
+  return {
+    presentationType: 'acknowledge_then_ask',
+    acknowledgementPhraseId: greeting.phraseId,
+    acknowledgementText: greeting.text,
+    spokenQuestionText: canonicalText,
+    prePauseMs: 250,
+    betweenPauseMs: 0,
+    avatarStateHint: 'ASKING_QUESTION',
+    silenceOnly: false,
+  };
+}
+
+/**
+ * The interview's closing sign-off, returned on the SAME response that
+ * carries `isCompleted: true` (there is no next question to attach it to,
+ * unlike WELCOME). `spokenQuestionText` here holds the closing sentence
+ * itself (not a literal question) — the frontend already treats this field
+ * generically as "the primary line to speak for this turn"; reusing it here
+ * avoids inventing a parallel closing-specific type for a single string of
+ * text. `presentationType: 'closing'` is Phase 9's own reserved-but-
+ * previously-unused enum value, finally wired up here.
+ */
+function buildClosingPlanInternal(params: {
+  interviewMode: HumanizerInterviewMode;
+  recentPhraseHistory?: string[];
+  rng?: () => number;
+}): ConversationPresentationPlan {
+  const { interviewMode, recentPhraseHistory = [], rng = Math.random } = params;
+  const closing = selectPhrase('CLOSING', interviewMode, recentPhraseHistory, rng);
+  if (!closing) return safeFallbackPlan('');
+
+  return {
+    presentationType: 'closing',
+    spokenQuestionText: closing.text,
+    prePauseMs: 0,
+    betweenPauseMs: 0,
+    avatarStateHint: 'ACKNOWLEDGING',
+    silenceOnly: false,
+  };
+}
+
 export class ConversationHumanizerService {
   /**
    * Builds the presentation plan for the question that's about to be shown
@@ -206,6 +279,32 @@ export class ConversationHumanizerService {
 
   deriveRecentPhraseHistory(questions: IQuestion[] | undefined, windowSize = 8): string[] {
     return deriveRecentPhraseHistory(questions, windowSize);
+  }
+
+  /** Phase 11 — see `buildWelcomePlanInternal`. Never throws. */
+  buildWelcomePresentationPlan(params: { questionText: string; interviewMode: HumanizerInterviewMode; rng?: () => number }): ConversationPresentationPlan {
+    let canonicalTextForFallback = '';
+    try {
+      canonicalTextForFallback = params?.questionText ?? '';
+    } catch {
+      canonicalTextForFallback = '';
+    }
+    try {
+      return buildWelcomePlanInternal(params);
+    } catch (error) {
+      console.error('[ConversationHumanizerService] Failed to build welcome plan (non-critical):', error);
+      return safeFallbackPlan(canonicalTextForFallback);
+    }
+  }
+
+  /** Phase 11 — see `buildClosingPlanInternal`. Never throws. */
+  buildClosingPresentationPlan(params: { interviewMode: HumanizerInterviewMode; recentPhraseHistory?: string[]; rng?: () => number }): ConversationPresentationPlan {
+    try {
+      return buildClosingPlanInternal(params);
+    } catch (error) {
+      console.error('[ConversationHumanizerService] Failed to build closing plan (non-critical):', error);
+      return safeFallbackPlan('');
+    }
   }
 }
 

@@ -3,7 +3,7 @@ import Interview, { IEvaluation, IInterview } from '../models/interview.model';
 import InterviewAnswerRecoveryClaim from '../models/InterviewAnswerRecoveryClaim.model';
 import InstituteStudentInterviewAssignment from '../models/InstituteStudentInterviewAssignment.model';
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
-import { InterviewStatus } from '../constants/interview';
+import { InterviewStatus, InterviewPhase } from '../constants/interview';
 import { ApiError } from '../utils/ApiError';
 import { getAIService } from '../ai';
 import {
@@ -29,6 +29,7 @@ import {
   findContradictionIndexForMove,
   findMemoryItemForMove,
   QuestionTaggingFromMove,
+  deriveInterviewPhase,
 } from './NextQuestionDecisionEngine';
 import { conversationHumanizerService } from './ConversationHumanizerService';
 import { ConversationPresentationPlan, deriveHumanizerMode } from '../constants/conversationHumanizer';
@@ -173,6 +174,25 @@ export class InterviewAnswerOrchestratorService {
     return interview.status === InterviewStatus.COMPLETED || interview.status === InterviewStatus.EVALUATED;
   }
 
+  /**
+   * Phase 11 — mirrors InterviewService's own private
+   * `buildClosingPresentationPlanSafely` exactly (same English-only gate,
+   * same non-critical try/catch discipline) so a retry-recovered completion
+   * gets an indistinguishable closing plan from the happy path's.
+   */
+  private buildClosingPresentationPlanSafely(interview: IInterview): ConversationPresentationPlan | undefined {
+    const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
+    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
+    try {
+      const interviewMode = deriveHumanizerMode(interview);
+      const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
+      return conversationHumanizerService.buildClosingPresentationPlan({ interviewMode, recentPhraseHistory });
+    } catch (humanizerError) {
+      console.error('[InterviewAnswerRecovery] Closing presentation plan failed (non-critical):', humanizerError);
+      return undefined;
+    }
+  }
+
   private async replayPersistedResult(interview: IInterview, targetIndex: number): Promise<SubmitAnswerResult> {
     const isCompleted = this.isTerminal(interview);
     let nextQuestion: QuestionResponse | undefined;
@@ -188,6 +208,14 @@ export class InterviewAnswerOrchestratorService {
         // returns it unchanged, never recomputes it.
         presentation = next.presentation;
       }
+    } else {
+      // Phase 11 — a genuine retry after the ORIGINAL completing response
+      // was lost still needs the closing sign-off (this is not a plain
+      // page refresh — the frontend only reaches this path by retrying an
+      // in-flight/failed submit, and Phase 10's own client-side
+      // `closingSpoken` generation guard is what prevents any replay from
+      // re-triggering navigation/narration more than once).
+      presentation = this.buildClosingPresentationPlanSafely(interview);
     }
 
     return {
@@ -304,7 +332,9 @@ export class InterviewAnswerOrchestratorService {
     if (answeredCount >= freshInterview.totalQuestions) {
       await Interview.updateOne(
         { _id: freshInterview._id, status: InterviewStatus.IN_PROGRESS },
-        { $set: { status: InterviewStatus.COMPLETED, completedAt: new Date() } }
+        // Phase 11 — same terminal `interviewPhase` write InterviewService.
+        // submitAnswer's own completing branch makes, in the SAME update.
+        { $set: { status: InterviewStatus.COMPLETED, completedAt: new Date(), interviewPhase: InterviewPhase.COMPLETED } }
       );
       await this.syncInstituteAssignment(freshInterview);
 
@@ -322,6 +352,9 @@ export class InterviewAnswerOrchestratorService {
         interview: freshInterview,
         evaluation: (freshInterview.questions[targetIndex].evaluation || evaluation) as DynamicEvaluationResponse,
         isCompleted: true,
+        // Phase 11 — same closing sign-off the happy path attaches on its
+        // own completing response.
+        presentation: this.buildClosingPresentationPlanSafely(freshInterview),
       };
     }
 
@@ -353,7 +386,9 @@ export class InterviewAnswerOrchestratorService {
       }
       await Interview.updateOne(
         { _id: freshInterview._id },
-        { $set: { currentQuestion: firstUnansweredIndex + 1 } }
+        // Phase 11 — same fixed CORE phase InterviewService.submitAnswer's
+        // own uploaded-mode branch sets on every advance.
+        { $set: { currentQuestion: firstUnansweredIndex + 1, interviewPhase: InterviewPhase.CORE } }
       );
       freshInterview = (await Interview.findById(freshInterview._id)) || freshInterview;
       return {
@@ -371,7 +406,7 @@ export class InterviewAnswerOrchestratorService {
       };
     }
 
-    const { question: nextQuestion, tagging: recoveryTagging } = await this.generateRecoveryQuestion(freshInterview);
+    const { question: nextQuestion, tagging: recoveryTagging, interviewPhase: recoveredPhase } = await this.generateRecoveryQuestion(freshInterview);
     await Interview.updateOne(
       {
         _id: freshInterview._id,
@@ -387,7 +422,10 @@ export class InterviewAnswerOrchestratorService {
             ...recoveryTagging,
           },
         },
-        $set: { currentQuestion: params.questionNumber + 1 },
+        // Phase 11 — same single-write-site pairing InterviewService.
+        // submitAnswer uses (interviewPhase persisted alongside
+        // currentQuestion/the new question, never a second write).
+        $set: { currentQuestion: params.questionNumber + 1, interviewPhase: recoveredPhase },
       }
     );
 
@@ -451,7 +489,7 @@ export class InterviewAnswerOrchestratorService {
    */
   private async generateRecoveryQuestion(
     interview: IInterview
-  ): Promise<{ question: QuestionResponse; tagging: QuestionTaggingFromMove & { presentation?: ConversationPresentationPlan } }> {
+  ): Promise<{ question: QuestionResponse; tagging: QuestionTaggingFromMove & { presentation?: ConversationPresentationPlan }; interviewPhase: InterviewPhase }> {
     const experienceLevel = interview.experienceLevel || mapExperienceYearsToLevel(interview.experienceYears);
     const interviewStyle = interview.interviewStyle || inferInterviewStyle(interview.topic);
     const sessionConfig = {
@@ -598,7 +636,12 @@ export class InterviewAnswerOrchestratorService {
       console.error('[InterviewAnswerRecovery] Failed to mark claim/contradiction/memory follow-up as asked (non-critical):', markError);
     }
 
-    return { question: response, tagging };
+    // Phase 11 — same derivation InterviewService.submitAnswer's normal
+    // path uses, from the SAME finalMove/answerSignal already computed
+    // above.
+    const interviewPhase = deriveInterviewPhase(interview.interviewPhase, finalMove, justAnsweredQuestion?.answerSignal);
+
+    return { question: response, tagging, interviewPhase };
   }
 
   private toQuestionResponse(question: any): QuestionResponse {

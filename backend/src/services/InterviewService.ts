@@ -13,7 +13,7 @@ import { userSubscriptionService } from './UserSubscriptionService';
 import { interviewCreditService } from './InterviewCreditService';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
 import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
-import { InterviewStatus, InterviewPurpose, isAnswerableStatus, MAX_UPLOADED_QUESTIONS, QuestionSource } from '../constants/interview';
+import { InterviewStatus, InterviewPurpose, isAnswerableStatus, MAX_UPLOADED_QUESTIONS, QuestionSource, InterviewPhase } from '../constants/interview';
 import { blueprintService } from './BlueprintService';
 import { interviewMemoryService } from './InterviewMemoryService';
 import { createEmptyMemory } from '../models/InterviewMemory.model';
@@ -32,6 +32,7 @@ import {
   findClaimForMove,
   findContradictionIndexForMove,
   findMemoryItemForMove,
+  deriveInterviewPhase,
 } from './NextQuestionDecisionEngine';
 import { INextInterviewMove } from '../constants/nextQuestionDecision';
 import { conversationHumanizerService } from './ConversationHumanizerService';
@@ -228,6 +229,44 @@ export function buildQuestionTagging(interview: IInterview): {
     sourceReasonCode,
     difficultyAtGeneration,
   };
+}
+
+/**
+ * Phase 11 (11A) — the optional warm-up exchange's opening prompt. A cheap,
+ * DETERMINISTIC template — NEVER an AI call, NEVER free text generation —
+ * built purely from data `startInterview` already has in scope (`topic`/
+ * `roleName`/`experienceLevel`). Recomputing this (rather than persisting
+ * it) is deliberate: it is a pure function of fields already on the
+ * interview document, so `submitWarmUpAnswer` below can reconstruct the
+ * EXACT same prompt text for memory extraction without a second persisted
+ * field.
+ *
+ * Employer-mode note: this B2C `InterviewService`/`InterviewScreen`
+ * pipeline never carries `purpose: HIRING_ASSESSMENT` (that value is only
+ * ever set by the entirely separate `createEmployerHiringInterview` /
+ * `PublicEmployerInterviewInvitationService` flow, confirmed untouched by
+ * this phase — see this file's other Phase 11 comments) and this pipeline
+ * has no resume/JD context to draw on even in an employer-adjacent B2C
+ * session. There is therefore nothing here to special-case for "employer
+ * warm-up" beyond this same generic, role/topic-based template — never
+ * fabricating candidate history that doesn't exist in this pipeline.
+ */
+export function buildWarmUpPrompt(interview: { topic: string; roleName?: string; experienceLevel?: string }): string {
+  const subject = (interview.roleName || interview.topic || '').trim() || 'this role';
+  return `Before we get into the technical questions, can you briefly tell me about the kind of ${subject} work you've been doing recently?`;
+}
+
+/**
+ * Phase 11 (11A) — whether `startInterview`'s response should include a
+ * `warmUpPrompt` at all. Uploaded-mode (and institute-uploaded-mode, which
+ * also sets `interviewMode: 'uploaded'`) interviews skip the warm-up
+ * exchange entirely per the master design's own explicit instruction — they
+ * go straight from the WELCOME greeting to their fixed question sequence.
+ * A standalone, directly-testable pure function rather than inline
+ * controller logic.
+ */
+export function shouldOfferWarmUp(interview: { interviewMode?: 'ai-generated' | 'uploaded' }): boolean {
+  return interview.interviewMode !== 'uploaded';
 }
 
 export class InterviewService {
@@ -755,6 +794,11 @@ export class InterviewService {
         // Shell only — not usable until the first question is generated and
         // persisted below, at which point it transitions to IN_PROGRESS.
         status: InterviewStatus.CREATED,
+        // Phase 11 — the period before the first answer is submitted. See
+        // InterviewPhase's own doc comment for why WARM_UP (an optional
+        // interactive exchange) is deliberately not used here — this phase
+        // covers a purely presentational welcome, not a second scored turn.
+        interviewPhase: InterviewPhase.WELCOME,
         currentQuestion: 1,
         questions: [],
         competencyCoverage: initialCoverage,
@@ -820,7 +864,14 @@ export class InterviewService {
         // transiently failed, would wrongly trigger a refund for an
         // interview that had, in fact, already succeeded.
         interview.status = InterviewStatus.IN_PROGRESS;
-        const firstQuestionTagging = buildQuestionTagging(interview);
+        const firstQuestionTagging = buildQuestionTagging(interview) as ReturnType<typeof buildQuestionTagging> & { presentation?: ConversationPresentationPlan };
+        // Phase 11 — the welcome greeting rides along on the first
+        // question's own presentation plan (never a second turn/endpoint —
+        // see buildWelcomePresentationPlanSafely's doc comment).
+        firstQuestionTagging.presentation = this.buildWelcomePresentationPlanSafely({
+          interview,
+          questionText: questionResponse.question,
+        });
         await interview.addQuestion(questionResponse.question, questionResponse.expectedPoints, questionResponse.questionType, firstQuestionTagging);
 
         console.log('✅ [InterviewService] Interview started successfully with blueprint');
@@ -886,9 +937,21 @@ export class InterviewService {
       // generated mode there's no separate "shell without a question" stage,
       // so this goes straight to IN_PROGRESS (same lifecycle end state).
       status: InterviewStatus.IN_PROGRESS,
+      // Phase 11 — per the master design's own explicit guidance, uploaded
+      // mode skips the (never-built) interactive warm-up exchange entirely;
+      // it still gets a purely-presentational WELCOME greeting on question 1
+      // below, same as generated mode.
+      interviewPhase: InterviewPhase.WELCOME,
       currentQuestion: 1,
       questions,
     });
+
+    if (interview.questions[0]) {
+      interview.questions[0].presentation = this.buildWelcomePresentationPlanSafely({
+        interview,
+        questionText: interview.questions[0].questionText,
+      });
+    }
 
     await interview.save();
 
@@ -955,9 +1018,20 @@ export class InterviewService {
       interviewLanguage,
       totalQuestions: questions.length,
       status: InterviewStatus.IN_PROGRESS,
+      // Phase 11 — same welcome-only (no interactive warm-up) treatment as
+      // the personal uploaded-mode start above; institute assignment/fixed-
+      // content rules are otherwise entirely unaffected.
+      interviewPhase: InterviewPhase.WELCOME,
       currentQuestion: 1,
       questions,
     });
+
+    if (interview.questions[0]) {
+      interview.questions[0].presentation = this.buildWelcomePresentationPlanSafely({
+        interview,
+        questionText: interview.questions[0].questionText,
+      });
+    }
 
     await interview.save();
 
@@ -1094,6 +1168,46 @@ export class InterviewService {
       });
     } catch (humanizerError) {
       console.error('[InterviewService] Conversation humanizer failed (non-critical):', humanizerError);
+      return undefined;
+    }
+  }
+
+  /**
+   * Phase 11 — attached onto the FIRST question's own `presentation` field
+   * at interview creation (startInterview/startUploadedInterview/
+   * createInstituteUploadedInterview), mirroring `buildPresentationPlanSafely`'s
+   * exact same English-only gate and non-critical try/catch discipline. A
+   * humanizer failure here must never fail interview creation.
+   */
+  private buildWelcomePresentationPlanSafely(params: { interview: IInterview; questionText: string }): ConversationPresentationPlan | undefined {
+    const { interview, questionText } = params;
+    const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
+    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
+    try {
+      const interviewMode = deriveHumanizerMode(interview);
+      return conversationHumanizerService.buildWelcomePresentationPlan({ questionText, interviewMode });
+    } catch (humanizerError) {
+      console.error('[InterviewService] Welcome presentation plan failed (non-critical):', humanizerError);
+      return undefined;
+    }
+  }
+
+  /**
+   * Phase 11 — built on the SAME turn that carries `isCompleted: true`
+   * (there is no next question for this presentation to attach to). Same
+   * English-only gate/non-critical discipline as every other presentation
+   * builder in this file; a failure here must never fail answer submission
+   * or block navigation to the report.
+   */
+  private buildClosingPresentationPlanSafely(interview: IInterview): ConversationPresentationPlan | undefined {
+    const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
+    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
+    try {
+      const interviewMode = deriveHumanizerMode(interview);
+      const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
+      return conversationHumanizerService.buildClosingPresentationPlan({ interviewMode, recentPhraseHistory });
+    } catch (humanizerError) {
+      console.error('[InterviewService] Closing presentation plan failed (non-critical):', humanizerError);
       return undefined;
     }
   }
@@ -1365,6 +1479,16 @@ export class InterviewService {
         // Mark as completed and set completion timestamp
         interview.status = InterviewStatus.COMPLETED;
         interview.completedAt = new Date();
+        // Phase 11 — terminal persisted phase, written in the SAME save as
+        // `status`/`completedAt` above (one write site, per InterviewPhase's
+        // own doc comment on why there is no separate persisted WRAP_UP step).
+        interview.interviewPhase = InterviewPhase.COMPLETED;
+        // Phase 11 — the mode-aware closing sign-off, built from the SAME
+        // in-memory `interview` this turn already has in scope (no new DB
+        // read). Returned on THIS response only — there is no next question
+        // for it to ride along on, unlike WELCOME/every other presentation
+        // plan in this file.
+        presentation = this.buildClosingPresentationPlanSafely(interview);
         await interview.save();
         console.log('[InterviewService] Interview saved with status: completed');
         await this.syncInstituteAssignmentOnCompletion(interview);
@@ -1381,6 +1505,10 @@ export class InterviewService {
         // next already-stored question.
         console.log(`[InterviewService] Uploaded mode: advancing to pre-loaded question ${interview.currentQuestion + 1}`);
         interview.currentQuestion += 1;
+        // Phase 11 — uploaded mode never calls the decision engine, so
+        // there's no move to derive CORE/DEEP_PROBING from; it settles into
+        // a fixed CORE once the welcome/first-question period is over.
+        interview.interviewPhase = InterviewPhase.CORE;
 
         const upcoming = interview.questions[interview.currentQuestion - 1];
         if (upcoming) {
@@ -1528,6 +1656,13 @@ export class InterviewService {
         );
         nextQuestion = nextQuestionResponse;
 
+        // Phase 11 — derived from finalMove (the move actually acted on,
+        // post-degrade) rather than nextMove, so a validation-degraded move
+        // is labeled consistently with what was actually asked. Persisted
+        // alongside `currentQuestion`/the new question in the SAME
+        // `interview.save()` call below — one write site, not a second one.
+        interview.interviewPhase = deriveInterviewPhase(interview.interviewPhase, finalMove, justAnsweredQuestion?.answerSignal);
+
         // Add next question with expected points, tagged with the
         // decision's competency/source/reason + the difficulty snapshot
         // computed above.
@@ -1609,6 +1744,70 @@ export class InterviewService {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new ApiError(500, `Failed to submit answer: ${message}`);
     }
+  }
+
+  /**
+   * Phase 11 (11A) — records the optional warm-up exchange's answer.
+   * Deliberately entirely separate from `submitAnswer`: it NEVER appends to
+   * `questions[]`, NEVER increments `currentQuestion`, NEVER touches
+   * `totalQuestions`/`answeredCount` accounting, NEVER calls
+   * `aiService.evaluateAnswer`, NEVER consumes interview credit, and NEVER
+   * runs through `NextQuestionDecisionEngine` — this is precisely the
+   * "surprise extra scored question" risk this design exists to avoid.
+   *
+   * Idempotent via `warmUpAnsweredAt`: a duplicate/retried call (double
+   * submit, a client retry after a lost response) is a safe no-op once
+   * already recorded, rather than re-running memory extraction twice.
+   *
+   * Memory extraction is best-effort/non-critical (matches every other
+   * non-critical-enrichment call site in this file) — a failure here must
+   * never fail the endpoint; the warm-up's only real effects are (a)
+   * presentation (already delivered client-side before this call) and (b)
+   * optionally populating `interviewMemory` for later memory-callbacks.
+   */
+  async submitWarmUpAnswer(params: { interviewId: string; userId: string; answer: string; duration?: number }): Promise<{ alreadyAnswered: boolean }> {
+    // `duration` accepted for API-shape symmetry with `submitAnswer` but
+    // deliberately never persisted — the warm-up exchange has no timed/
+    // scored dimension.
+    const { interviewId, userId, answer } = params;
+
+    const interview = await Interview.findOne({
+      _id: new Types.ObjectId(interviewId),
+      userId: new Types.ObjectId(userId),
+    });
+    if (!interview) {
+      throw new ApiError(404, 'Interview not found');
+    }
+
+    if (interview.warmUpAnsweredAt) {
+      return { alreadyAnswered: true };
+    }
+
+    try {
+      const memoryQuestion = buildWarmUpPrompt(interview);
+      const updatedMemory = await interviewMemoryService.extractMemoryFromAnswer({
+        question: memoryQuestion,
+        answer,
+        // Not a real questionNumber (no question was ever appended) — 0 is
+        // used purely as a "before question 1" marker for any consumer that
+        // inspects it; nothing in this phase reads it back for the warm-up
+        // item specifically.
+        questionNumber: 0,
+        existingMemory: interview.interviewMemory || createEmptyMemory(),
+        interviewId: interview._id.toString(),
+      });
+      interview.interviewMemory = updatedMemory;
+    } catch (memoryError) {
+      console.error('[InterviewService] Warm-up memory extraction failed (non-critical):', memoryError);
+    }
+
+    interview.warmUpAnsweredAt = new Date();
+    // Transient — question 1's own submitAnswer call moves this to
+    // CORE/DEEP_PROBING as normal the moment a real move is decided.
+    interview.interviewPhase = InterviewPhase.WARM_UP;
+    await interview.save();
+
+    return { alreadyAnswered: false };
   }
 
   /**

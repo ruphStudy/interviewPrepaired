@@ -38,6 +38,13 @@ export const PHRASE_CATEGORY_VALUES = [
   'NO_ANSWER',
   'LONG_ANSWER',
   'DELAY_BRIDGE',
+  // Phase 11 — the interview's opening greeting (before the first question)
+  // and its closing sign-off (once the last answer has been submitted).
+  // Both are one-time, scripted moments (never mid-interview filler), which
+  // is why `phraseSelector.ts`'s SILENCE_WEIGHT deliberately gives both 0 —
+  // unlike every category above, these must never resolve to "say nothing".
+  'WELCOME',
+  'CLOSING',
 ] as const;
 export type PhraseCategory = (typeof PHRASE_CATEGORY_VALUES)[number];
 
@@ -165,6 +172,75 @@ export const PHRASE_LIBRARY: Phrase[] = [
   { id: 'delay_bridge_just_a_moment', category: 'DELAY_BRIDGE', text: 'Just a moment...', allowedModes: ALL_MODES, weight: 2, minimumGap: 3, avatarStateHint: 'THINKING_LONG' },
   { id: 'delay_bridge_one_second', category: 'DELAY_BRIDGE', text: 'One second...', allowedModes: ALL_MODES, weight: 2, minimumGap: 3, avatarStateHint: 'THINKING_LONG' },
   { id: 'delay_bridge_bear_with_me', category: 'DELAY_BRIDGE', text: 'Bear with me for a moment...', allowedModes: ALL_MODES, weight: 1, minimumGap: 3, avatarStateHint: 'THINKING_LONG' },
+
+  // ==========================================================================
+  // WELCOME — spoken once, before the first question, combining a brief
+  // greeting with what to expect (mirrors the master prompt's own example
+  // lines: "Hi, good to meet you." / "I'll ask you a few questions and
+  // we'll take them one at a time." / "Take your time with your answers.").
+  // One phrase carries the whole opening beat (never split across the
+  // ack/transition slots — see ConversationHumanizerService.
+  // buildWelcomePresentationPlan) so there is no risk of the same category
+  // being drawn twice for two different slots. A practice-only warmer
+  // variant is permitted (per the master prompt); every other mode gets the
+  // same professional-neutral wording an employer/institute candidate can
+  // safely hear.
+  // ==========================================================================
+  {
+    id: 'welcome_neutral_greeting',
+    category: 'WELCOME',
+    text: "Hi, good to meet you. I'll ask you a few questions and we'll take them one at a time — take your time with your answers.",
+    allowedModes: ALL_MODES,
+    weight: 3,
+    minimumGap: 0,
+    avatarStateHint: 'ASKING_QUESTION',
+  },
+  {
+    id: 'welcome_practice_warm',
+    category: 'WELCOME',
+    text: "Hey, great to have you here today. I'll ask you a few questions, one at a time, so just take your time with each answer.",
+    allowedModes: ['practice'],
+    weight: 2,
+    minimumGap: 0,
+    avatarStateHint: 'ASKING_QUESTION',
+  },
+
+  // ==========================================================================
+  // CLOSING — spoken once, immediately after the FINAL answer's submission
+  // response (the same turn `isCompleted` becomes true). Deliberately never
+  // reveals a result/score/selection outcome, and the practice/uploaded/
+  // institute wording never promises the report is ready THIS INSTANT (see
+  // getInterviewReport's own lazy-generation contract) — only "shortly".
+  // Employer wording hands off to HR with zero result leakage, matching
+  // CONTRADICTION_NEUTRAL/CHALLENGE's own employer-safety discipline above.
+  // ==========================================================================
+  {
+    id: 'closing_report_ready_shortly',
+    category: 'CLOSING',
+    text: "Alright, that's all for this interview. Your feedback and report will be ready shortly.",
+    allowedModes: NON_EMPLOYER_MODES,
+    weight: 3,
+    minimumGap: 0,
+    avatarStateHint: 'ACKNOWLEDGING',
+  },
+  {
+    id: 'closing_report_ready_shortly_alt',
+    category: 'CLOSING',
+    text: "That wraps up this interview. Thanks for your time — your feedback and report will be ready shortly.",
+    allowedModes: NON_EMPLOYER_MODES,
+    weight: 1,
+    minimumGap: 0,
+    avatarStateHint: 'ACKNOWLEDGING',
+  },
+  {
+    id: 'closing_employer_hr_handoff',
+    category: 'CLOSING',
+    text: "Alright, that's everything from my side. I'll share my feedback with the HR team, and they'll take it from here.",
+    allowedModes: ['employer'],
+    weight: 3,
+    minimumGap: 0,
+    avatarStateHint: 'ACKNOWLEDGING',
+  },
 ];
 
 export function getPhrasesForCategory(category: PhraseCategory): Phrase[] {
