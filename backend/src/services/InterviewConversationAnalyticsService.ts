@@ -115,6 +115,22 @@ export interface RecordMoveDecisionEventsParams {
  * threshold) — never a guessed/reverse-engineered reason.
  */
 export async function recordMoveDecisionEvents(params: RecordMoveDecisionEventsParams): Promise<void> {
+  // PR-PHASE14-C found this function relied ENTIRELY on recordEvent's own
+  // internal try/catch for fail-open safety — every call site here is
+  // individually safe, but reading `finalMove`/`answerSignal` fields (or a
+  // future refactor adding logic between them) had no protection of its
+  // own, so a malformed input could still throw all the way out to
+  // submitAnswer and fail an otherwise-successful answer submission. This
+  // function must be independently fail-open, matching recordEvent's own
+  // documented contract exactly, not merely inherit it by accident.
+  try {
+    await recordMoveDecisionEventsUnsafe(params);
+  } catch (error) {
+    console.error('[InterviewConversationAnalyticsService] recordMoveDecisionEvents failed (non-critical, analytics only):', error);
+  }
+}
+
+async function recordMoveDecisionEventsUnsafe(params: RecordMoveDecisionEventsParams): Promise<void> {
   const { interviewId, questionNumber, mode, finalMove, previousPhase, newPhase, answerSignal, history, personality } = params;
 
   await recordEvent({

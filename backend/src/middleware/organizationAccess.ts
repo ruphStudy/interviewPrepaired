@@ -104,3 +104,40 @@ export function requireOrganizationPermission(permission: OrganizationPermission
     next();
   });
 }
+
+/**
+ * Foundation-only, additive guard: NOT wired onto any existing route yet.
+ * OWNER and ADMIN currently share every permission in the 8C matrix, so
+ * `requireOrganizationPermission` cannot by itself express "OWNER only" —
+ * today that distinction is enforced ad hoc at the service layer instead
+ * (e.g. `OrganizationService.deleteOrganization` checking `ownerUserId`
+ * directly, `OrganizationMemberService.assertNotOwnerMembership`). This
+ * gives a future route (e.g. archiving/deleting an organization) a single
+ * named place to require it, reusing the exact same trusted
+ * route-param-only `resolveOrganizationContext` as every other guard here —
+ * never body/query/header. A caller is accepted if either their resolved
+ * membership role is OWNER, or they are the organization's canonical
+ * `ownerUserId` (covers the moment before `ensureOwnerMembership` has ever
+ * run for them — resolveOrganizationContext already lazily syncs that row,
+ * so in practice both checks agree, but the ownerUserId check is kept as
+ * the authoritative fallback, matching this codebase's own "Organization.
+ * ownerUserId is canonical" convention).
+ */
+export function requireOrganizationOwner(options: OrganizationAccessOptions = {}) {
+  const paramName = options.paramName ?? 'organizationId';
+  return catchAsync(async (req: OrganizationAuthRequest, _res: Response, next: NextFunction) => {
+    await resolveOrganizationContext(req, paramName);
+
+    const context = req.organizationContext;
+    const userId = req.user?.id;
+    const isOwner =
+      !!context &&
+      !!userId &&
+      (context.role === OrganizationMemberRole.OWNER || context.organization.ownerUserId.toString() === userId);
+
+    if (!isOwner) {
+      throw new ApiError(403, 'Only the organization owner may perform this action');
+    }
+    next();
+  });
+}

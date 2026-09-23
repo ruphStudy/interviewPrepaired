@@ -8,6 +8,7 @@ import { OrganizationInvitationStatus, INVITATION_EXPIRY_MS } from '../constants
 import { OrganizationStatus } from '../constants/organization';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { User } from '../models/user.model';
+import { userIdentityService, normalizeEmail } from './UserIdentityService';
 import { ApiError } from '../utils/ApiError';
 import { transactionalEmailService } from './TransactionalEmailService';
 import { renderOrganizationInvitationEmail } from '../emails/templates';
@@ -50,9 +51,13 @@ export class OrganizationInvitationService {
     const organization = await this.getOrganizationById(organizationId);
     this.assertOrganizationMutable(organization);
 
-    const normalizedEmail = params.email.trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(params.email);
 
-    const invitedUser = await User.findOne({ email: normalizedEmail }).select('_id');
+    // Deliberately NOT `findActiveUserByEmail` — an invitation must still
+    // detect and reject inviting an email that belongs to an existing (even
+    // inactive) owner/member, so this intentionally matches regardless of
+    // `isActive` (see UserIdentityService.findUserByEmail's doc comment).
+    const invitedUser = await userIdentityService.findUserByEmail(normalizedEmail);
     if (invitedUser) {
       if (invitedUser._id.toString() === organization.ownerUserId.toString()) {
         throw new ApiError(409, 'This user is already the organization owner');

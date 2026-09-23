@@ -90,6 +90,17 @@ export const authorize = (...roles: string[]) => {
   };
 };
 
+/**
+ * Named alias for the platform's existing global-superadmin gate.
+ * `User.role: 'admin'` already IS the platform-staff/super-admin concept
+ * (see admin.routes.ts and many other admin-only routes, all gated via
+ * `authorize('admin')`) — this is purely a clearer name for new
+ * foundation-layer call sites to use going forward. Additive only: existing
+ * `authorize('admin')` call sites are untouched and keep working exactly as
+ * before.
+ */
+export const requireGlobalSuperAdmin = authorize('admin');
+
 /** Applied only to high-value routes (PR-AUTH-1) — never scattered ad hoc; runs after `protect`. */
 export const requireVerifiedEmail = (req: AuthRequest, _res: Response, next: NextFunction) => {
   if (!req.user) {

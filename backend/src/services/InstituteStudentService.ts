@@ -4,7 +4,7 @@ import InstituteBranch from '../models/InstituteBranch.model';
 import InstituteCourse from '../models/InstituteCourse.model';
 import InstituteBatch from '../models/InstituteBatch.model';
 import InstituteStudent from '../models/InstituteStudent.model';
-import { User } from '../models/user.model';
+import { userIdentityService } from './UserIdentityService';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
@@ -455,7 +455,7 @@ export class InstituteStudentService {
   }
 
   private async loadActiveUserById(userId: string): Promise<{ _id: Types.ObjectId; email: string }> {
-    const user = await User.findOne({ _id: userId, isActive: true }).select('_id email');
+    const user = await userIdentityService.findActiveUserById(userId);
     if (!user) {
       throw new ApiError(404, 'User not found');
     }
@@ -466,7 +466,7 @@ export class InstituteStudentService {
     if (!email) {
       throw new ApiError(400, 'Provide userId — this student has no email to match against');
     }
-    const user = await User.findOne({ email: email.trim().toLowerCase(), isActive: true }).select('_id email');
+    const user = await userIdentityService.findActiveUserByEmail(email);
     if (!user) {
       throw new ApiError(404, 'User not found');
     }
