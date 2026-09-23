@@ -381,6 +381,16 @@ const AdminDashboard: React.FC = () => {
     <AuthenticatedLayout>
       {/* Tabs */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex justify-between items-center mb-4">
+          <div />
+          {/* B2B organization provisioning (PR-PROVISIONING) lives on its own page — see OrganizationsAdminPage.tsx's doc comment for why it isn't a tab here. */}
+          <button
+            onClick={() => navigate('/admin/organizations')}
+            className="px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium"
+          >
+            Organizations →
+          </button>
+        </div>
         <div className="border-b border-gray-200 mb-6">
           <nav className="-mb-px flex space-x-8">
             {['dashboard', 'users', 'interviews', 'analytics', 'payments', 'jobs', 'privacy'].map((tab) => (

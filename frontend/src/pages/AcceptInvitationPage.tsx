@@ -3,7 +3,9 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useOrganization } from '../contexts/OrganizationContext';
 import organizationApi, { InvitationPreview } from '../api/organizationApi';
-import { Mail, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
+import { Mail, AlertCircle, Loader2, CheckCircle2, KeyRound } from 'lucide-react';
+
+const MIN_ACTIVATION_PASSWORD_LENGTH = 8;
 
 /**
  * Fully public page (not wrapped in ProtectedRoute) — mirrors the backend's
@@ -12,11 +14,21 @@ import { Mail, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
  * at login/register; there is no redirect-after-login mechanism in this
  * app today, so they're asked to return to this same link afterward rather
  * than inventing new auth-flow plumbing.
+ *
+ * D2 exception: an OWNER-role invitation (Super Admin B2B provisioning) may
+ * belong to a brand-new account with an unknown, never-disclosed password —
+ * an unauthenticated visitor on an `owner` invite is ALSO offered a
+ * "set your password" form here, which calls the public activation
+ * endpoint and logs them straight in. The backend is the real security
+ * gate: if this invitation actually belongs to an EXISTING owner (D3, who
+ * already has a real password), activation is refused with a clear message
+ * pointing them at login instead — this page never has to know in advance
+ * which case it is.
  */
 const AcceptInvitationPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, loginWithToken } = useAuth();
   const { setActiveOrganization, refreshOrganizations } = useOrganization();
 
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
@@ -25,6 +37,11 @@ const AcceptInvitationPage: React.FC = () => {
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
+
+  const [activationPassword, setActivationPassword] = useState('');
+  const [activationPasswordConfirm, setActivationPasswordConfirm] = useState('');
+  const [activating, setActivating] = useState(false);
+  const [activationError, setActivationError] = useState<string | null>(null);
 
   const fetchPreview = useCallback(async () => {
     if (!token) return;
@@ -61,6 +78,40 @@ const AcceptInvitationPage: React.FC = () => {
       setAcceptError(err.message || 'Failed to accept invitation');
     } finally {
       setAccepting(false);
+    }
+  };
+
+  const handleActivate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token) return;
+
+    setActivationError(null);
+
+    if (activationPassword.length < MIN_ACTIVATION_PASSWORD_LENGTH) {
+      setActivationError(`Password must be at least ${MIN_ACTIVATION_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+    if (activationPassword !== activationPasswordConfirm) {
+      setActivationError('Passwords do not match.');
+      return;
+    }
+
+    setActivating(true);
+    try {
+      const response = await organizationApi.activateOwnerAccount(token, activationPassword);
+      const { token: sessionToken, user, organization } = response.data;
+      loginWithToken(sessionToken, user as any);
+      await refreshOrganizations();
+      await setActiveOrganization(organization.id);
+      setAccepted(true);
+      setTimeout(() => navigate(`/organizations/${organization.id}/dashboard`), 1200);
+    } catch (err: any) {
+      // The backend refuses (400) here if this invitation actually belongs
+      // to an existing owner who already has a real password (D3) — its
+      // message already points the visitor at logging in instead.
+      setActivationError(err.message || 'Failed to activate your account');
+    } finally {
+      setActivating(false);
     }
   };
 
@@ -112,6 +163,52 @@ const AcceptInvitationPage: React.FC = () => {
               <button onClick={handleAccept} disabled={accepting} className="btn btn-primary w-full justify-center">
                 {accepting ? 'Accepting...' : 'Accept Invitation'}
               </button>
+            ) : preview.role === 'owner' ? (
+              <form onSubmit={handleActivate} className="space-y-3 text-left">
+                <div className="flex items-center gap-2 text-xs text-mentor-text-muted mb-1">
+                  <KeyRound size={14} />
+                  <span>New here? Set a password to activate your owner account.</span>
+                </div>
+
+                {activationError && (
+                  <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 text-left">
+                    <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                    <p className="text-sm text-mentor-error">{activationError}</p>
+                  </div>
+                )}
+
+                <input
+                  type="password"
+                  className="input w-full"
+                  placeholder="New password"
+                  value={activationPassword}
+                  onChange={(e) => setActivationPassword(e.target.value)}
+                  minLength={MIN_ACTIVATION_PASSWORD_LENGTH}
+                  autoComplete="new-password"
+                  required
+                />
+                <input
+                  type="password"
+                  className="input w-full"
+                  placeholder="Confirm password"
+                  value={activationPasswordConfirm}
+                  onChange={(e) => setActivationPasswordConfirm(e.target.value)}
+                  minLength={MIN_ACTIVATION_PASSWORD_LENGTH}
+                  autoComplete="new-password"
+                  required
+                />
+                <button type="submit" disabled={activating} className="btn btn-primary w-full justify-center">
+                  {activating ? 'Activating...' : 'Set Password & Activate'}
+                </button>
+
+                <p className="text-xs text-mentor-text-muted text-center pt-2">
+                  Already have an account?{' '}
+                  <Link to="/login" className="text-primary-600 hover:underline">
+                    Log in
+                  </Link>{' '}
+                  and return to this link.
+                </p>
+              </form>
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-mentor-text-muted">

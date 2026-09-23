@@ -12,6 +12,7 @@ import InterviewSetupPage from './pages/InterviewSetupPage';
 import InterviewScreen from './pages/InterviewScreen';
 import ReportDashboard from './pages/ReportDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import OrganizationsAdminPage from './pages/OrganizationsAdminPage';
 import PricingPage from './pages/PricingPage';
 import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
@@ -608,6 +609,15 @@ function App() {
             element={
               <ProtectedRoute adminOnly>
                 <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          {/* Super Admin B2B organization provisioning (PR-PROVISIONING) — same adminOnly gate as /admin above, reachable only by a global platform admin, including by direct URL. */}
+          <Route
+            path="/admin/organizations"
+            element={
+              <ProtectedRoute adminOnly>
+                <OrganizationsAdminPage />
               </ProtectedRoute>
             }
           />

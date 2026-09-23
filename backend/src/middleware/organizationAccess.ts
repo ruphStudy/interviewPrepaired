@@ -4,6 +4,7 @@ import { AuthRequest } from './auth';
 import Organization, { IOrganization } from '../models/Organization.model';
 import OrganizationMember, { IOrganizationMember } from '../models/OrganizationMember.model';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
+import { OrganizationStatus } from '../constants/organization';
 import {
   OrganizationPermission,
   hasOrganizationPermission,
@@ -88,10 +89,33 @@ export function loadOrganizationContext(options: OrganizationAccessOptions = {})
 }
 
 /**
+ * A `resource:view`/`resource:read`-shaped permission is read-only by this
+ * codebase's own naming convention (see organizationPermissions.ts's class
+ * doc: "resource:action, lowercase"). Everything else (`:update`/`:manage`)
+ * is a mutation. Used only to decide whether a SUSPENDED organization's
+ * "no normal operational access" restriction (D6) applies — never used for
+ * the underlying permission grant itself, which stays the 8C matrix's job.
+ */
+function isReadOnlyPermission(permission: OrganizationPermission): boolean {
+  const action = permission.split(':')[1];
+  return action === 'view';
+}
+
+/**
  * Primary export: loads trusted organization context AND verifies the
  * resolved role has `permission`, using only the centralized 8C matrix
  * (never a hardcoded role check). Fails closed — an unknown/stale role or a
  * missing permission both deny with 403.
+ *
+ * D6 — a SUSPENDED organization blocks every mutating (`:update`/`:manage`)
+ * permission with 409, identically across EVERY organization-scoped route
+ * in the app (this is the single choke point virtually all of them already
+ * pass through) — but never blocks a `:view` permission, so members/history
+ * stay readable, matching this codebase's existing ARCHIVED read/write
+ * asymmetry (e.g. OrganizationMemberService.getMembers's "Reads are allowed
+ * on an archived org"). Super Admin's own provisioning routes bypass this
+ * middleware entirely (they use `requireGlobalSuperAdmin` directly), so
+ * suspend/reactivate/view-status/change-owner are never blocked by this.
  */
 export function requireOrganizationPermission(permission: OrganizationPermission, options: OrganizationAccessOptions = {}) {
   const paramName = options.paramName ?? 'organizationId';
@@ -101,6 +125,11 @@ export function requireOrganizationPermission(permission: OrganizationPermission
     if (!req.organizationContext || !hasOrganizationPermission(req.organizationContext.role, permission)) {
       throw new ApiError(403, 'You do not have permission to perform this action');
     }
+
+    if (req.organizationContext.organization.status === OrganizationStatus.SUSPENDED && !isReadOnlyPermission(permission)) {
+      throw new ApiError(409, 'Organization is suspended');
+    }
+
     next();
   });
 }
@@ -138,6 +167,14 @@ export function requireOrganizationOwner(options: OrganizationAccessOptions = {}
     if (!isOwner) {
       throw new ApiError(403, 'Only the organization owner may perform this action');
     }
+
+    // Owner-only routes are mutations by nature (see D6 doc on
+    // requireOrganizationPermission above) — a SUSPENDED organization blocks
+    // them identically.
+    if (context!.organization.status === OrganizationStatus.SUSPENDED) {
+      throw new ApiError(409, 'Organization is suspended');
+    }
+
     next();
   });
 }

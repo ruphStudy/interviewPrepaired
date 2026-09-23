@@ -44,10 +44,21 @@ import {
   recordManualPaymentAdmin,
   listManualPaymentsAdmin,
 } from '../controllers/organizationContract.controller';
+import {
+  createOrganizationAdmin,
+  listOrganizationsAdmin,
+  getOrganizationAdmin,
+  resendOwnerInvitationAdmin,
+  revokeOwnerInvitationAdmin,
+  suspendOrganizationAdmin,
+  reactivateOrganizationAdmin,
+  changeOwnerAdmin,
+} from '../controllers/organizationProvisioning.controller';
 import { protect, authorize } from '../middleware/auth';
 import { validate } from '../middleware/validation';
 import { PlanCode } from '../constants/subscription';
 import { OperationalJobType } from '../constants/operationalJob';
+import { OrganizationType, OrganizationStatus } from '../constants/organization';
 
 const router = Router();
 
@@ -365,6 +376,76 @@ router.get(
   ],
   validate,
   listManualPaymentsAdmin
+);
+
+// B2B organization provisioning (PR-PROVISIONING) — global-admin-only,
+// mirrors this router's existing `protect, authorize('admin')` guard above.
+// Creates an organization together with its first owner (resolving, never
+// duplicating, an existing User by email); manages the owner invitation
+// lifecycle; suspends/reactivates; transfers ownership. Never callable by
+// an organization owner/admin — there is no such route anywhere in
+// organization.routes.ts, only here.
+router.post(
+  '/organizations',
+  [
+    body('name').trim().notEmpty().withMessage('name is required').isLength({ max: 120 }),
+    body('type').isIn(Object.values(OrganizationType)).withMessage('Invalid organization type'),
+    body('ownerEmail').isEmail().withMessage('ownerEmail must be valid').isLength({ max: 254 }),
+    body('ownerName').optional().isString().trim().isLength({ max: 50 }),
+    body('description').optional().isString().trim().isLength({ max: 1000 }),
+    body('website').optional().isString().trim().isLength({ max: 300 }),
+    body('logoUrl').optional().isString().trim().isLength({ max: 500 }),
+    body('contactEmail').optional().isEmail().withMessage('contactEmail must be valid'),
+    body('contactPhone').optional().isString().trim().isLength({ max: 30 }),
+    body('planCode').optional().isString().trim().isLength({ max: 50 }),
+    body('idempotencyKey').notEmpty().withMessage('idempotencyKey is required').isString().trim().isLength({ max: 200 }),
+  ],
+  validate,
+  createOrganizationAdmin
+);
+
+router.get(
+  '/organizations',
+  [
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    query('type').optional().isIn(Object.values(OrganizationType)).withMessage('Invalid organization type'),
+    query('status').optional().isIn(Object.values(OrganizationStatus)).withMessage('Invalid organization status'),
+    query('search').optional().isString().trim().isLength({ max: 200 }),
+  ],
+  validate,
+  listOrganizationsAdmin
+);
+
+router.get('/organizations/:organizationId', orgIdParamValidation, validate, getOrganizationAdmin);
+
+router.post(
+  '/organizations/:organizationId/owner-invitation/resend',
+  orgIdParamValidation,
+  validate,
+  resendOwnerInvitationAdmin
+);
+
+router.post(
+  '/organizations/:organizationId/owner-invitation/revoke',
+  orgIdParamValidation,
+  validate,
+  revokeOwnerInvitationAdmin
+);
+
+router.post('/organizations/:organizationId/suspend', orgIdParamValidation, validate, suspendOrganizationAdmin);
+
+router.post('/organizations/:organizationId/reactivate', orgIdParamValidation, validate, reactivateOrganizationAdmin);
+
+router.post(
+  '/organizations/:organizationId/change-owner',
+  [
+    ...orgIdParamValidation,
+    body('email').isEmail().withMessage('email must be valid').isLength({ max: 254 }),
+    body('name').optional().isString().trim().isLength({ max: 50 }),
+  ],
+  validate,
+  changeOwnerAdmin
 );
 
 // Generic persistent operational job visibility + manual retry (PR-OPS-1/2)

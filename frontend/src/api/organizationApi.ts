@@ -354,6 +354,19 @@ export interface AcceptInvitationResult {
   membership: { id: string; role: OrganizationMemberRole; status: OrganizationMemberStatus; joinedAt: string };
 }
 
+/**
+ * D2 — result of completing a NEW Super-Admin-provisioned owner's account
+ * activation (public, no-auth endpoint). Includes a login token so the
+ * frontend can sign the owner straight in, exactly like /auth/login's
+ * response shape.
+ */
+export interface ActivateOwnerAccountResult {
+  token: string;
+  user: { id: string; name: string; email: string; role: 'user' | 'admin' };
+  organization: { id: string; name: string; slug: string; type: OrganizationType };
+  membership: { id: string; role: OrganizationMemberRole; status: OrganizationMemberStatus; joinedAt: string };
+}
+
 // ---- Response envelopes ----
 
 interface ApiEnvelope<T> {
@@ -379,6 +392,7 @@ export type ListInvitationsResponse = ApiEnvelope<{ invitations: OrganizationInv
 export type RevokeInvitationResponse = ApiEnvelope<{ invitation: OrganizationInvitation }>;
 export type GetInvitationPreviewResponse = ApiEnvelope<InvitationPreview>;
 export type AcceptInvitationResponse = ApiEnvelope<AcceptInvitationResult>;
+export type ActivateOwnerAccountResponse = ApiEnvelope<ActivateOwnerAccountResult>;
 
 // ============================================================================
 // API Configuration
@@ -628,6 +642,22 @@ class OrganizationApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to accept invitation');
+    }
+  }
+
+  /**
+   * D2 — public, no auth. Only for a NEW Super-Admin-provisioned owner
+   * completing account activation; the backend refuses (400) if this
+   * invitation's account already has a real password (D3, an existing
+   * owner) — the caller should show that message and point the visitor at
+   * login instead of retrying.
+   */
+  async activateOwnerAccount(token: string, password: string): Promise<ActivateOwnerAccountResponse> {
+    try {
+      const response = await this.api.post<ActivateOwnerAccountResponse>(`/organization-invitations/${token}/activate`, { password });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to activate account');
     }
   }
 }

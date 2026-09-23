@@ -218,9 +218,13 @@ export class OrganizationMemberService {
     }
   }
 
+  /** ARCHIVED (soft-deleted) and SUSPENDED both block mutation identically — distinct lifecycle states, same operational-access treatment (D6). */
   private assertOrganizationMutable(organization: IOrganization): void {
     if (organization.status === OrganizationStatus.ARCHIVED) {
       throw new ApiError(409, 'Organization is archived');
+    }
+    if (organization.status === OrganizationStatus.SUSPENDED) {
+      throw new ApiError(409, 'Organization is suspended');
     }
   }
 

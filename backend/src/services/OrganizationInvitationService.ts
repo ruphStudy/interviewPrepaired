@@ -9,6 +9,8 @@ import { OrganizationStatus } from '../constants/organization';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { User } from '../models/user.model';
 import { userIdentityService, normalizeEmail } from './UserIdentityService';
+import { organizationMemberService } from './OrganizationMemberService';
+import { authSessionService } from './AuthSessionService';
 import { ApiError } from '../utils/ApiError';
 import { transactionalEmailService } from './TransactionalEmailService';
 import { renderOrganizationInvitationEmail } from '../emails/templates';
@@ -72,6 +74,66 @@ export class OrganizationInvitationService {
       // An INACTIVE former membership is fine — inviting re-adds them via acceptance.
     }
 
+    const { invitation, token } = await this.upsertPendingInvitation(organization, params.role, normalizedEmail, invitedByUserId);
+    return { invitation: this.toDetail(invitation), token };
+  }
+
+  /**
+   * Super-Admin-only entry point (B2B provisioning) — NEVER callable by an
+   * org owner/admin; the caller (OrganizationProvisioningService) is gated
+   * entirely by `requireGlobalSuperAdmin` on the route, not by any
+   * organization-scoped permission check here. Unlike `createInvitation`,
+   * this intentionally creates/rotates an OWNER-role invitation and skips
+   * `createInvitation`'s "already owner"/"already a member" conflict checks
+   * (the invited email is EXPECTED to already be — or become — the
+   * organization's owner; `Organization.ownerUserId` is already set
+   * synchronously before this is ever called, per D1). The regular
+   * member-invite flow's `role === OWNER` rejection above is untouched and
+   * still fully enforced for every other caller.
+   */
+  async createOwnerInvitation(
+    organizationId: string,
+    invitedByUserId: string,
+    email: string
+  ): Promise<{ invitation: Record<string, unknown>; token: string }> {
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertOrganizationMutable(organization);
+
+    const normalizedEmail = normalizeEmail(email);
+    const { invitation, token } = await this.upsertPendingInvitation(
+      organization,
+      OrganizationMemberRole.OWNER,
+      normalizedEmail,
+      invitedByUserId
+    );
+    return { invitation: this.toDetail(invitation), token };
+  }
+
+  /** Latest OWNER-role invitation for an organization (any status), if any — lets a caller resend/revoke without already knowing the invitation id. Lazily expires a stale PENDING row before returning it. */
+  async getLatestOwnerInvitation(organizationId: string): Promise<Record<string, unknown> | null> {
+    const invitation = await OrganizationInvitation.findOne({
+      organizationId: new Types.ObjectId(organizationId),
+      role: OrganizationMemberRole.OWNER,
+    }).sort({ createdAt: -1 });
+    if (!invitation) return null;
+    await this.lazilyExpire(invitation);
+    return this.toDetail(invitation);
+  }
+
+  /**
+   * Shared by `createInvitation` and `createOwnerInvitation` — rotates an
+   * existing PENDING row for this organization/email (fresh token/expiry/
+   * role/inviter; the OLD emailed link stops working the moment tokenHash
+   * changes) or creates a new PENDING row. Never applies a permission or
+   * conflict check itself — callers own those, since they differ
+   * intentionally between the two entry points.
+   */
+  private async upsertPendingInvitation(
+    organization: IOrganization,
+    role: OrganizationMemberRole,
+    normalizedEmail: string,
+    invitedByUserId: string
+  ): Promise<{ invitation: IOrganizationInvitation; token: string }> {
     const { token, tokenHash } = this.generateToken();
     const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS);
     const invitedByObjectId = new Types.ObjectId(invitedByUserId);
@@ -83,23 +145,20 @@ export class OrganizationInvitationService {
     });
 
     if (existingPending) {
-      // Rotate rather than create a duplicate pending row — same invitation
-      // record, fresh token/expiry/role/inviter. The OLD emailed link stops
-      // working the moment tokenHash changes, regardless of email delivery.
       existingPending.tokenHash = tokenHash;
       existingPending.expiresAt = expiresAt;
-      existingPending.role = params.role;
+      existingPending.role = role;
       existingPending.invitedByUserId = invitedByObjectId;
       await existingPending.save();
 
       await this.sendInvitationEmail(organization, existingPending, token, invitedByObjectId);
-      return { invitation: this.toDetail(existingPending), token };
+      return { invitation: existingPending, token };
     }
 
     const invitation = await OrganizationInvitation.create({
       organizationId: organization._id,
       email: normalizedEmail,
-      role: params.role,
+      role,
       status: OrganizationInvitationStatus.PENDING,
       invitedByUserId: invitedByObjectId,
       tokenHash,
@@ -107,7 +166,7 @@ export class OrganizationInvitationService {
     });
 
     await this.sendInvitationEmail(organization, invitation, token, invitedByObjectId);
-    return { invitation: this.toDetail(invitation), token };
+    return { invitation, token };
   }
 
   /**
@@ -210,7 +269,11 @@ export class OrganizationInvitationService {
     }
 
     const organization = await Organization.findById(invitation.organizationId).select('name slug type status');
-    if (!organization || organization.status === OrganizationStatus.ARCHIVED) {
+    if (
+      !organization ||
+      organization.status === OrganizationStatus.ARCHIVED ||
+      organization.status === OrganizationStatus.SUSPENDED
+    ) {
       throw new ApiError(409, 'Organization is no longer available');
     }
 
@@ -228,6 +291,92 @@ export class OrganizationInvitationService {
     userId: string,
     userEmail: string
   ): Promise<Record<string, unknown>> {
+    const { invitation, organization } = await this.loadPendingInvitationForAcceptance(rawToken);
+
+    const normalizedUserEmail = userEmail.trim().toLowerCase();
+    if (normalizedUserEmail !== invitation.email) {
+      throw new ApiError(403, 'This invitation was sent to a different email address');
+    }
+
+    return this.applyAcceptance(invitation, organization, userId);
+  }
+
+  /**
+   * D2 — public, no auth (see organizationInvitation.routes.ts). Completes
+   * a NEW owner's account activation: the User row already exists (created
+   * synchronously at provisioning/transfer time, per D1, with an unknown
+   * random password) but has never had a real password set. This is the
+   * ONLY path that sets a password without an authenticated session —
+   * gated entirely by possession of the invitation's raw token, exactly
+   * like every other invitation-token flow in this codebase (a
+   * reused/replayed token is rejected because the invitation's own
+   * PENDING -> ACCEPTED transition already happened). Reuses
+   * `applyAcceptance` — never duplicates the membership/acceptance logic.
+   */
+  async activateOwnerAccount(
+    rawToken: string,
+    password: string
+  ): Promise<{ token: string; user: Record<string, unknown>; organization: Record<string, unknown>; membership: Record<string, unknown> }> {
+    const { invitation, organization } = await this.loadPendingInvitationForAcceptance(rawToken);
+
+    if (invitation.role !== OrganizationMemberRole.OWNER) {
+      throw new ApiError(400, 'This invitation does not support password activation');
+    }
+
+    const user = await User.findOne({ email: invitation.email });
+    if (!user) {
+      // Should never happen — the owner User is always created synchronously
+      // BEFORE this invitation ever exists (D1/D2). Loud, not silent.
+      console.error('[OrganizationInvitationService] Owner-invitation activation found no User for invitation email', {
+        invitationId: (invitation._id as Types.ObjectId).toString(),
+      });
+      throw new ApiError(500, 'Unable to activate this account — please contact support');
+    }
+
+    // SECURITY: both a brand-new owner (D2) and an already-existing owner
+    // (D3) get an identical OWNER-role invitation — nothing on the
+    // invitation itself distinguishes them. Without this check, a
+    // stolen/shared/forwarded owner-invitation link for an EXISTING owner
+    // (who already has a real password) could be used to silently
+    // overwrite it via this PUBLIC, unauthenticated endpoint. Only a User
+    // created awaiting activation (unknown random password) may ever have
+    // its password set here — see User.model.ts's doc comment.
+    if (!user.pendingPasswordActivation) {
+      throw new ApiError(400, 'This account already has a password — please log in instead');
+    }
+
+    user.password = password;
+    user.isVerified = true;
+    user.pendingPasswordActivation = false;
+    await user.save();
+
+    const acceptance = await this.applyAcceptance(invitation, organization, (user._id as Types.ObjectId).toString());
+
+    const sanitizedUser = user.toObject() as unknown as Record<string, unknown>;
+    delete sanitizedUser.password;
+    delete sanitizedUser.resetPasswordToken;
+    delete sanitizedUser.emailVerificationTokenHash;
+
+    const { token } = await authSessionService.createSession(user);
+
+    return {
+      token,
+      user: sanitizedUser,
+      organization: acceptance.organization as Record<string, unknown>,
+      membership: acceptance.membership as Record<string, unknown>,
+    };
+  }
+
+  /**
+   * Shared by `acceptInvitation` and `getInvitationByToken`-adjacent flows —
+   * loads a PENDING, non-expired invitation and its still-mutable
+   * organization, or throws. Never checks the invitee's identity — callers
+   * own that (email match for `acceptInvitation`, nothing further for
+   * `activateOwnerAccount` since the token itself is the credential).
+   */
+  private async loadPendingInvitationForAcceptance(
+    rawToken: string
+  ): Promise<{ invitation: IOrganizationInvitation; organization: IOrganization }> {
     const tokenHash = this.hashToken(rawToken);
     const invitation = await OrganizationInvitation.findOne({ tokenHash });
     if (!invitation) {
@@ -246,44 +395,67 @@ export class OrganizationInvitationService {
       throw new ApiError(409, 'Invitation has already been accepted');
     }
 
-    const normalizedUserEmail = userEmail.trim().toLowerCase();
-    if (normalizedUserEmail !== invitation.email) {
-      throw new ApiError(403, 'This invitation was sent to a different email address');
-    }
-
     const organization = await Organization.findById(invitation.organizationId);
     if (!organization) {
       throw new ApiError(404, 'Organization not found');
     }
     this.assertOrganizationMutable(organization);
 
-    if (userId === organization.ownerUserId.toString()) {
-      throw new ApiError(409, 'You are already the organization owner');
-    }
+    return { invitation, organization };
+  }
 
+  /**
+   * Shared by `acceptInvitation` and `activateOwnerAccount` — everything
+   * that happens once a PENDING invitation + still-mutable organization are
+   * confirmed and the acting `userId` is known. An OWNER-role invitation
+   * takes a distinct branch: D1 already made this user the organization's
+   * owner synchronously at provisioning/transfer time, so acceptance here
+   * only CONFIRMS the OWNER membership row (idempotent) rather than
+   * granting a new one — the "already owner" rejection below exists for the
+   * ordinary non-owner invite flow, where it signals a genuine conflict.
+   */
+  private async applyAcceptance(
+    invitation: IOrganizationInvitation,
+    organization: IOrganization,
+    userId: string
+  ): Promise<Record<string, unknown>> {
     const userObjectId = new Types.ObjectId(userId);
-    const existingMembership = await OrganizationMember.findOne({ organizationId: organization._id, userId: userObjectId });
 
-    if (existingMembership) {
-      if (existingMembership.status !== OrganizationMemberStatus.ACTIVE) {
-        existingMembership.status = OrganizationMemberStatus.ACTIVE;
-        existingMembership.role = invitation.role;
-        existingMembership.joinedAt = new Date();
-        await existingMembership.save();
+    if (invitation.role === OrganizationMemberRole.OWNER) {
+      // Defense in depth against a stale/reused owner-invitation token after
+      // a later owner transfer moved ownership elsewhere.
+      if (organization.ownerUserId.toString() !== userId) {
+        throw new ApiError(403, 'This invitation no longer matches the organization owner');
       }
-      // else: already ACTIVE — idempotent no-op, no duplicate membership.
+      await organizationMemberService.ensureOwnerMembership(organization._id.toString(), userId);
     } else {
-      try {
-        await OrganizationMember.create({
-          organizationId: organization._id,
-          userId: userObjectId,
-          role: invitation.role,
-          status: OrganizationMemberStatus.ACTIVE,
-          joinedAt: new Date(),
-        });
-      } catch (error: any) {
-        // Race: a concurrent accept already created the membership — fine, continue.
-        if (error?.code !== 11000) throw error;
+      if (userId === organization.ownerUserId.toString()) {
+        throw new ApiError(409, 'You are already the organization owner');
+      }
+
+      const existingMembership = await OrganizationMember.findOne({ organizationId: organization._id, userId: userObjectId });
+
+      if (existingMembership) {
+        if (existingMembership.status !== OrganizationMemberStatus.ACTIVE) {
+          existingMembership.status = OrganizationMemberStatus.ACTIVE;
+          existingMembership.role = invitation.role;
+          existingMembership.joinedAt = new Date();
+          await existingMembership.save();
+        }
+        // else: already ACTIVE — idempotent no-op, no duplicate membership.
+      } else {
+        try {
+          await OrganizationMember.create({
+            organizationId: organization._id,
+            userId: userObjectId,
+            role: invitation.role,
+            status: OrganizationMemberStatus.ACTIVE,
+            joinedAt: new Date(),
+          });
+        } catch (error: any) {
+          // Race: a concurrent accept already created the membership — fine, continue.
+          if (error?.code !== 11000) throw error;
+        }
       }
     }
 
@@ -328,6 +500,18 @@ export class OrganizationInvitationService {
     const organization = await this.getOrganizationById(organizationId);
     this.assertOrganizationMutable(organization);
 
+    return this.performRevoke(organization, invitationId);
+  }
+
+  /** Super-Admin-only counterpart to `revokeInvitation` — no organization-scoped permission check (gated by `requireGlobalSuperAdmin` on the route), otherwise identical semantics (idempotent, never a physical delete). */
+  async revokeOwnerInvitation(organizationId: string, invitationId: string): Promise<Record<string, unknown>> {
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertOrganizationMutable(organization);
+
+    return this.performRevoke(organization, invitationId);
+  }
+
+  private async performRevoke(organization: IOrganization, invitationId: string): Promise<Record<string, unknown>> {
     const invitation = await OrganizationInvitation.findOne({
       _id: invitationId,
       organizationId: organization._id,
@@ -393,9 +577,13 @@ export class OrganizationInvitationService {
     }
   }
 
+  /** ARCHIVED (soft-deleted) and SUSPENDED both block invitation mutation/acceptance identically — distinct lifecycle states, same operational-access treatment (D6). */
   private assertOrganizationMutable(organization: IOrganization): void {
     if (organization.status === OrganizationStatus.ARCHIVED) {
       throw new ApiError(409, 'Organization is archived');
+    }
+    if (organization.status === OrganizationStatus.SUSPENDED) {
+      throw new ApiError(409, 'Organization is suspended');
     }
   }
 

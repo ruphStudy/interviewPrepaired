@@ -29,6 +29,8 @@ interface AuthContextType {
   authError: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string, acceptedTerms: boolean, acceptedPrivacyPolicy: boolean) => Promise<void>;
+  /** Adopts an already-issued token+user (e.g. from owner-account activation, which returns its own login token) without a second network round trip — mirrors login/register's own state-setting exactly. */
+  loginWithToken: (newToken: string, userData: User) => void;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -174,6 +176,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const loginWithToken = (newToken: string, userData: User) => {
+    setToken(newToken);
+    setUser(userData);
+    setAuthError(null);
+    localStorage.setItem('authToken', newToken);
+  };
+
   /** Revokes the session server-side FIRST (best-effort) — frontend local state is always cleared regardless of the API call's outcome. */
   const logout = async () => {
     const activeToken = token;
@@ -223,6 +232,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     authError,
     login,
     register,
+    loginWithToken,
     logout,
     logoutAll,
     refreshUser,

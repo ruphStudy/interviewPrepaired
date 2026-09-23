@@ -31,6 +31,17 @@ export interface IUser extends Document {
   emailVerificationSentAt?: Date;
   resetPasswordToken?: string;
   resetPasswordExpire?: Date;
+  /**
+   * Set true ONLY by Super Admin org-owner provisioning (D2) when this
+   * account is created with an unknown, never-disclosed random password —
+   * cleared to false the moment the real owner sets their own password via
+   * `OrganizationInvitationService.activateOwnerAccount`. This is the
+   * security gate for that PUBLIC (no-auth) endpoint: it refuses to touch
+   * the password of any account where this isn't true, so a stolen/shared
+   * OWNER-invitation link for an EXISTING owner (who already has a real
+   * password, D3) can never be used to hijack their password.
+   */
+  pendingPasswordActivation: boolean;
   /** Login brute-force protection (PR-AUTH-4). */
   failedLoginAttempts: number;
   loginLockedUntil?: Date;
@@ -131,6 +142,10 @@ const userSchema = new Schema<IUser>(
     emailVerificationSentAt: { type: Date },
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpire: Date,
+    pendingPasswordActivation: {
+      type: Boolean,
+      default: false,
+    },
     failedLoginAttempts: {
       type: Number,
       default: 0,
