@@ -169,6 +169,22 @@ export class InstituteStudentController {
   });
 
   /**
+   * POST /api/v1/organizations/:organizationId/students/:studentId/reactivate
+   * Requires ORGANIZATION_UPDATE. Symmetric with DELETE (removeStudent) — Institute-scoped only, never touches the linked User's global account.
+   */
+  public reactivateStudent = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { studentId } = req.params;
+    const student = await instituteStudentService.reactivateStudent(context.organizationId, context.role, studentId);
+
+    res.status(200).json(successResponse('Institute student reactivated successfully', { student }));
+  });
+
+  /**
    * POST /api/v1/organizations/:organizationId/students/:studentId/link-user
    * Requires ORGANIZATION_UPDATE. Links to an EXISTING active User — never creates one.
    */

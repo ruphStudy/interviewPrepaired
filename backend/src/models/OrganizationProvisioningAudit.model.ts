@@ -9,7 +9,15 @@ export type OrganizationProvisioningAction =
   | 'owner_invitation_accepted'
   | 'organization_suspended'
   | 'organization_reactivated'
-  | 'owner_changed';
+  | 'owner_changed'
+  // Institute People Management (PR-PEOPLE-1) — additive, same append-only
+  // audit trail, same "never a secret/token/password in metadata" discipline.
+  | 'trainer_invited'
+  | 'student_added'
+  | 'people_import_completed'
+  | 'people_relationship_disabled'
+  | 'people_relationship_reactivated'
+  | 'bulk_assignment_created';
 
 export type OrganizationProvisioningStatus = 'pending' | 'success' | 'failed';
 
@@ -59,6 +67,12 @@ const organizationProvisioningAuditSchema = new Schema<IOrganizationProvisioning
         'organization_suspended',
         'organization_reactivated',
         'owner_changed',
+        'trainer_invited',
+        'student_added',
+        'people_import_completed',
+        'people_relationship_disabled',
+        'people_relationship_reactivated',
+        'bulk_assignment_created',
       ],
       required: true,
     },

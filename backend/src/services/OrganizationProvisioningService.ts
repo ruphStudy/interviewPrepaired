@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { Types } from 'mongoose';
 import Organization, { IOrganization, IInstituteProfile, ICompanyProfile, IOrganizationSettings } from '../models/Organization.model';
 import OrganizationMember from '../models/OrganizationMember.model';
@@ -385,24 +384,12 @@ export class OrganizationProvisioningService {
   }
 
   /**
-   * D2 — a real, password-auth-capable User whose password is a
-   * cryptographically random value known to no one (never disclosed, never
-   * logged) — the account only becomes usable once the owner completes
-   * activation via their invitation token. `role` is deliberately never
-   * set here (schema default 'user') — an org owner is never granted the
-   * global platform-admin role just by being provisioned.
+   * D2 — thin delegate to the shared, generalized primitive (now also used
+   * by Institute Trainer/Student onboarding) — see
+   * `UserIdentityService.createUserAwaitingActivation`'s doc comment.
    */
   private async createOwnerAwaitingActivation(normalizedEmail: string, name?: string): Promise<IUser> {
-    const randomPassword = crypto.randomBytes(32).toString('hex');
-    return User.create({
-      name: (name && name.trim()) || normalizedEmail.split('@')[0],
-      email: normalizedEmail,
-      password: randomPassword,
-      isVerified: false,
-      // Security gate for OrganizationInvitationService.activateOwnerAccount
-      // (public, no-auth) — see User.model.ts's doc comment on this field.
-      pendingPasswordActivation: true,
-    });
+    return userIdentityService.createUserAwaitingActivation(normalizedEmail, name);
   }
 
   private async getOrganizationOrThrow(organizationId: string): Promise<IOrganization> {

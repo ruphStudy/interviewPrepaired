@@ -263,6 +263,68 @@ export interface Trainer {
   profile: TrainerProfile | null;
 }
 
+export type TrainerInvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+
+/** A pending/all OWNER... err, TRAINER-role OrganizationInvitation — not yet reflected as a Trainer membership. */
+export interface TrainerInvitation {
+  id: string;
+  organizationId: string;
+  email: string;
+  status: TrainerInvitationStatus;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export type ListTrainerInvitationsResponse = ApiEnvelope<{ invitations: TrainerInvitation[]; pagination: Pagination }>;
+
+export type PeopleImportUserType = 'TRAINER' | 'STUDENT';
+export type PeopleImportRowStatus = 'valid_new_user' | 'valid_existing_user' | 'already_existed' | 'conflict' | 'duplicate_in_file' | 'invalid';
+
+export interface PeopleImportPreviewRow {
+  index: number;
+  name: string;
+  email: string;
+  userType?: PeopleImportUserType;
+  status: PeopleImportRowStatus;
+  reason?: string;
+}
+
+export interface PeopleImportPreviewResult {
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  newUsers: number;
+  existingUsers: number;
+  duplicateRows: number;
+  trainersCount: number;
+  studentsCount: number;
+  rows: PeopleImportPreviewRow[];
+}
+
+export type PeopleImportRowOutcome = 'created' | 'linked_existing' | 'already_existed' | 'invited' | 'conflict' | 'failed';
+
+export interface PeopleImportResultRow {
+  index: number;
+  email: string;
+  userType?: PeopleImportUserType;
+  outcome: PeopleImportRowOutcome;
+  error?: string;
+}
+
+export interface PeopleImportCommitResult {
+  total: number;
+  created: number;
+  linkedExisting: number;
+  alreadyExisted: number;
+  invited: number;
+  conflict: number;
+  failed: number;
+  results: PeopleImportResultRow[];
+}
+
+export type PreviewPeopleImportResponse = ApiEnvelope<PeopleImportPreviewResult>;
+export type CommitPeopleImportResponse = ApiEnvelope<PeopleImportCommitResult>;
+
 export interface TrainerProfilePayload {
   employeeCode?: string;
   designation?: string;
@@ -922,12 +984,22 @@ class InstituteApiService {
     }
   }
 
-  /** Soft-deactivate (status -> inactive), idempotent — never a physical delete. No reactivate endpoint exists. */
+  /** Soft-deactivate (status -> inactive), idempotent — never a physical delete. */
   async deactivateStudent(organizationId: string, studentId: string): Promise<void> {
     try {
       await this.api.delete(`/organizations/${organizationId}/students/${studentId}`);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to deactivate student');
+    }
+  }
+
+  /** Institute-scoped only — never touches the linked User's global EnterSkill account. Idempotent. */
+  async reactivateStudent(organizationId: string, studentId: string): Promise<GetStudentResponse> {
+    try {
+      const response = await this.api.post<GetStudentResponse>(`/organizations/${organizationId}/students/${studentId}/reactivate`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to reactivate student');
     }
   }
 
@@ -990,6 +1062,48 @@ class InstituteApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to bulk assign students');
+    }
+  }
+
+  // ---- People bulk import (CSV/XLSX, Trainer+Student) ----
+
+  /** Stateless — parses+validates the file and reports counts/per-row status, persists nothing. */
+  async previewPeopleImport(organizationId: string, file: File): Promise<PreviewPeopleImportResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await this.api.post<PreviewPeopleImportResponse>(
+        `/organizations/${organizationId}/people/import/preview`,
+        formData
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to preview import');
+    }
+  }
+
+  /** Re-sends the SAME file to commit exactly what was previewed — the backend re-validates against current state rather than trusting the earlier preview. */
+  async commitPeopleImport(organizationId: string, file: File): Promise<CommitPeopleImportResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await this.api.post<CommitPeopleImportResponse>(
+        `/organizations/${organizationId}/people/import/commit`,
+        formData
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to import people');
+    }
+  }
+
+  /** Auth is bearer-token based, so the file can't be fetched via a plain <a href> — this returns the raw Blob for the caller to turn into an object URL/download. */
+  async downloadPeopleImportTemplate(organizationId: string): Promise<Blob> {
+    try {
+      const response = await this.api.get(`/organizations/${organizationId}/people/import/template`, { responseType: 'blob' });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to download import template');
     }
   }
 
@@ -1095,6 +1209,38 @@ class InstituteApiService {
     } catch (error: any) {
       throw new Error(error.message || 'Failed to update trainer profile');
     }
+  }
+
+  /** Onboards a Trainer whose email may not have a User account yet (creates one, awaiting activation) — or reuses an existing one. An existing user can also be added directly via the generic Members page. */
+  async inviteTrainer(organizationId: string, payload: { name?: string; email: string }): Promise<ApiEnvelope<{ invitation: TrainerInvitation }>> {
+    try {
+      const response = await this.api.post<ApiEnvelope<{ invitation: TrainerInvitation }>>(
+        `/organizations/${organizationId}/trainers/invite`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to invite trainer');
+    }
+  }
+
+  async listTrainerInvitations(
+    organizationId: string,
+    params: { page?: number; limit?: number; status?: TrainerInvitationStatus } = {}
+  ): Promise<ListTrainerInvitationsResponse> {
+    try {
+      const response = await this.api.get<ListTrainerInvitationsResponse>(`/organizations/${organizationId}/trainers/invitations`, {
+        params,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load trainer invitations');
+    }
+  }
+
+  /** Re-invites the same email — resend and "correct a typo" are the same operation (rotates the pending invitation). */
+  async resendTrainerInvitation(organizationId: string, email: string): Promise<ApiEnvelope<{ invitation: TrainerInvitation }>> {
+    return this.inviteTrainer(organizationId, { email });
   }
 
   // ---- Trainer Assignments ----

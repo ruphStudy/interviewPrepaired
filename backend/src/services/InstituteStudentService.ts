@@ -5,6 +5,7 @@ import InstituteCourse from '../models/InstituteCourse.model';
 import InstituteBatch from '../models/InstituteBatch.model';
 import InstituteStudent from '../models/InstituteStudent.model';
 import { userIdentityService } from './UserIdentityService';
+import { accountActivationService } from './AccountActivationService';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
@@ -174,6 +175,76 @@ export class InstituteStudentService {
     this.assertOrganizationMutable(organization);
 
     return this.createStudentRow(organization, fields);
+  }
+
+  /**
+   * PR-PEOPLE-1 §3 — composes THREE already-tested primitives (createStudent,
+   * UserIdentityService's resolve-or-create, linkUser) rather than
+   * intertwining account-linking into `createStudentRow` itself, so every
+   * OTHER existing caller of createStudent/bulkCreateStudents/createStudentRow
+   * is completely unaffected. The roster row is created first and always
+   * succeeds/fails on its own terms; account resolution/creation/linking is
+   * then attempted as a second, independent step — a linking failure (e.g.
+   * this email's User is already linked to a different student in this
+   * org — 9C/D) never rolls back or fails the roster row itself, matching
+   * this file's own "partial success, never lose data" convention.
+   */
+  async createStudentWithAccountLink(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    fields: StudentFields
+  ): Promise<{ student: Record<string, unknown>; accountLinkStatus: 'linked_new_user' | 'linked_existing_user' | 'not_linked' | 'link_failed'; linkError?: string }> {
+    const student = await this.createStudent(organizationId, actingRole, fields);
+
+    const email = fields.email?.trim();
+    if (!email) {
+      return { student, accountLinkStatus: 'not_linked' };
+    }
+
+    try {
+      let user = await userIdentityService.findUserByEmail(email);
+      const isNewUser = !user;
+      if (!user) {
+        const name = `${fields.firstName ?? ''} ${fields.lastName ?? ''}`.trim();
+        user = await userIdentityService.createUserAwaitingActivation(email, name);
+      }
+
+      const linked = await this.linkUser(organizationId, actingRole, student.id as string, (user._id as Types.ObjectId).toString());
+
+      if (isNewUser) {
+        const organization = await this.getOrganizationById(organizationId);
+        await accountActivationService.issuePasswordSetupToken(user, organization.name);
+      }
+
+      return { student: linked, accountLinkStatus: isNewUser ? 'linked_new_user' : 'linked_existing_user' };
+    } catch (error: any) {
+      const message = error instanceof ApiError ? error.message : 'Failed to link an account to this student';
+      console.error('[InstituteStudentService] Account link failed for new student (roster row still created)', {
+        studentId: student.id,
+        error,
+      });
+      return { student, accountLinkStatus: 'link_failed', linkError: message };
+    }
+  }
+
+  /** Symmetric with `removeStudent` — reverses an Institute-scoped disable, never touches the linked User's global account. Idempotent if already active. */
+  async reactivateStudent(organizationId: string, actingRole: OrganizationMemberRole, studentId: string): Promise<Record<string, unknown>> {
+    this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    const student = await InstituteStudent.findOne({ _id: studentId, organizationId: organization._id });
+    if (!student) {
+      throw new ApiError(404, 'Student not found');
+    }
+
+    if (student.status !== InstituteStudentStatus.ACTIVE) {
+      student.status = InstituteStudentStatus.ACTIVE;
+      await student.save();
+    }
+
+    return this.toDetail(student.toObject());
   }
 
   /**
@@ -695,9 +766,13 @@ export class InstituteStudentService {
     }
   }
 
+  /** ARCHIVED (soft-deleted) and SUSPENDED both block mutation identically — same D6 treatment as OrganizationService/OrganizationMemberService/OrganizationInvitationService. */
   private assertOrganizationMutable(organization: IOrganization): void {
     if (organization.status === OrganizationStatus.ARCHIVED) {
       throw new ApiError(409, 'Organization is archived');
+    }
+    if (organization.status === OrganizationStatus.SUSPENDED) {
+      throw new ApiError(409, 'Organization is suspended');
     }
   }
 

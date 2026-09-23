@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { User, IUser } from '../models/user.model';
 
 /**
@@ -51,6 +52,35 @@ class UserIdentityService {
   async findUserByEmail(email: string): Promise<IUser | null> {
     const normalized = normalizeEmail(email);
     return User.findOne({ email: normalized });
+  }
+
+  /**
+   * Creates a real, password-auth-capable User whose password is a
+   * cryptographically random value known to no one (never disclosed, never
+   * logged) — the account only becomes usable once the person completes
+   * activation via an invitation/activation token that later sets a real
+   * password (see `pendingPasswordActivation` on `user.model.ts`, and
+   * `AccountActivationService`/`OrganizationInvitationService.activateOwnerAccount`
+   * for the two existing ways that flag gets cleared). `role` is
+   * deliberately never set here (schema default `'user'`) — provisioning
+   * someone this way NEVER grants the global platform-admin role, whatever
+   * organization-scoped role they're being onboarded for.
+   *
+   * Originally built only for Super Admin owner provisioning; generalized
+   * here so Institute Trainer/Student onboarding (and any future caller)
+   * shares the exact same account-creation primitive rather than
+   * duplicating it.
+   */
+  async createUserAwaitingActivation(email: string, name?: string): Promise<IUser> {
+    const normalizedEmail = normalizeEmail(email);
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    return User.create({
+      name: (name && name.trim()) || normalizedEmail.split('@')[0],
+      email: normalizedEmail,
+      password: randomPassword,
+      isVerified: false,
+      pendingPasswordActivation: true,
+    });
   }
 }
 

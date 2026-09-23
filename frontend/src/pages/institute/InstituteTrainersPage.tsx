@@ -2,10 +2,82 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import AuthenticatedLayout from '../../components/AuthenticatedLayout';
 import { useOrganization } from '../../contexts/OrganizationContext';
-import instituteApi, { Trainer, InstituteEntityStatus } from '../../api/instituteApi';
-import { AlertCircle, Loader2, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import instituteApi, { Trainer, InstituteEntityStatus, TrainerInvitation } from '../../api/instituteApi';
+import organizationApi from '../../api/organizationApi';
+import { AlertCircle, Loader2, Search, ChevronLeft, ChevronRight, UserPlus, X, RotateCw, Ban } from 'lucide-react';
 
 const PAGE_LIMIT = 20;
+
+interface InviteTrainerModalProps {
+  organizationId: string;
+  onClose: () => void;
+  onInvited: () => void;
+}
+
+const InviteTrainerModal: React.FC<InviteTrainerModalProps> = ({ organizationId, onClose, onInvited }) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await instituteApi.inviteTrainer(organizationId, { name: name.trim() || undefined, email: email.trim() });
+      onInvited();
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to invite trainer');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="card max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="section-title text-lg">Invite Trainer</h2>
+          <button onClick={onClose} className="text-mentor-text-muted hover:text-mentor-text" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="text-sm text-mentor-text-secondary mb-4">
+          If this email already has an EnterSkill account, they'll be added directly. Otherwise a new account is created and they'll
+          receive a set-password link.
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-mentor-text-muted mb-1">Name (optional)</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input w-full" maxLength={50} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-mentor-text-muted mb-1">Email</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="input w-full"
+              maxLength={254}
+            />
+          </div>
+          {error && <p className="text-sm text-mentor-error">{error}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn btn-secondary">
+              Cancel
+            </button>
+            <button type="submit" disabled={submitting || !email.trim()} className="btn btn-primary">
+              {submitting ? 'Sending...' : 'Send Invite'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
 
 const InstituteTrainersPage: React.FC = () => {
   const { organizationId } = useParams<{ organizationId: string }>();
@@ -26,6 +98,33 @@ const InstituteTrainersPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<InstituteEntityStatus | ''>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [pendingInvitations, setPendingInvitations] = useState<TrainerInvitation[]>([]);
+  const [invitationsLoading, setInvitationsLoading] = useState(true);
+  const canManage = hasPermission('members:manage');
+
+  const fetchPendingInvitations = useCallback(async () => {
+    if (!organizationId) return;
+    setInvitationsLoading(true);
+    try {
+      const response = await instituteApi.listTrainerInvitations(organizationId, { page: 1, limit: 50, status: 'pending' });
+      setPendingInvitations(response.data.invitations);
+    } catch {
+      // Non-fatal — the main trainer list is the primary surface.
+    } finally {
+      setInvitationsLoading(false);
+    }
+  }, [organizationId]);
+
+  const handleRevokeInvitation = async (invitationId: string) => {
+    if (!organizationId) return;
+    try {
+      await organizationApi.revokeInvitation(organizationId, invitationId);
+      fetchPendingInvitations();
+    } catch (err: any) {
+      setError(err.message || 'Failed to revoke invitation');
+    }
+  };
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -60,6 +159,15 @@ const InstituteTrainersPage: React.FC = () => {
   useEffect(() => {
     if (!isSyncing && activeOrganization?.type === 'institute') fetchTrainers();
   }, [isSyncing, activeOrganization, fetchTrainers]);
+
+  useEffect(() => {
+    if (!isSyncing && activeOrganization?.type === 'institute' && canManage) fetchPendingInvitations();
+  }, [isSyncing, activeOrganization, canManage, fetchPendingInvitations]);
+
+  const handleInvited = () => {
+    fetchPendingInvitations();
+    fetchTrainers();
+  };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,12 +238,61 @@ const InstituteTrainersPage: React.FC = () => {
   return (
     <AuthenticatedLayout>
       <main className="page-container py-8">
-        <div className="page-header">
-          <h1 className="page-title">Trainers</h1>
-          <p className="page-subtitle">
-            Institute trainers for {activeOrganization.name}. To add a trainer, assign the Trainer role on the Members page.
-          </p>
+        <div className="page-header flex items-start justify-between gap-4">
+          <div>
+            <h1 className="page-title">Trainers</h1>
+            <p className="page-subtitle">
+              Institute trainers for {activeOrganization.name}. An existing EnterSkill user can also be added directly on the Members
+              page.
+            </p>
+          </div>
+          {canManage && (
+            <button onClick={() => setShowInviteModal(true)} className="btn btn-primary shrink-0">
+              <UserPlus size={16} />
+              Invite Trainer
+            </button>
+          )}
         </div>
+
+        {canManage && !invitationsLoading && pendingInvitations.length > 0 && (
+          <div className="card mb-4">
+            <h2 className="text-sm font-semibold text-mentor-text mb-3">Pending Invitations ({pendingInvitations.length})</h2>
+            <div className="divide-y divide-mentor-border">
+              {pendingInvitations.map((invitation) => (
+                <div key={invitation.id} className="flex items-center justify-between py-2.5">
+                  <div>
+                    <div className="text-sm font-medium text-mentor-text">{invitation.email}</div>
+                    <div className="text-xs text-mentor-text-muted">
+                      Expires {new Date(invitation.expiresAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => instituteApi.resendTrainerInvitation(organizationId!, invitation.email).then(fetchPendingInvitations)}
+                      className="btn btn-secondary px-3 py-1.5 text-xs"
+                      title="Resend"
+                    >
+                      <RotateCw size={13} />
+                      Resend
+                    </button>
+                    <button
+                      onClick={() => handleRevokeInvitation(invitation.id)}
+                      className="btn btn-secondary px-3 py-1.5 text-xs text-mentor-error"
+                      title="Revoke"
+                    >
+                      <Ban size={13} />
+                      Revoke
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {showInviteModal && organizationId && (
+          <InviteTrainerModal organizationId={organizationId} onClose={() => setShowInviteModal(false)} onInvited={handleInvited} />
+        )}
 
         <form onSubmit={handleSearchSubmit} className="flex flex-wrap items-center gap-3 mb-4">
           <div className="relative">

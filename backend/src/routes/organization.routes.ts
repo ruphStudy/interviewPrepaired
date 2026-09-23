@@ -11,6 +11,7 @@ import instituteOverviewController from '../controllers/InstituteOverviewControl
 import instituteBatchController from '../controllers/InstituteBatchController';
 import instituteStudentController from '../controllers/InstituteStudentController';
 import instituteTrainerController from '../controllers/InstituteTrainerController';
+import institutePeopleImportController from '../controllers/InstitutePeopleImportController';
 import instituteTrainerAssignmentController from '../controllers/InstituteTrainerAssignmentController';
 import instituteInterviewTemplateController from '../controllers/InstituteInterviewTemplateController';
 import instituteQuestionSetController from '../controllers/InstituteQuestionSetController';
@@ -143,6 +144,7 @@ import { EmployerJobHiringTeamRole } from '../constants/employerJobHiringTeam';
 import { EmployerJobDescriptionSourceType, JD_RAW_TEXT_MIN_LENGTH, JD_RAW_TEXT_MAX_LENGTH } from '../constants/employerJobDescription';
 import { EmployerCandidateSource, EmployerCandidateStatus } from '../constants/employerCandidate';
 import { ALLOWED_RESUME_EXTENSIONS, MAX_RESUME_FILE_SIZE_BYTES, isAllowedResumeFile } from '../constants/employerCandidateResume';
+import { MAX_PEOPLE_IMPORT_FILE_SIZE_BYTES, ALLOWED_PEOPLE_IMPORT_EXTENSIONS, isAllowedPeopleImportFile } from '../constants/institutePeopleImport';
 import { EmployerJobApplicationSource, EmployerJobApplicationStatus } from '../constants/employerJobApplication';
 import { InstituteBatchStatus } from '../constants/instituteBatch';
 import { InstituteInterviewTemplateStatus } from '../constants/instituteInterviewTemplate';
@@ -915,6 +917,17 @@ const updateTrainerProfileValidation = [
     }
     return true;
   }),
+];
+
+const inviteTrainerValidation = [
+  body('email').notEmpty().withMessage('email is required').isEmail().withMessage('email must be valid').isLength({ max: 254 }),
+  body('name').optional().isString().trim().isLength({ max: 50 }).withMessage('name must be at most 50 characters'),
+];
+
+const listTrainerInvitationsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(OrganizationInvitationStatus)).withMessage('Invalid status'),
 ];
 
 // ============================================================================
@@ -4969,6 +4982,16 @@ router.delete(
 const linkStudentUserValidation = [body('userId').optional().isMongoId().withMessage('userId must be a valid ID')];
 
 router.post(
+  '/:organizationId/students/:studentId/reactivate',
+  protect,
+  ...organizationIdValidation,
+  ...studentIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.ORGANIZATION_UPDATE),
+  instituteStudentController.reactivateStudent
+);
+
+router.post(
   '/:organizationId/students/:studentId/link-user',
   protect,
   ...organizationIdValidation,
@@ -5020,6 +5043,79 @@ router.put(
   validate,
   requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
   instituteTrainerController.updateTrainerProfile
+);
+
+// PR-PEOPLE-1 §2 — onboards a Trainer whose email may not have a User yet
+// (see InstituteTrainerService.inviteTrainer / OrganizationInvitationService.
+// createInvitation's auto-create-if-missing). An EXISTING user + EXISTING
+// account can still be added directly via the generic
+// `POST /:organizationId/members` (role: trainer) — unchanged, untouched.
+router.post(
+  '/:organizationId/trainers/invite',
+  protect,
+  ...organizationIdValidation,
+  ...inviteTrainerValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  instituteTrainerController.inviteTrainer
+);
+
+router.get(
+  '/:organizationId/trainers/invitations',
+  protect,
+  ...organizationIdValidation,
+  ...listTrainerInvitationsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  instituteTrainerController.getTrainerInvitations
+);
+
+// ---- Institute People bulk import (PR-PEOPLE-1) — CSV/XLSX file, Trainer
+// + Student rows in one file (userType column). Stateless: preview and
+// commit each independently re-parse the uploaded file; nothing about a
+// preview is persisted server-side. Institute-only (enforced inside the
+// service, same as every other Institute-scoped service here). ----
+
+const peopleImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_PEOPLE_IMPORT_FILE_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const check = isAllowedPeopleImportFile(file.originalname);
+    if (!check.allowed) {
+      cb(new Error(`Unsupported file type. Supported types: ${ALLOWED_PEOPLE_IMPORT_EXTENSIONS.join(', ')}`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+router.post(
+  '/:organizationId/people/import/preview',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  peopleImportUpload.single('file'),
+  institutePeopleImportController.preview
+);
+
+router.post(
+  '/:organizationId/people/import/commit',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  peopleImportUpload.single('file'),
+  institutePeopleImportController.commit
+);
+
+router.get(
+  '/:organizationId/people/import/template',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  institutePeopleImportController.downloadTemplate
 );
 
 // ---- Trainer Assignments (12B) — links a trainer to exactly one course XOR batch. Institute-only. GET allowed on archived org; mutations => 409. ----

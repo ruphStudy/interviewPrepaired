@@ -5,3 +5,4 @@ export {
   EmployerInterviewInvitationTemplateParams,
 } from './employerInterviewInvitation';
 export { renderEmailVerificationEmail, EmailVerificationTemplateParams } from './emailVerification';
+export { renderAccountSetupEmail, AccountSetupTemplateParams } from './accountSetup';

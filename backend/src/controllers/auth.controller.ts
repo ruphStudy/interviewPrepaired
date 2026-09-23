@@ -292,6 +292,12 @@ export const resetPassword = catchAsync(
     user.password = req.body.password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpire = undefined;
+    // Whatever path created this account (e.g. Institute Trainer/Student
+    // onboarding, UserIdentityService.createUserAwaitingActivation), the
+    // real owner has now set a real password through this token — clear
+    // the flag unconditionally so it can never get stuck true for an
+    // account that already has a usable password of its own.
+    user.pendingPasswordActivation = false;
     await user.save();
 
     // Mandatory — a reset must invalidate every previously issued session,

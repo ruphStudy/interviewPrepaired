@@ -20,6 +20,8 @@ import { env } from '../config/environment';
 interface CreateInvitationParams {
   email: string;
   role: OrganizationMemberRole;
+  /** Only used when the email has no existing User — a fresh one is created awaiting activation (see below). Ignored (a warning-free no-op) when the email already has an account. */
+  name?: string;
 }
 
 interface ListInvitationsParams {
@@ -59,7 +61,7 @@ export class OrganizationInvitationService {
     // detect and reject inviting an email that belongs to an existing (even
     // inactive) owner/member, so this intentionally matches regardless of
     // `isActive` (see UserIdentityService.findUserByEmail's doc comment).
-    const invitedUser = await userIdentityService.findUserByEmail(normalizedEmail);
+    let invitedUser = await userIdentityService.findUserByEmail(normalizedEmail);
     if (invitedUser) {
       if (invitedUser._id.toString() === organization.ownerUserId.toString()) {
         throw new ApiError(409, 'This user is already the organization owner');
@@ -72,6 +74,17 @@ export class OrganizationInvitationService {
         throw new ApiError(409, 'This user is already a member of the organization');
       }
       // An INACTIVE former membership is fine — inviting re-adds them via acceptance.
+    } else {
+      // No account for this email yet — create one immediately (unknown,
+      // never-disclosed random password; never the global 'admin' role)
+      // rather than requiring the invitee to self-register first. This
+      // generalizes the same D2 pattern built for Super Admin owner
+      // provisioning to every ordinary member invite (Institute
+      // Trainer/etc.) — see UserIdentityService.createUserAwaitingActivation.
+      // `activateOwnerAccount` (any non-OWNER role too, despite the name)
+      // is how they complete activation; `acceptInvitation` still applies
+      // once they have a real password.
+      invitedUser = await userIdentityService.createUserAwaitingActivation(normalizedEmail, params.name);
     }
 
     const { invitation, token } = await this.upsertPendingInvitation(organization, params.role, normalizedEmail, invitedByUserId);
@@ -303,8 +316,11 @@ export class OrganizationInvitationService {
 
   /**
    * D2 — public, no auth (see organizationInvitation.routes.ts). Completes
-   * a NEW owner's account activation: the User row already exists (created
-   * synchronously at provisioning/transfer time, per D1, with an unknown
+   * a NEW invitee's account activation, for ANY invitation role (Owner,
+   * Trainer, etc — the name predates that generalization; kept to minimize
+   * blast radius rather than renamed): the User row already exists (created
+   * synchronously at provisioning/invite time by
+   * `UserIdentityService.createUserAwaitingActivation`, with an unknown
    * random password) but has never had a real password set. This is the
    * ONLY path that sets a password without an authenticated session —
    * gated entirely by possession of the invitation's raw token, exactly
@@ -319,28 +335,26 @@ export class OrganizationInvitationService {
   ): Promise<{ token: string; user: Record<string, unknown>; organization: Record<string, unknown>; membership: Record<string, unknown> }> {
     const { invitation, organization } = await this.loadPendingInvitationForAcceptance(rawToken);
 
-    if (invitation.role !== OrganizationMemberRole.OWNER) {
-      throw new ApiError(400, 'This invitation does not support password activation');
-    }
-
     const user = await User.findOne({ email: invitation.email });
     if (!user) {
-      // Should never happen — the owner User is always created synchronously
-      // BEFORE this invitation ever exists (D1/D2). Loud, not silent.
-      console.error('[OrganizationInvitationService] Owner-invitation activation found no User for invitation email', {
+      // Should never happen — this invitation's User is always created
+      // synchronously BEFORE the invitation itself (D1/D2, or
+      // createInvitation's own auto-create-if-missing branch). Loud, not silent.
+      console.error('[OrganizationInvitationService] Invitation activation found no User for invitation email', {
         invitationId: (invitation._id as Types.ObjectId).toString(),
       });
       throw new ApiError(500, 'Unable to activate this account — please contact support');
     }
 
-    // SECURITY: both a brand-new owner (D2) and an already-existing owner
-    // (D3) get an identical OWNER-role invitation — nothing on the
-    // invitation itself distinguishes them. Without this check, a
-    // stolen/shared/forwarded owner-invitation link for an EXISTING owner
-    // (who already has a real password) could be used to silently
-    // overwrite it via this PUBLIC, unauthenticated endpoint. Only a User
-    // created awaiting activation (unknown random password) may ever have
-    // its password set here — see User.model.ts's doc comment.
+    // SECURITY: a brand-new invitee and an already-existing account get a
+    // structurally identical invitation — nothing on the invitation itself
+    // distinguishes them. Without this check, a stolen/shared/forwarded
+    // invitation link for an EXISTING account (who already has a real
+    // password) could be used to silently overwrite it via this PUBLIC,
+    // unauthenticated endpoint. Only a User created awaiting activation
+    // (unknown random password) may ever have its password set here — see
+    // User.model.ts's doc comment. This is the ONLY gate this method relies
+    // on for that distinction — it is deliberately role-agnostic.
     if (!user.pendingPasswordActivation) {
       throw new ApiError(400, 'This account already has a password — please log in instead');
     }

@@ -3,9 +3,12 @@ import OrganizationMember, { IOrganizationMember } from '../models/OrganizationM
 import InstituteTrainerProfile from '../models/InstituteTrainerProfile.model';
 import { InstituteTrainerProfileStatus } from '../constants/instituteTrainerProfile';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
+import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { User } from '../models/user.model';
+import { organizationInvitationService } from './OrganizationInvitationService';
+import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 import { ApiError } from '../utils/ApiError';
 
 interface ListTrainersParams {
@@ -13,6 +16,11 @@ interface ListTrainersParams {
   limit: number;
   status?: OrganizationMemberStatus;
   search?: string;
+}
+
+interface InviteTrainerFields {
+  name?: string;
+  email: string;
 }
 
 interface TrainerProfileFields {
@@ -24,19 +32,79 @@ interface TrainerProfileFields {
 }
 
 /**
- * Institute trainer management (12A). Trainer identity is the EXISTING
- * OrganizationMember row with role TRAINER — no separate Trainer/account
- * model. Authorization mirrors the other institute services: the
- * `requireOrganizationPermission` middleware (8D) resolves the caller's
- * trusted role onto the request, and these methods take that
+ * Institute trainer management (12A, extended by PR-PEOPLE-1). Trainer
+ * identity is the EXISTING OrganizationMember row with role TRAINER — no
+ * separate Trainer/account model. Authorization mirrors the other institute
+ * services: the `requireOrganizationPermission` middleware (8D) resolves the
+ * caller's trusted role onto the request, and these methods take that
  * already-trusted `organizationId`/`actingRole` — never an `actingUserId` +
  * re-deriving ownership. Every method re-asserts the relevant permission
  * via the centralized 8C matrix as defense in depth. Institute-only: a
- * COMPANY organization gets 400 from every method here. Never
- * creates/modifies Users, invitations, or the membership's own role/status —
- * this only manages the optional profile metadata layered on top.
+ * COMPANY organization gets 400 from every method here. Disable/reactivate
+ * and "add an EXISTING user as Trainer directly" are NOT duplicated here —
+ * they already exist generically via `organizationMemberService`
+ * (removeMember/updateMember/addMember) and the `/organizations/:id/members`
+ * routes, reused as-is. `inviteTrainer` (below) covers the one real gap:
+ * onboarding a Trainer whose email has no User yet.
  */
 export class InstituteTrainerService {
+  /**
+   * PR-PEOPLE-1 §2 — thin, Institute-scoped wrapper around the generic
+   * member-invitation flow: `organizationInvitationService.createInvitation`
+   * already (a) resolves an existing User by email or creates one awaiting
+   * activation if none exists, (b) rejects/rotates duplicate active
+   * invites, (c) rejects an already-ACTIVE Trainer/member, and (d) is
+   * reused UNCHANGED by every other member-invite caller — this method adds
+   * nothing but the Institute-type guard and the audit record. Works
+   * identically whether the email is brand new or already has an account
+   * (the existing method's own new-vs-existing branching handles both).
+   */
+  async inviteTrainer(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    actorUserId: string,
+    fields: InviteTrainerFields
+  ): Promise<Record<string, unknown>> {
+    const email = fields.email?.trim();
+    if (!email) {
+      throw new ApiError(400, 'email is required');
+    }
+
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+    this.assertOrganizationMutable(organization);
+
+    const { invitation } = await organizationInvitationService.createInvitation(organizationId, actingRole, actorUserId, {
+      email,
+      role: OrganizationMemberRole.TRAINER,
+      name: fields.name,
+    });
+
+    await organizationProvisioningAuditService.record('trainer_invited', {
+      actorUserId,
+      organizationId,
+      metadata: { email: email.trim().toLowerCase() },
+    });
+
+    return invitation;
+  }
+
+  /** Pending/all TRAINER-role invitations for this institute — reuses the existing generic invitation listing, scoped by role. */
+  async listTrainerInvitations(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    params: { page: number; limit: number; status?: OrganizationInvitationStatus }
+  ): Promise<{ invitations: Array<Record<string, unknown>>; pagination: { page: number; limit: number; total: number; pages: number } }> {
+    const organization = await this.getOrganizationById(organizationId);
+    this.assertIsInstitute(organization);
+
+    return organizationInvitationService.getInvitations(organizationId, actingRole, {
+      page: params.page,
+      limit: params.limit,
+      status: params.status,
+      role: OrganizationMemberRole.TRAINER,
+    });
+  }
   async getTrainers(
     organizationId: string,
     actingRole: OrganizationMemberRole,
@@ -193,9 +261,13 @@ export class InstituteTrainerService {
     }
   }
 
+  /** ARCHIVED (soft-deleted) and SUSPENDED both block mutation identically — same D6 treatment as OrganizationService/OrganizationMemberService/OrganizationInvitationService. Pre-existing gap found while adding `inviteTrainer`: `updateTrainerProfile` was already a mutation method here but had never been updated for SUSPENDED. */
   private assertOrganizationMutable(organization: IOrganization): void {
     if (organization.status === OrganizationStatus.ARCHIVED) {
       throw new ApiError(409, 'Organization is archived');
+    }
+    if (organization.status === OrganizationStatus.SUSPENDED) {
+      throw new ApiError(409, 'Organization is suspended');
     }
   }
 
