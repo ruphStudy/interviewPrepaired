@@ -590,6 +590,99 @@ export type UpdateCandidateStatusResponse = ApiEnvelope<{ candidate: EmployerCan
 export type DeleteCandidatePrivacyResponse = ApiEnvelope<{ candidate: EmployerCandidate }>;
 
 // ============================================================================
+// Employer Recruiters (PR-PEOPLE-2) — recruiter identity is the EXISTING
+// OrganizationMember with role RECRUITER, mirroring Institute's Trainer
+// exactly. `HIRING_MANAGER` (job-local) is a separate, already-existing
+// concept (EmployerJobHiringTeamService) layered on top, not modeled here.
+// ============================================================================
+
+export type OrganizationMemberStatus = 'active' | 'inactive';
+
+export interface EmployerRecruiter {
+  membershipId: string;
+  organizationId: string;
+  user?: { id: string; name: string; email: string };
+  status: OrganizationMemberStatus;
+  joinedAt: string;
+}
+
+export type ListRecruitersResponse = ApiEnvelope<{ recruiters: EmployerRecruiter[]; pagination: Pagination }>;
+
+export type RecruiterInvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+
+export interface RecruiterInvitation {
+  id: string;
+  organizationId: string;
+  email: string;
+  status: RecruiterInvitationStatus;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export type ListRecruiterInvitationsResponse = ApiEnvelope<{ invitations: RecruiterInvitation[]; pagination: Pagination }>;
+
+// ============================================================================
+// Employer People bulk import (PR-PEOPLE-2) — reuses the exact same
+// preview/commit/result shapes as Institute's import (instituteApi.ts's
+// PeopleImportPreviewResult/PeopleImportCommitResult are domain-agnostic;
+// duplicated here as thin type aliases only to avoid a cross-api-module
+// import, not a second definition of the underlying shape).
+// ============================================================================
+
+export type EmployerPeopleImportRowStatus = 'valid_new_user' | 'valid_existing_user' | 'already_existed' | 'conflict' | 'duplicate_in_file' | 'invalid';
+
+export interface EmployerPeopleImportPreviewRow {
+  index: number;
+  name: string;
+  email: string;
+  userType?: string;
+  status: EmployerPeopleImportRowStatus;
+  reason?: string;
+}
+
+export interface EmployerPeopleImportPreviewResult {
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  newUsers: number;
+  existingUsers: number;
+  duplicateRows: number;
+  userTypeCounts: Record<string, number>;
+  rows: EmployerPeopleImportPreviewRow[];
+}
+
+export type EmployerPeopleImportRowOutcome = 'created' | 'linked_existing' | 'already_existed' | 'invited' | 'conflict' | 'failed';
+
+export interface EmployerPeopleImportResultRow {
+  index: number;
+  email: string;
+  userType?: string;
+  outcome: EmployerPeopleImportRowOutcome;
+  error?: string;
+}
+
+export interface EmployerPeopleImportCommitResult {
+  total: number;
+  created: number;
+  linkedExisting: number;
+  alreadyExisted: number;
+  invited: number;
+  conflict: number;
+  failed: number;
+  results: EmployerPeopleImportResultRow[];
+}
+
+export type PreviewEmployerPeopleImportResponse = ApiEnvelope<EmployerPeopleImportPreviewResult>;
+export type CommitEmployerPeopleImportResponse = ApiEnvelope<EmployerPeopleImportCommitResult>;
+
+export interface BulkCreateInterviewInvitationsResult {
+  total: number;
+  invited: number;
+  failed: number;
+  results: Array<{ applicationId: string; status: 'invited' | 'failed'; invitationId?: string; error?: string }>;
+}
+
+// ============================================================================
 // Employer Candidate Resumes (Sprint 18B) — resume FILE storage and
 // versioning only. No AI parsing/text extraction (18C), no application/job
 // linkage, no screening/ranking.
@@ -4944,6 +5037,117 @@ class EmployerApiService {
       return response.data;
     } catch (error: any) {
       throw new Error(error.message || 'Failed to delete candidate data');
+    }
+  }
+
+  // ---- Recruiters (PR-PEOPLE-2) ----
+
+  /** Recruiter identity comes from an existing OrganizationMember with role RECRUITER — never invented/created here. */
+  async listRecruiters(
+    organizationId: string,
+    params: { page?: number; limit?: number; status?: OrganizationMemberStatus; search?: string } = {}
+  ): Promise<ListRecruitersResponse> {
+    try {
+      const response = await this.api.get<ListRecruitersResponse>(`/organizations/${organizationId}/recruiters`, { params });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load recruiters');
+    }
+  }
+
+  /** Onboards a Recruiter whose email may not have a User account yet (creates one, awaiting activation) — or reuses an existing one. An existing user can also be added directly via the generic Members page. */
+  async inviteRecruiter(organizationId: string, payload: { name?: string; email: string }): Promise<ApiEnvelope<{ invitation: RecruiterInvitation }>> {
+    try {
+      const response = await this.api.post<ApiEnvelope<{ invitation: RecruiterInvitation }>>(
+        `/organizations/${organizationId}/recruiters/invite`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to invite recruiter');
+    }
+  }
+
+  async listRecruiterInvitations(
+    organizationId: string,
+    params: { page?: number; limit?: number; status?: RecruiterInvitationStatus } = {}
+  ): Promise<ListRecruiterInvitationsResponse> {
+    try {
+      const response = await this.api.get<ListRecruiterInvitationsResponse>(`/organizations/${organizationId}/recruiters/invitations`, {
+        params,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to load recruiter invitations');
+    }
+  }
+
+  /** Re-invites the same email — resend and "correct a typo" are the same operation (rotates the pending invitation). */
+  async resendRecruiterInvitation(organizationId: string, email: string): Promise<ApiEnvelope<{ invitation: RecruiterInvitation }>> {
+    return this.inviteRecruiter(organizationId, { email });
+  }
+
+  // ---- Employer People bulk import (CSV/XLSX, Recruiter+Candidate) ----
+
+  /** Stateless — parses+validates the file and reports counts/per-row status, persists nothing. */
+  async previewPeopleImport(organizationId: string, file: File): Promise<PreviewEmployerPeopleImportResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await this.api.post<PreviewEmployerPeopleImportResponse>(
+        `/organizations/${organizationId}/employer-people/import/preview`,
+        formData
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to preview import');
+    }
+  }
+
+  /** Re-sends the SAME file to commit exactly what was previewed — the backend re-validates against current state rather than trusting the earlier preview. */
+  async commitPeopleImport(organizationId: string, file: File): Promise<CommitEmployerPeopleImportResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await this.api.post<CommitEmployerPeopleImportResponse>(
+        `/organizations/${organizationId}/employer-people/import/commit`,
+        formData
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to import people');
+    }
+  }
+
+  /** Auth is bearer-token based, so the file can't be fetched via a plain <a href> — this returns the raw Blob for the caller to turn into an object URL/download. */
+  async downloadPeopleImportTemplate(organizationId: string): Promise<Blob> {
+    try {
+      const response = await this.api.get(`/organizations/${organizationId}/employer-people/import/template`, { responseType: 'blob' });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to download import template');
+    }
+  }
+
+  /**
+   * Bulk-creates interview invitations across multiple applications
+   * (PR-PEOPLE-2 §16). Each application must already be SHORTLISTED with a
+   * completed blueprint+rubric — same precondition as the single-create
+   * path (`createInterviewInvitation`), just applied per-row with partial
+   * success.
+   */
+  async bulkCreateInterviewInvitations(
+    organizationId: string,
+    payload: { applicationIds: string[]; expiresInDays?: number; message?: string }
+  ): Promise<ApiEnvelope<BulkCreateInterviewInvitationsResult>> {
+    try {
+      const response = await this.api.post<ApiEnvelope<BulkCreateInterviewInvitationsResult>>(
+        `/organizations/${organizationId}/applications/interview-invitations/bulk`,
+        payload
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to bulk-create interview invitations');
     }
   }
 

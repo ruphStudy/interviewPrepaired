@@ -277,14 +277,14 @@ export interface TrainerInvitation {
 
 export type ListTrainerInvitationsResponse = ApiEnvelope<{ invitations: TrainerInvitation[]; pagination: Pagination }>;
 
-export type PeopleImportUserType = 'TRAINER' | 'STUDENT';
 export type PeopleImportRowStatus = 'valid_new_user' | 'valid_existing_user' | 'already_existed' | 'conflict' | 'duplicate_in_file' | 'invalid';
 
+/** Not a narrow union — this shape is reused by both Institute (TRAINER/STUDENT) and Employer (RECRUITER/CANDIDATE) imports. */
 export interface PeopleImportPreviewRow {
   index: number;
   name: string;
   email: string;
-  userType?: PeopleImportUserType;
+  userType?: string;
   status: PeopleImportRowStatus;
   reason?: string;
 }
@@ -296,8 +296,8 @@ export interface PeopleImportPreviewResult {
   newUsers: number;
   existingUsers: number;
   duplicateRows: number;
-  trainersCount: number;
-  studentsCount: number;
+  /** Keyed by userType (e.g. {TRAINER, STUDENT} for Institute, {RECRUITER, CANDIDATE} for Employer). */
+  userTypeCounts: Record<string, number>;
   rows: PeopleImportPreviewRow[];
 }
 
@@ -306,7 +306,7 @@ export type PeopleImportRowOutcome = 'created' | 'linked_existing' | 'already_ex
 export interface PeopleImportResultRow {
   index: number;
   email: string;
-  userType?: PeopleImportUserType;
+  userType?: string;
   outcome: PeopleImportRowOutcome;
   error?: string;
 }

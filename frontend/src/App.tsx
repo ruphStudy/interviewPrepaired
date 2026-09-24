@@ -45,6 +45,7 @@ import EmployerJobFormPage from './pages/employer/EmployerJobFormPage';
 import EmployerJobDetailPage from './pages/employer/EmployerJobDetailPage';
 import EmployerJobDescriptionPage from './pages/employer/EmployerJobDescriptionPage';
 import EmployerCandidatesPage from './pages/employer/EmployerCandidatesPage';
+import EmployerRecruitersPage from './pages/employer/EmployerRecruitersPage';
 import EmployerMentionsPage from './pages/employer/EmployerMentionsPage';
 import EmployerTalentSkillsPage from './pages/employer/EmployerTalentSkillsPage';
 import EmployerKnowledgeBasesPage from './pages/employer/EmployerKnowledgeBasesPage';
@@ -363,6 +364,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <EmployerCandidatesPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Employer Recruiters (PR-PEOPLE-2) — company-only, guarded inside the page */}
+          <Route
+            path="/organizations/:organizationId/employer/recruiters"
+            element={
+              <ProtectedRoute>
+                <EmployerRecruitersPage />
               </ProtectedRoute>
             }
           />

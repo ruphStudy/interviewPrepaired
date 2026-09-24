@@ -32,6 +32,8 @@ import employerJobDescriptionSkillsController from '../controllers/EmployerJobDe
 import employerJobDescriptionCompetencyController from '../controllers/EmployerJobDescriptionCompetencyController';
 import employerJobIntelligenceSnapshotController from '../controllers/EmployerJobIntelligenceSnapshotController';
 import employerCandidateController from '../controllers/EmployerCandidateController';
+import employerRecruiterController from '../controllers/EmployerRecruiterController';
+import employerPeopleImportController from '../controllers/EmployerPeopleImportController';
 import employerCandidateSourceAttributionController from '../controllers/EmployerCandidateSourceAttributionController';
 import employerCandidateResumeController from '../controllers/EmployerCandidateResumeController';
 import employerCandidateResumeAnalysisController from '../controllers/EmployerCandidateResumeAnalysisController';
@@ -2072,6 +2074,115 @@ router.delete(
 );
 
 // ============================================================================
+// Employer Recruiters (PR-PEOPLE-2) — recruiter identity is the EXISTING
+// OrganizationMember with role RECRUITER; disable/reactivate for an
+// existing recruiter already works via the generic
+// `/:organizationId/members/:memberId` routes, not duplicated here.
+// Company-only (400 for an institute org). Mirrors the Institute Trainer
+// invite routes exactly.
+// ============================================================================
+
+const listRecruitersValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(OrganizationMemberStatus)).withMessage('Invalid status'),
+  query('search').optional().isString().trim().isLength({ max: 150 }).withMessage('search must be at most 150 characters'),
+];
+
+const inviteRecruiterValidation = [
+  body('email').notEmpty().withMessage('email is required').isEmail().withMessage('email must be valid').isLength({ max: 254 }),
+  body('name').optional().isString().trim().isLength({ max: 50 }).withMessage('name must be at most 50 characters'),
+];
+
+const listRecruiterInvitationsValidation = [
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(Object.values(OrganizationInvitationStatus)).withMessage('Invalid status'),
+];
+
+router.get(
+  '/:organizationId/recruiters',
+  protect,
+  ...organizationIdValidation,
+  ...listRecruitersValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  employerRecruiterController.getRecruiters
+);
+
+router.post(
+  '/:organizationId/recruiters/invite',
+  protect,
+  ...organizationIdValidation,
+  ...inviteRecruiterValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  employerRecruiterController.inviteRecruiter
+);
+
+router.get(
+  '/:organizationId/recruiters/invitations',
+  protect,
+  ...organizationIdValidation,
+  ...listRecruiterInvitationsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  employerRecruiterController.getRecruiterInvitations
+);
+
+// ============================================================================
+// Employer People bulk import (PR-PEOPLE-2) — CSV/XLSX file, Recruiter +
+// Candidate rows in one file (userType column). Stateless: preview and
+// commit each independently re-parse the uploaded file. Company-only
+// (enforced inside the service). Reuses the exact same file-parsing
+// service, size limit, and extension allow-list as Institute's import —
+// only a separate multer() instance to avoid depending on Institute's
+// module-scoped constant being declared earlier in this same file.
+// ============================================================================
+
+const employerPeopleImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_PEOPLE_IMPORT_FILE_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const check = isAllowedPeopleImportFile(file.originalname);
+    if (!check.allowed) {
+      cb(new Error(`Unsupported file type. Supported types: ${ALLOWED_PEOPLE_IMPORT_EXTENSIONS.join(', ')}`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+router.post(
+  '/:organizationId/employer-people/import/preview',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  employerPeopleImportUpload.single('file'),
+  employerPeopleImportController.preview
+);
+
+router.post(
+  '/:organizationId/employer-people/import/commit',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_MANAGE),
+  employerPeopleImportUpload.single('file'),
+  employerPeopleImportController.commit
+);
+
+router.get(
+  '/:organizationId/employer-people/import/template',
+  protect,
+  ...organizationIdValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.MEMBERS_VIEW),
+  employerPeopleImportController.downloadTemplate
+);
+
+// ============================================================================
 // Employer Candidate Source Attribution (18E) — historical provenance
 // evidence only (e.g. "referred by X", "sourced via agency Y"), NEVER a
 // replacement for `EmployerCandidate.source` (the candidate's own PRIMARY
@@ -3149,6 +3260,30 @@ router.post(
   validate,
   requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
   employerInterviewInvitationController.createInvitation
+);
+
+// PR-PEOPLE-2 §16 — bulk interview-invitation creation across multiple
+// applications in one call (organization-scoped, not nested under a
+// single applicationId — see EmployerInterviewInvitationService.
+// bulkCreateInvitations, which loops the exact same createInvitation
+// above). Registered BEFORE the ':applicationId' routes below so the
+// literal path segment 'interview-invitations' can never be captured by
+// the ':applicationId' param matcher.
+const bulkCreateInterviewInvitationsValidation = [
+  body('applicationIds').isArray({ min: 1, max: 200 }).withMessage('applicationIds must be a non-empty array of at most 200 items'),
+  body('applicationIds.*').isMongoId().withMessage('Each applicationId must be a valid ID'),
+  body('expiresInDays').optional().isInt({ min: 1, max: 30 }).withMessage('expiresInDays must be between 1 and 30'),
+  body('message').optional().isString().trim().isLength({ max: 1000 }).withMessage('message must be at most 1000 characters'),
+];
+
+router.post(
+  '/:organizationId/applications/interview-invitations/bulk',
+  protect,
+  ...organizationIdValidation,
+  ...bulkCreateInterviewInvitationsValidation,
+  validate,
+  requireOrganizationPermission(OrganizationPermission.INTERVIEWS_MANAGE),
+  employerInterviewInvitationController.bulkCreateInvitations
 );
 
 router.get(

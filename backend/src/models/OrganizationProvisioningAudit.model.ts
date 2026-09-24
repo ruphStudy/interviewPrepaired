@@ -17,7 +17,13 @@ export type OrganizationProvisioningAction =
   | 'people_import_completed'
   | 'people_relationship_disabled'
   | 'people_relationship_reactivated'
-  | 'bulk_assignment_created';
+  | 'bulk_assignment_created'
+  // Employer People Management (PR-PEOPLE-2) — additive, same discipline.
+  // 'people_import_completed'/'people_relationship_disabled'/
+  // 'people_relationship_reactivated'/'bulk_assignment_created' above are
+  // already domain-neutral and reused as-is for Employer events too.
+  | 'recruiter_invited'
+  | 'candidate_added';
 
 export type OrganizationProvisioningStatus = 'pending' | 'success' | 'failed';
 
@@ -73,6 +79,8 @@ const organizationProvisioningAuditSchema = new Schema<IOrganizationProvisioning
         'people_relationship_disabled',
         'people_relationship_reactivated',
         'bulk_assignment_created',
+        'recruiter_invited',
+        'candidate_added',
       ],
       required: true,
     },

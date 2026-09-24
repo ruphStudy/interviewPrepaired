@@ -33,6 +33,33 @@ export class EmployerInterviewInvitationController {
     res.status(201).json(successResponse('Interview invitation created successfully', this.hideTokenInProduction(result)));
   });
 
+  /**
+   * POST /api/v1/organizations/:organizationId/applications/interview-invitations/bulk
+   * Requires INTERVIEWS_MANAGE. Bulk-creates interview invitations across
+   * multiple applications in one call — see
+   * EmployerInterviewInvitationService.bulkCreateInvitations. Unlike the
+   * single-create path, this never returns a raw token per row at all
+   * (only the created invitation's id) — there is nothing to hide in
+   * production here.
+   */
+  public bulkCreateInvitations = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
+    const context = req.organizationContext;
+    if (!context) {
+      throw new ApiError(500, 'Organization context missing');
+    }
+
+    const { applicationIds, expiresInDays, message } = req.body;
+    const result = await employerInterviewInvitationService.bulkCreateInvitations(
+      context.organizationId,
+      context.role,
+      context.member._id.toString(),
+      applicationIds,
+      { expiresInDays, message }
+    );
+
+    res.status(200).json(successResponse('Bulk interview invitations processed', result));
+  });
+
   /** GET /api/v1/organizations/:organizationId/applications/:applicationId/interview-invitation — requires ORGANIZATION_VIEW. */
   public getCurrentInvitation = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
     const context = req.organizationContext;

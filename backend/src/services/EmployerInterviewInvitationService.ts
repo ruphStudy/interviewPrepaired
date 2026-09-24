@@ -204,6 +204,63 @@ export class EmployerInterviewInvitationService {
   }
 
   /**
+   * PR-PEOPLE-2 §16 — bulk interview-invitation creation across MULTIPLE
+   * applications in one call. Deliberately NOT a new grouping/assignment
+   * concept: this loops over the exact same, already-tested
+   * `createInvitation` (same permission check, same
+   * shortlisted-application + completed-blueprint + completed-rubric
+   * preconditions, same tenant-scoping, same duplicate-invitation
+   * handling) — it only adds per-application error isolation and result
+   * aggregation, mirroring
+   * `InstituteStudentInterviewAssignmentService.assignInterview`'s own
+   * bulk-loop pattern exactly. `applicationIds` selects candidates
+   * indirectly (an invitation is fundamentally per-application, not
+   * per-candidate) — "selected candidates" in the UI maps onto "their
+   * current applications" here.
+   */
+  async bulkCreateInvitations(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    actorMembershipId: string,
+    applicationIds: string[],
+    fields: CreateInvitationFields
+  ): Promise<{
+    total: number;
+    invited: number;
+    failed: number;
+    results: Array<{ applicationId: string; status: 'invited' | 'failed'; invitationId?: string; error?: string }>;
+  }> {
+    if (!Array.isArray(applicationIds) || applicationIds.length === 0) {
+      throw new ApiError(400, 'applicationIds must be a non-empty array');
+    }
+    const MAX_BULK_INVITATIONS = 200;
+    if (applicationIds.length > MAX_BULK_INVITATIONS) {
+      throw new ApiError(400, `applicationIds cannot exceed ${MAX_BULK_INVITATIONS} items per request`);
+    }
+
+    // Dedupe — the same applicationId listed twice is processed (and reported) once.
+    const uniqueApplicationIds = Array.from(new Set(applicationIds));
+
+    const results: Array<{ applicationId: string; status: 'invited' | 'failed'; invitationId?: string; error?: string }> = [];
+    let invited = 0;
+    let failed = 0;
+
+    for (const applicationId of uniqueApplicationIds) {
+      try {
+        const { invitation } = await this.createInvitation(organizationId, actingRole, actorMembershipId, applicationId, fields);
+        results.push({ applicationId, status: 'invited', invitationId: invitation.id as string });
+        invited += 1;
+      } catch (error: any) {
+        const message = error instanceof ApiError ? error.message : 'Failed to create this invitation';
+        results.push({ applicationId, status: 'failed', error: message });
+        failed += 1;
+      }
+    }
+
+    return { total: uniqueApplicationIds.length, invited, failed, results };
+  }
+
+  /**
    * POST .../interview-invitation/regenerate — requires the existing
    * invitation for the CURRENT blueprint to be expired or revoked (never
    * active or accepted). Updates that SAME row in place with a brand-new

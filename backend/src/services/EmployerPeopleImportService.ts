@@ -2,15 +2,13 @@ import { Types } from 'mongoose';
 import Organization, { IOrganization } from '../models/Organization.model';
 import OrganizationMember from '../models/OrganizationMember.model';
 import OrganizationInvitation from '../models/OrganizationInvitation.model';
-import InstituteStudent from '../models/InstituteStudent.model';
+import EmployerCandidate from '../models/EmployerCandidate.model';
 import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/organizationMember';
 import { OrganizationInvitationStatus } from '../constants/organizationInvitation';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import {
   MAX_PEOPLE_IMPORT_ROWS,
-  PeopleImportUserType,
-  normalizePeopleImportUserType,
   PeopleImportRawRow,
   PeopleImportRowStatus,
   PeopleImportPreviewRow,
@@ -18,40 +16,36 @@ import {
   PeopleImportResultRow,
   PeopleImportCommitResult,
 } from '../constants/institutePeopleImport';
+import { EmployerPeopleImportUserType, normalizeEmployerPeopleImportUserType } from '../constants/employerPeopleImport';
 import { userIdentityService, normalizeEmail } from './UserIdentityService';
-import { instituteTrainerService } from './InstituteTrainerService';
-import { instituteStudentService } from './InstituteStudentService';
-import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 import { peopleImportFileParserService } from './PeopleImportFileParserService';
+import { employerRecruiterService } from './EmployerRecruiterService';
+import { employerCandidateService } from './EmployerCandidateService';
+import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 import { ApiError } from '../utils/ApiError';
 
 const TEMPLATE_HEADERS = ['name', 'email', 'userType'];
 const TEMPLATE_EXAMPLE_ROWS = [
-  ['Jane Trainer', 'jane.trainer@example.com', 'TRAINER'],
-  ['John Student', 'john.student@example.com', 'STUDENT'],
+  ['Jane Recruiter', 'jane.recruiter@example.com', 'RECRUITER'],
+  ['John Candidate', 'john.candidate@example.com', 'CANDIDATE'],
 ];
 
 const EMAIL_PATTERN = /^[\w.+-]+@\w+([.-]?\w+)*(\.\w{2,3})+$/;
 
 /**
- * Institute Trainer + Student bulk import from a CSV/XLSX file
- * (PR-PEOPLE-1 §5-11). Deliberately file-oriented and stateless: `preview`
- * and `commit` each independently parse+validate+classify the SAME
- * uploaded file — nothing about a preview is persisted server-side to
- * "confirm" later, so there is no server-side session state to expire, race,
- * or leak across requests; the client re-sends the file to commit exactly
- * what it previewed. This also makes retry/re-upload trivially idempotent:
- * every row is re-classified against CURRENT database state at commit time,
- * never against a stale preview.
- *
- * Every row dispatches to already-existing, already-tested single-row
- * primitives (`InstituteTrainerService.inviteTrainer`,
- * `InstituteStudentService.createStudentWithAccountLink`) — this file adds
- * parsing, per-row classification/conflict-detection, and result
- * aggregation only, never a parallel creation path.
+ * Employer Recruiter + Candidate bulk import from a CSV/XLSX file
+ * (PR-PEOPLE-2). Mirrors InstitutePeopleImportService exactly in shape
+ * (stateless preview/commit, per-row classification, partial success) but
+ * for the Employer domain: RECRUITER rows dispatch to
+ * `EmployerRecruiterService.inviteRecruiter` (User-account-backed, same as
+ * Institute Trainer); CANDIDATE rows dispatch to
+ * `EmployerCandidateService.createCandidate` (NEVER User-account-backed —
+ * `EmployerCandidate` has no `userId` field at all; candidates interact
+ * entirely through the existing token-based `EmployerInterviewInvitation`
+ * flow, never by logging in — see that model's own doc comment). File
+ * parsing is shared with Institute via `PeopleImportFileParserService`.
  */
-export class InstitutePeopleImportService {
-  /** Delegates to the shared, domain-agnostic parser (PeopleImportFileParserService) — kept as a same-named method here so existing callers/tests are unaffected. */
+export class EmployerPeopleImportService {
   async parseUploadedFile(buffer: Buffer, filename: string): Promise<PeopleImportRawRow[]> {
     return peopleImportFileParserService.parseUploadedFile(buffer, filename);
   }
@@ -64,13 +58,12 @@ export class InstitutePeopleImportService {
   ): Promise<PeopleImportPreviewResult> {
     this.assertHasPermission(actingRole);
     const organization = await this.getOrganizationById(organizationId);
-    this.assertIsInstitute(organization);
+    this.assertIsCompany(organization);
 
     this.assertRowCount(rawRows);
-
     const rows = await this.classifyRows(organization, rawRows);
 
-    const result: PeopleImportPreviewResult = {
+    return {
       totalRows: rows.length,
       validRows: rows.filter((r) => r.status === 'valid_new_user' || r.status === 'valid_existing_user').length,
       invalidRows: rows.filter((r) => r.status === 'invalid').length,
@@ -78,30 +71,29 @@ export class InstitutePeopleImportService {
       existingUsers: rows.filter((r) => r.status === 'valid_existing_user').length,
       duplicateRows: rows.filter((r) => r.status === 'duplicate_in_file').length,
       userTypeCounts: {
-        [PeopleImportUserType.TRAINER]: rows.filter((r) => r.userType === PeopleImportUserType.TRAINER).length,
-        [PeopleImportUserType.STUDENT]: rows.filter((r) => r.userType === PeopleImportUserType.STUDENT).length,
+        [EmployerPeopleImportUserType.RECRUITER]: rows.filter((r) => r.userType === EmployerPeopleImportUserType.RECRUITER).length,
+        [EmployerPeopleImportUserType.CANDIDATE]: rows.filter((r) => r.userType === EmployerPeopleImportUserType.CANDIDATE).length,
       },
       rows,
     };
-    return result;
   }
 
   /**
    * Re-validates/re-classifies against CURRENT state (never trusts a
    * client-supplied preview) then, for each importable row, dispatches to
    * the real single-row create primitive. One bad/conflicting row never
-   * aborts the others (partial success) — every row is independently
-   * try/caught and reported.
+   * aborts the others (partial success).
    */
   async commitImport(
     organizationId: string,
     actingRole: OrganizationMemberRole,
     actorUserId: string,
+    creatorMembershipId: string,
     rawRows: PeopleImportRawRow[]
   ): Promise<PeopleImportCommitResult> {
     this.assertHasPermission(actingRole);
     const organization = await this.getOrganizationById(organizationId);
-    this.assertIsInstitute(organization);
+    this.assertIsCompany(organization);
     this.assertOrganizationMutable(organization);
     this.assertRowCount(rawRows);
 
@@ -139,24 +131,20 @@ export class InstitutePeopleImportService {
 
       // valid_new_user | valid_existing_user
       try {
-        if (row.userType === PeopleImportUserType.TRAINER) {
-          await instituteTrainerService.inviteTrainer(organizationId, actingRole, actorUserId, { name: row.name, email: row.email });
+        if (row.userType === EmployerPeopleImportUserType.RECRUITER) {
+          await employerRecruiterService.inviteRecruiter(organizationId, actingRole, actorUserId, { name: row.name, email: row.email });
           results.push({ index: row.index, email: row.email, userType: row.userType, outcome: 'invited' });
           invited += 1;
         } else {
           const [firstName, ...rest] = row.name.split(/\s+/);
-          const outcome = await instituteStudentService.createStudentWithAccountLink(organizationId, actingRole, {
-            firstName: firstName || row.name,
-            lastName: rest.join(' ') || undefined,
+          const lastName = rest.join(' ');
+          await employerCandidateService.createCandidate(organizationId, actingRole, creatorMembershipId, {
+            firstName,
+            lastName,
             email: row.email,
           });
-          if (outcome.accountLinkStatus === 'linked_new_user') {
-            results.push({ index: row.index, email: row.email, userType: row.userType, outcome: 'created' });
-            created += 1;
-          } else {
-            results.push({ index: row.index, email: row.email, userType: row.userType, outcome: 'linked_existing' });
-            linkedExisting += 1;
-          }
+          results.push({ index: row.index, email: row.email, userType: row.userType, outcome: 'created' });
+          created += 1;
         }
       } catch (error: any) {
         const message = error instanceof ApiError ? error.message : 'Failed to import this row';
@@ -174,7 +162,7 @@ export class InstitutePeopleImportService {
     return { total: classified.length, created, linkedExisting, alreadyExisted, invited, conflict, failed, results };
   }
 
-  /** Generates the downloadable import template as a CSV buffer (Content-Type text/csv) — minimum columns per PR-PEOPLE-1 §6, exact allowed userType values only. */
+  /** Downloadable CSV template — minimum columns per master prompt §6, exact allowed userType values only (RECRUITER/CANDIDATE — never OWNER/SUPER_ADMIN/TRAINER/STUDENT). */
   buildTemplateCsv(): string {
     const lines = [TEMPLATE_HEADERS.join(',')];
     for (const row of TEMPLATE_EXAMPLE_ROWS) {
@@ -183,12 +171,6 @@ export class InstitutePeopleImportService {
     return lines.join('\n') + '\n';
   }
 
-  /**
-   * Shared by preview and commit — the ONE place row validation and
-   * conflict classification happens, so the two can never drift apart
-   * (what preview shows is exactly what commit acts on, given the same
-   * current DB state).
-   */
   private async classifyRows(organization: IOrganization, rawRows: PeopleImportRawRow[]): Promise<PeopleImportPreviewRow[]> {
     const seenEmails = new Set<string>();
     const rows: PeopleImportPreviewRow[] = [];
@@ -197,7 +179,7 @@ export class InstitutePeopleImportService {
       const raw = rawRows[index];
       const name = (raw.name ?? '').trim();
       const rawEmail = (raw.email ?? '').trim();
-      const userType = normalizePeopleImportUserType(raw.userType);
+      const userType = normalizeEmployerPeopleImportUserType(raw.userType);
 
       if (!name) {
         rows.push({ index, name, email: rawEmail, status: 'invalid', reason: 'name is required' });
@@ -209,12 +191,21 @@ export class InstitutePeopleImportService {
       }
       const email = normalizeEmail(rawEmail);
       if (!userType) {
+        rows.push({ index, name, email, status: 'invalid', reason: 'userType must be exactly RECRUITER or CANDIDATE' });
+        continue;
+      }
+      // EmployerCandidateService.createCandidate requires BOTH firstName
+      // and lastName — checked here so a single-word name fails this ROW
+      // clearly during preview, rather than as a generic "failed" outcome
+      // only discovered at commit time.
+      if (userType === EmployerPeopleImportUserType.CANDIDATE && name.trim().split(/\s+/).length < 2) {
         rows.push({
           index,
           name,
           email,
+          userType,
           status: 'invalid',
-          reason: 'userType must be exactly TRAINER or STUDENT',
+          reason: 'A full name (first and last) is required for candidates',
         });
         continue;
       }
@@ -231,66 +222,70 @@ export class InstitutePeopleImportService {
     return rows;
   }
 
-  /** Direct model read — deliberately bypasses OrganizationInvitationService.getInvitations, which is permission-gated for an actual caller's role and isn't email-filterable; this internal classification already runs inside an already-authorized preview/commit call. */
-  private async hasPendingTrainerInvite(organizationId: Types.ObjectId, email: string): Promise<boolean> {
-    const invite = await OrganizationInvitation.findOne({
-      organizationId,
-      email,
-      role: OrganizationMemberRole.TRAINER,
-      status: OrganizationInvitationStatus.PENDING,
-    }).select('_id');
-    return !!invite;
-  }
-
   private async classifySingleRow(
     organization: IOrganization,
     email: string,
-    userType: PeopleImportUserType
+    userType: EmployerPeopleImportUserType
   ): Promise<{ status: PeopleImportRowStatus; reason?: string }> {
-    const existingUser = await userIdentityService.findUserByEmail(email);
-
-    if (userType === PeopleImportUserType.TRAINER) {
+    if (userType === EmployerPeopleImportUserType.RECRUITER) {
+      const existingUser = await userIdentityService.findUserByEmail(email);
       if (existingUser) {
         if (existingUser._id.toString() === organization.ownerUserId.toString()) {
           return { status: 'conflict', reason: 'This email is the organization owner' };
         }
         const membership = await OrganizationMember.findOne({ organizationId: organization._id, userId: existingUser._id });
         if (membership?.status === OrganizationMemberStatus.ACTIVE) {
-          if (membership.role === OrganizationMemberRole.TRAINER) {
+          if (membership.role === OrganizationMemberRole.RECRUITER) {
             return { status: 'already_existed' };
           }
-          return { status: 'conflict', reason: `This email is already an active ${membership.role} in this institute` };
+          return { status: 'conflict', reason: `This email is already an active ${membership.role} in this employer` };
         }
-        const existingStudent = await InstituteStudent.findOne({ organizationId: organization._id, userId: existingUser._id }).select('_id');
-        if (existingStudent) {
-          return { status: 'conflict', reason: 'This email is already linked as a Student in this institute' };
+        const existingCandidate = await EmployerCandidate.findOne({ organizationId: organization._id, email }).select('_id');
+        if (existingCandidate) {
+          return { status: 'conflict', reason: 'This email is already a Candidate in this employer' };
         }
-        const hasPendingInvite = await this.hasPendingTrainerInvite(organization._id, email);
+        const hasPendingInvite = await this.hasPendingRecruiterInvite(organization._id, email);
         if (hasPendingInvite) {
           return { status: 'already_existed' };
         }
         return { status: 'valid_existing_user' };
       }
-      const hasPendingInvite = await this.hasPendingTrainerInvite(organization._id, email);
+      const hasPendingInvite = await this.hasPendingRecruiterInvite(organization._id, email);
       if (hasPendingInvite) {
         return { status: 'already_existed' };
       }
       return { status: 'valid_new_user' };
     }
 
-    // STUDENT
-    const existingStudent = await InstituteStudent.findOne({ organizationId: organization._id, email }).select('_id userId');
-    if (existingStudent) {
+    // CANDIDATE — never User-linked. "Already exists" means an
+    // EmployerCandidate row with this email already exists in THIS org;
+    // "new/existing user" is purely informational (whether a global User
+    // happens to exist for this email at all), it never changes what
+    // happens — a Candidate row is always created independently.
+    const existingCandidate = await EmployerCandidate.findOne({ organizationId: organization._id, email }).select('_id');
+    if (existingCandidate) {
       return { status: 'already_existed' };
     }
+    const existingUser = await userIdentityService.findUserByEmail(email);
     if (existingUser) {
       const membership = await OrganizationMember.findOne({ organizationId: organization._id, userId: existingUser._id });
       if (membership?.status === OrganizationMemberStatus.ACTIVE) {
-        return { status: 'conflict', reason: `This email is already an active ${membership.role} in this institute` };
+        return { status: 'conflict', reason: `This email is already an active ${membership.role} in this employer` };
       }
       return { status: 'valid_existing_user' };
     }
     return { status: 'valid_new_user' };
+  }
+
+  /** Direct model read — same reasoning as InstitutePeopleImportService's hasPendingTrainerInvite: this internal classification already runs inside an already-authorized preview/commit call. */
+  private async hasPendingRecruiterInvite(organizationId: Types.ObjectId, email: string): Promise<boolean> {
+    const invite = await OrganizationInvitation.findOne({
+      organizationId,
+      email,
+      role: OrganizationMemberRole.RECRUITER,
+      status: OrganizationInvitationStatus.PENDING,
+    }).select('_id');
+    return !!invite;
   }
 
   private assertRowCount(rows: PeopleImportRawRow[]): void {
@@ -317,9 +312,9 @@ export class InstitutePeopleImportService {
     }
   }
 
-  private assertIsInstitute(organization: IOrganization): void {
-    if (organization.type !== OrganizationType.INSTITUTE) {
-      throw new ApiError(400, 'This organization is not an institute');
+  private assertIsCompany(organization: IOrganization): void {
+    if (organization.type !== OrganizationType.COMPANY) {
+      throw new ApiError(400, 'This organization is not a company');
     }
   }
 
@@ -332,4 +327,4 @@ export class InstitutePeopleImportService {
   }
 }
 
-export const institutePeopleImportService = new InstitutePeopleImportService();
+export const employerPeopleImportService = new EmployerPeopleImportService();

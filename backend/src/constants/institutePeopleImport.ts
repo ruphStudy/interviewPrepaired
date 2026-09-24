@@ -51,11 +51,19 @@ export interface PeopleImportRawRow {
   userType: string;
 }
 
+/**
+ * Deliberately a plain string, not `PeopleImportUserType` — this row shape
+ * is shared with EmployerPeopleImportService (RECRUITER/CANDIDATE), which
+ * has its own distinct `EmployerPeopleImportUserType` enum. The exact
+ * literal value is still domain-validated by whichever service classified
+ * the row (`normalizePeopleImportUserType`/`normalizeEmployerPeopleImportUserType`)
+ * — this field is just the resulting label for display/reporting.
+ */
 export interface PeopleImportPreviewRow {
   index: number;
   name: string;
   email: string;
-  userType?: PeopleImportUserType;
+  userType?: string;
   status: PeopleImportRowStatus;
   reason?: string;
 }
@@ -67,8 +75,8 @@ export interface PeopleImportPreviewResult {
   newUsers: number;
   existingUsers: number;
   duplicateRows: number;
-  trainersCount: number;
-  studentsCount: number;
+  /** Keyed by the domain's own userType values (e.g. {TRAINER,STUDENT} or {RECRUITER,CANDIDATE}) — never fixed field names, so this shape works for any domain that reuses it. */
+  userTypeCounts: Record<string, number>;
   rows: PeopleImportPreviewRow[];
 }
 
@@ -83,7 +91,7 @@ export type PeopleImportRowOutcome =
 export interface PeopleImportResultRow {
   index: number;
   email: string;
-  userType?: PeopleImportUserType;
+  userType?: string;
   outcome: PeopleImportRowOutcome;
   error?: string;
 }

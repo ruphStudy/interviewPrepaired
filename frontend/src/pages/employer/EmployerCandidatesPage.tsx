@@ -2,10 +2,231 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import AuthenticatedLayout from '../../components/AuthenticatedLayout';
 import { useOrganization } from '../../contexts/OrganizationContext';
-import employerApi, { EmployerCandidate, EmployerCandidateStatus, EmployerCandidateSource, EMPLOYER_CANDIDATE_SOURCES } from '../../api/employerApi';
-import { AlertCircle, Loader2, Plus, ChevronLeft, ChevronRight, Users } from 'lucide-react';
+import employerApi, {
+  EmployerCandidate,
+  EmployerCandidateStatus,
+  EmployerCandidateSource,
+  EMPLOYER_CANDIDATE_SOURCES,
+  EmployerPeopleImportPreviewResult,
+  EmployerPeopleImportCommitResult,
+} from '../../api/employerApi';
+import { AlertCircle, Loader2, Plus, ChevronLeft, ChevronRight, Users, FileUp, Download, X } from 'lucide-react';
 
 const PAGE_LIMIT = 20;
+
+const PEOPLE_IMPORT_ROW_STATUS_LABEL: Record<string, string> = {
+  valid_new_user: 'New account',
+  valid_existing_user: 'Existing account',
+  already_existed: 'Already exists',
+  conflict: 'Conflict',
+  duplicate_in_file: 'Duplicate in file',
+  invalid: 'Invalid',
+};
+
+interface EmployerPeopleFileImportModalProps {
+  organizationId: string;
+  onClose: () => void;
+  onImported: () => void;
+}
+
+/**
+ * Recruiter + Candidate bulk CSV/XLSX import — mirrors Institute's
+ * PeopleFileImportModal exactly (stateless: the same selected File is
+ * re-sent for both preview and commit), only the API calls differ.
+ */
+const EmployerPeopleFileImportModal: React.FC<EmployerPeopleFileImportModalProps> = ({ organizationId, onClose, onImported }) => {
+  const [file, setFile] = useState<File | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<EmployerPeopleImportPreviewResult | null>(null);
+  const [result, setResult] = useState<EmployerPeopleImportCommitResult | null>(null);
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const blob = await employerApi.downloadPeopleImportTemplate(organizationId);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'employer-people-import-template.csv';
+      link.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.message || 'Failed to download template');
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFile(e.target.files?.[0] || null);
+    setPreview(null);
+    setResult(null);
+    setError(null);
+  };
+
+  const handlePreview = async () => {
+    if (!file) return;
+    setPreviewing(true);
+    setError(null);
+    setResult(null);
+    try {
+      const response = await employerApi.previewPeopleImport(organizationId, file);
+      setPreview(response.data);
+    } catch (err: any) {
+      setError(err.message || 'Failed to preview import');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleCommit = async () => {
+    if (!file) return;
+    setCommitting(true);
+    setError(null);
+    try {
+      const response = await employerApi.commitPeopleImport(organizationId, file);
+      setResult(response.data);
+      onImported();
+    } catch (err: any) {
+      setError(err.message || 'Failed to import');
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="card max-w-2xl w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="section-title text-lg">Import Recruiters &amp; Candidates</h2>
+          <button onClick={onClose} className="text-mentor-text-muted hover:text-mentor-text" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+
+        <button type="button" onClick={handleDownloadTemplate} className="btn btn-secondary mb-4">
+          <Download size={16} />
+          Download Template
+        </button>
+
+        <div className="mb-4">
+          <input type="file" accept=".csv,.xlsx" onChange={handleFileChange} className="input w-full" />
+          <p className="text-xs text-mentor-text-muted mt-1.5">
+            Columns: name, email, userType (RECRUITER or CANDIDATE). Up to 200 rows per file.
+          </p>
+        </div>
+
+        {error && (
+          <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+            <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+            <p className="text-sm text-mentor-error">{error}</p>
+          </div>
+        )}
+
+        {!result && (
+          <div className="flex justify-end gap-2 mb-4">
+            <button type="button" onClick={handlePreview} disabled={!file || previewing} className="btn btn-secondary">
+              {previewing ? 'Previewing...' : 'Preview'}
+            </button>
+            {preview && (
+              <button type="button" onClick={handleCommit} disabled={committing || preview.validRows === 0} className="btn btn-primary">
+                {committing ? 'Importing...' : `Confirm Import (${preview.validRows} row${preview.validRows === 1 ? '' : 's'})`}
+              </button>
+            )}
+          </div>
+        )}
+
+        {preview && !result && (
+          <div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-4 text-center">
+              {[
+                ['Total', preview.totalRows],
+                ['Valid', preview.validRows],
+                ['Invalid', preview.invalidRows],
+                ['New users', preview.newUsers],
+                ['Existing users', preview.existingUsers],
+                ['Duplicates', preview.duplicateRows],
+                ['Recruiters', preview.userTypeCounts.RECRUITER || 0],
+                ['Candidates', preview.userTypeCounts.CANDIDATE || 0],
+              ].map(([label, value]) => (
+                <div key={label as string} className="rounded-lg border border-mentor-border px-2 py-2">
+                  <div className="text-lg font-semibold text-mentor-text">{value}</div>
+                  <div className="text-[11px] text-mentor-text-muted">{label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="overflow-x-auto border border-mentor-border rounded-lg max-h-64 overflow-y-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-mentor-border bg-mentor-surface dark:bg-future-elevated">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-mentor-text-muted">Name</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-mentor-text-muted">Email</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-mentor-text-muted">Type</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-mentor-text-muted">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-mentor-border">
+                  {preview.rows.map((row) => (
+                    <tr key={row.index}>
+                      <td className="px-3 py-1.5 text-mentor-text">{row.name}</td>
+                      <td className="px-3 py-1.5 text-mentor-text-secondary">{row.email}</td>
+                      <td className="px-3 py-1.5 text-mentor-text-secondary">{row.userType || '—'}</td>
+                      <td className="px-3 py-1.5">
+                        <span
+                          className={`badge ${
+                            row.status === 'valid_new_user' || row.status === 'valid_existing_user'
+                              ? 'badge-success'
+                              : row.status === 'already_existed'
+                              ? 'badge-info'
+                              : 'badge-neutral'
+                          }`}
+                          title={row.reason}
+                        >
+                          {PEOPLE_IMPORT_ROW_STATUS_LABEL[row.status] || row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {result && (
+          <div>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-4 text-center">
+              {[
+                ['Total', result.total],
+                ['Created', result.created],
+                ['Linked', result.linkedExisting],
+                ['Invited', result.invited],
+                ['Already existed', result.alreadyExisted],
+                ['Conflicts', result.conflict],
+                ['Failed', result.failed],
+              ].map(([label, value]) => (
+                <div key={label as string} className="rounded-lg border border-mentor-border px-2 py-2">
+                  <div className="text-lg font-semibold text-mentor-text">{value}</div>
+                  <div className="text-[11px] text-mentor-text-muted">{label}</div>
+                </div>
+              ))}
+            </div>
+            {(result.failed > 0 || result.conflict > 0) && (
+              <p className="text-xs text-mentor-text-muted mb-3">
+                Failed/conflicting rows were not imported. Fix and re-upload the corrected rows — successfully imported rows will not be
+                duplicated.
+              </p>
+            )}
+            <div className="flex justify-end">
+              <button type="button" onClick={onClose} className="btn btn-primary">
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const STATUS_LABELS: Record<EmployerCandidateStatus, string> = {
   active: 'Active',
@@ -44,6 +265,7 @@ const EmployerCandidatesPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<EmployerCandidateStatus | ''>('');
   const [sourceFilter, setSourceFilter] = useState<EmployerCandidateSource | ''>('');
+  const [showFileImport, setShowFileImport] = useState(false);
 
   useEffect(() => {
     if (organizationId && organizationId !== activeOrganizationId) {
@@ -152,15 +374,31 @@ const EmployerCandidatesPage: React.FC = () => {
             <p className="page-subtitle">Candidate profiles for {activeOrganization.name}.</p>
           </div>
           {canManage && (
-            <button
-              onClick={() => navigate(`/organizations/${organizationId}/employer/candidates/new`)}
-              className="btn btn-primary shrink-0"
-            >
-              <Plus size={16} />
-              New Candidate
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => setShowFileImport(true)} className="btn btn-secondary">
+                <FileUp size={16} />
+                Import File (CSV/XLSX)
+              </button>
+              <button
+                onClick={() => navigate(`/organizations/${organizationId}/employer/candidates/new`)}
+                className="btn btn-primary"
+              >
+                <Plus size={16} />
+                New Candidate
+              </button>
+            </div>
           )}
         </div>
+
+        {showFileImport && organizationId && (
+          <EmployerPeopleFileImportModal
+            organizationId={organizationId}
+            onClose={() => setShowFileImport(false)}
+            onImported={() => {
+              fetchCandidates();
+            }}
+          />
+        )}
 
         {activeOrganization.status === 'archived' && (
           <div className="flex items-start gap-2.5 bg-amber-50 dark:bg-future-warning/10 border border-amber-200 dark:border-future-warning/20 rounded-lg p-4 mb-6">

@@ -200,8 +200,8 @@ const PeopleFileImportModal: React.FC<PeopleFileImportModalProps> = ({ organizat
                 ['New users', preview.newUsers],
                 ['Existing users', preview.existingUsers],
                 ['Duplicates', preview.duplicateRows],
-                ['Trainers', preview.trainersCount],
-                ['Students', preview.studentsCount],
+                ['Trainers', preview.userTypeCounts.TRAINER || 0],
+                ['Students', preview.userTypeCounts.STUDENT || 0],
               ].map(([label, value]) => (
                 <div key={label as string} className="rounded-lg border border-mentor-border px-2 py-2">
                   <div className="text-lg font-semibold text-mentor-text">{value}</div>
