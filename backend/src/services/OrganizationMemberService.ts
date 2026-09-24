@@ -5,6 +5,7 @@ import { OrganizationMemberRole, OrganizationMemberStatus } from '../constants/o
 import { OrganizationStatus } from '../constants/organization';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { User } from '../models/user.model';
+import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 import { ApiError } from '../utils/ApiError';
 
 interface ListMembersParams {
@@ -144,11 +145,13 @@ export class OrganizationMemberService {
     }
   }
 
+  /** `actorUserId` is optional only so existing/older call sites keep compiling — every real HTTP call site provides it; audit is skipped (not failed) if omitted. */
   async updateMember(
     organizationId: string,
     actingRole: OrganizationMemberRole,
     memberId: string,
-    params: UpdateMemberParams
+    params: UpdateMemberParams,
+    actorUserId?: string
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_MANAGE);
     if (params.role === undefined && params.status === undefined) {
@@ -168,6 +171,8 @@ export class OrganizationMemberService {
     }
     this.assertNotOwnerMembership(member, organization);
 
+    const wasActive = member.status === OrganizationMemberStatus.ACTIVE;
+
     if (params.role !== undefined) {
       member.role = params.role;
     }
@@ -180,11 +185,21 @@ export class OrganizationMemberService {
     }
 
     await member.save();
+
+    if (params.status === OrganizationMemberStatus.ACTIVE && !wasActive) {
+      await organizationProvisioningAuditService.record('people_relationship_reactivated', {
+        actorUserId,
+        organizationId,
+        targetUserId: member.userId.toString(),
+        metadata: { membershipId: memberId, role: member.role },
+      });
+    }
+
     return this.toDetail(await this.populateMember(member._id));
   }
 
-  /** Soft deactivate only — never a physical delete. Idempotent if already inactive. */
-  async removeMember(organizationId: string, actingRole: OrganizationMemberRole, memberId: string): Promise<void> {
+  /** Soft deactivate only — never a physical delete. Idempotent if already inactive. `actorUserId` optional for the same reason as updateMember. */
+  async removeMember(organizationId: string, actingRole: OrganizationMemberRole, memberId: string, actorUserId?: string): Promise<void> {
     this.assertHasPermission(actingRole, OrganizationPermission.MEMBERS_MANAGE);
     const organization = await this.getOrganizationById(organizationId);
     this.assertOrganizationMutable(organization);
@@ -199,6 +214,13 @@ export class OrganizationMemberService {
     if (member.status !== OrganizationMemberStatus.INACTIVE) {
       member.status = OrganizationMemberStatus.INACTIVE;
       await member.save();
+
+      await organizationProvisioningAuditService.record('people_relationship_disabled', {
+        actorUserId,
+        organizationId,
+        targetUserId: member.userId.toString(),
+        metadata: { membershipId: memberId, role: member.role },
+      });
     }
   }
 

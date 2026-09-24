@@ -218,7 +218,13 @@ export class EmployerCandidateController {
     const { candidateId } = req.params;
     const { status } = req.body;
 
-    const candidate = await employerCandidateService.updateCandidateStatus(context.organizationId, context.role, candidateId, status);
+    const candidate = await employerCandidateService.updateCandidateStatus(
+      context.organizationId,
+      context.role,
+      candidateId,
+      status,
+      req.user!.id
+    );
 
     res.status(200).json(successResponse('Candidate status updated successfully', { candidate }));
   });

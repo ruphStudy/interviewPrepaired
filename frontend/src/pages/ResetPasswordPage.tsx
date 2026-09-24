@@ -12,6 +12,7 @@ const ResetPasswordPage: React.FC = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [wasFirstActivation, setWasFirstActivation] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,10 +33,12 @@ const ResetPasswordPage: React.FC = () => {
 
     setLoading(true);
     try {
-      // The response includes a session token, but we deliberately don't
-      // use it here — the user completes a fresh, explicit sign-in instead
-      // of being silently auto-logged-in from a password-reset link.
-      await axios.put(`${API_BASE_URL}/auth/reset-password/${token}`, { password });
+      // Deliberately no auto-login here — the user completes a fresh,
+      // explicit sign-in instead, whether this was a genuine password
+      // reset or a brand-new account's first activation (same security
+      // posture either way: every prior session is revoked server-side).
+      const response = await axios.put(`${API_BASE_URL}/auth/reset-password/${token}`, { password });
+      setWasFirstActivation(!!response.data?.data?.wasFirstActivation);
       setSuccess(true);
       setTimeout(() => navigate('/login'), 2500);
     } catch (err: any) {
@@ -49,15 +52,21 @@ const ResetPasswordPage: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
-          <h2 className="mt-6 text-center text-4xl font-extrabold text-gray-900">Reset your password</h2>
-          <p className="mt-2 text-center text-sm text-gray-600">Choose a new password for your account.</p>
+          <h2 className="mt-6 text-center text-4xl font-extrabold text-gray-900">
+            {success && wasFirstActivation ? 'Activate your account' : 'Reset your password'}
+          </h2>
+          <p className="mt-2 text-center text-sm text-gray-600">
+            {success && wasFirstActivation ? 'Set a password to finish setting up your account.' : 'Choose a new password for your account.'}
+          </p>
         </div>
 
         <div className="mt-8 space-y-6 bg-white rounded-2xl shadow-xl p-8">
           {success ? (
             <div className="rounded-md bg-green-50 p-4">
               <p className="text-sm font-medium text-green-800">
-                Your password has been reset successfully. Redirecting you to sign in...
+                {wasFirstActivation
+                  ? 'Your account is now active. Redirecting you to sign in...'
+                  : 'Your password has been reset successfully. Redirecting you to sign in...'}
               </p>
             </div>
           ) : (

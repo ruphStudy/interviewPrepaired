@@ -6,6 +6,7 @@ import InstituteBatch from '../models/InstituteBatch.model';
 import InstituteStudent from '../models/InstituteStudent.model';
 import { userIdentityService } from './UserIdentityService';
 import { accountActivationService } from './AccountActivationService';
+import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 import { InstituteStudentStatus } from '../constants/instituteStudent';
 import { OrganizationType, OrganizationStatus } from '../constants/organization';
 import { OrganizationMemberRole } from '../constants/organizationMember';
@@ -227,8 +228,13 @@ export class InstituteStudentService {
     }
   }
 
-  /** Symmetric with `removeStudent` — reverses an Institute-scoped disable, never touches the linked User's global account. Idempotent if already active. */
-  async reactivateStudent(organizationId: string, actingRole: OrganizationMemberRole, studentId: string): Promise<Record<string, unknown>> {
+  /** Symmetric with `removeStudent` — reverses an Institute-scoped disable, never touches the linked User's global account. Idempotent if already active. `actorUserId` optional so existing call sites keep compiling; audit is skipped (not failed) if omitted. */
+  async reactivateStudent(
+    organizationId: string,
+    actingRole: OrganizationMemberRole,
+    studentId: string,
+    actorUserId?: string
+  ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
     const organization = await this.getOrganizationById(organizationId);
     this.assertIsInstitute(organization);
@@ -242,6 +248,13 @@ export class InstituteStudentService {
     if (student.status !== InstituteStudentStatus.ACTIVE) {
       student.status = InstituteStudentStatus.ACTIVE;
       await student.save();
+
+      await organizationProvisioningAuditService.record('people_relationship_reactivated', {
+        actorUserId,
+        organizationId,
+        targetUserId: student.userId?.toString(),
+        metadata: { studentId },
+      });
     }
 
     return this.toDetail(student.toObject());
@@ -407,8 +420,8 @@ export class InstituteStudentService {
     return this.toDetail(student.toObject());
   }
 
-  /** Soft deactivate only — never a physical delete. Idempotent if already inactive. */
-  async removeStudent(organizationId: string, actingRole: OrganizationMemberRole, studentId: string): Promise<void> {
+  /** Soft deactivate only — never a physical delete. Idempotent if already inactive. `actorUserId` optional so existing call sites keep compiling; audit is skipped (not failed) if omitted. */
+  async removeStudent(organizationId: string, actingRole: OrganizationMemberRole, studentId: string, actorUserId?: string): Promise<void> {
     this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
     const organization = await this.getOrganizationById(organizationId);
     this.assertIsInstitute(organization);
@@ -422,6 +435,13 @@ export class InstituteStudentService {
     if (student.status !== InstituteStudentStatus.INACTIVE) {
       student.status = InstituteStudentStatus.INACTIVE;
       await student.save();
+
+      await organizationProvisioningAuditService.record('people_relationship_disabled', {
+        actorUserId,
+        organizationId,
+        targetUserId: student.userId?.toString(),
+        metadata: { studentId },
+      });
     }
   }
 

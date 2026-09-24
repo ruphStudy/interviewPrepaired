@@ -9,6 +9,7 @@ import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { ApiError } from '../utils/ApiError';
 import { fileStorageService } from './FileStorageService';
+import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 
 const MAX_TAGS = 20;
 const MAX_TAG_LENGTH = 50;
@@ -251,11 +252,13 @@ export class EmployerCandidateService {
    * (EMPLOYER_CANDIDATE_STATUS_TRANSITIONS); an unlisted or same-status
    * "transition" is rejected with a clear 409, never silently accepted.
    */
+  /** `actorUserId` optional so existing call sites keep compiling; audit is skipped (not failed) if omitted. */
   async updateCandidateStatus(
     organizationId: string,
     actingRole: OrganizationMemberRole,
     candidateId: string,
-    targetStatus: EmployerCandidateStatus
+    targetStatus: EmployerCandidateStatus,
+    actorUserId?: string
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
 
@@ -281,8 +284,27 @@ export class EmployerCandidateService {
       throw new ApiError(409, `Cannot transition candidate from "${candidate.status}" to "${targetStatus}"`);
     }
 
+    const previousStatus = candidate.status;
     candidate.status = targetStatus;
     await candidate.save();
+
+    // Only the disable/reactivate transitions this prompt cares about —
+    // ARCHIVED is a distinct, pre-existing lifecycle concept (closer to
+    // soft-delete) and not audited here as a membership-style event.
+    if (targetStatus === EmployerCandidateStatus.INACTIVE) {
+      await organizationProvisioningAuditService.record('people_relationship_disabled', {
+        actorUserId,
+        organizationId,
+        metadata: { candidateId, previousStatus },
+      });
+    } else if (targetStatus === EmployerCandidateStatus.ACTIVE && previousStatus === EmployerCandidateStatus.INACTIVE) {
+      await organizationProvisioningAuditService.record('people_relationship_reactivated', {
+        actorUserId,
+        organizationId,
+        metadata: { candidateId, previousStatus },
+      });
+    }
+
     return this.toDetail(candidate.toObject());
   }
 

@@ -163,7 +163,7 @@ export class InstituteStudentController {
     }
 
     const { studentId } = req.params;
-    await instituteStudentService.removeStudent(context.organizationId, context.role, studentId);
+    await instituteStudentService.removeStudent(context.organizationId, context.role, studentId, req.user!.id);
 
     res.status(200).json(successResponse('Institute student removed successfully', null));
   });
@@ -179,7 +179,7 @@ export class InstituteStudentController {
     }
 
     const { studentId } = req.params;
-    const student = await instituteStudentService.reactivateStudent(context.organizationId, context.role, studentId);
+    const student = await instituteStudentService.reactivateStudent(context.organizationId, context.role, studentId, req.user!.id);
 
     res.status(200).json(successResponse('Institute student reactivated successfully', { student }));
   });

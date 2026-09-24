@@ -107,8 +107,11 @@ const InstituteTrainersPage: React.FC = () => {
     if (!organizationId) return;
     setInvitationsLoading(true);
     try {
-      const response = await instituteApi.listTrainerInvitations(organizationId, { page: 1, limit: 50, status: 'pending' });
-      setPendingInvitations(response.data.invitations);
+      // No status filter — PENDING and EXPIRED both need to be shown here
+      // (Expired: Resend; Pending: Resend/Revoke); ACCEPTED/REVOKED are
+      // filtered out client-side since neither has any applicable action.
+      const response = await instituteApi.listTrainerInvitations(organizationId, { page: 1, limit: 50 });
+      setPendingInvitations(response.data.invitations.filter((inv) => inv.status === 'pending' || inv.status === 'expired'));
     } catch {
       // Non-fatal — the main trainer list is the primary surface.
     } finally {
@@ -256,14 +259,19 @@ const InstituteTrainersPage: React.FC = () => {
 
         {canManage && !invitationsLoading && pendingInvitations.length > 0 && (
           <div className="card mb-4">
-            <h2 className="text-sm font-semibold text-mentor-text mb-3">Pending Invitations ({pendingInvitations.length})</h2>
+            <h2 className="text-sm font-semibold text-mentor-text mb-3">Invitations ({pendingInvitations.length})</h2>
             <div className="divide-y divide-mentor-border">
               {pendingInvitations.map((invitation) => (
                 <div key={invitation.id} className="flex items-center justify-between py-2.5">
                   <div>
-                    <div className="text-sm font-medium text-mentor-text">{invitation.email}</div>
+                    <div className="text-sm font-medium text-mentor-text flex items-center gap-2">
+                      {invitation.email}
+                      <span className={`badge ${invitation.status === 'expired' ? 'badge-neutral' : 'badge-warning'} capitalize`}>
+                        {invitation.status}
+                      </span>
+                    </div>
                     <div className="text-xs text-mentor-text-muted">
-                      Expires {new Date(invitation.expiresAt).toLocaleDateString()}
+                      {invitation.status === 'expired' ? 'Expired' : 'Expires'} {new Date(invitation.expiresAt).toLocaleDateString()}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -275,14 +283,16 @@ const InstituteTrainersPage: React.FC = () => {
                       <RotateCw size={13} />
                       Resend
                     </button>
-                    <button
-                      onClick={() => handleRevokeInvitation(invitation.id)}
-                      className="btn btn-secondary px-3 py-1.5 text-xs text-mentor-error"
-                      title="Revoke"
-                    >
-                      <Ban size={13} />
-                      Revoke
-                    </button>
+                    {invitation.status === 'pending' && (
+                      <button
+                        onClick={() => handleRevokeInvitation(invitation.id)}
+                        className="btn btn-secondary px-3 py-1.5 text-xs text-mentor-error"
+                        title="Revoke"
+                      >
+                        <Ban size={13} />
+                        Revoke
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

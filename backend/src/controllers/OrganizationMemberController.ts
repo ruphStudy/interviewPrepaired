@@ -65,10 +65,13 @@ export class OrganizationMemberController {
     const { memberId } = req.params;
     const { role, status } = req.body;
 
-    const member = await organizationMemberService.updateMember(context.organizationId, context.role, memberId, {
-      role,
-      status,
-    });
+    const member = await organizationMemberService.updateMember(
+      context.organizationId,
+      context.role,
+      memberId,
+      { role, status },
+      req.user!.id
+    );
 
     res.status(200).json(successResponse('Member updated successfully', { member }));
   });
@@ -84,7 +87,7 @@ export class OrganizationMemberController {
     }
 
     const { memberId } = req.params;
-    await organizationMemberService.removeMember(context.organizationId, context.role, memberId);
+    await organizationMemberService.removeMember(context.organizationId, context.role, memberId, req.user!.id);
 
     res.status(200).json(successResponse('Member removed successfully', null));
   });

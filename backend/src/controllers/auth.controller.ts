@@ -289,14 +289,18 @@ export const resetPassword = catchAsync(
       throw new ApiError(400, 'Invalid or expired reset token', undefined, 'PASSWORD_RESET_INVALID');
     }
 
+    // Captured BEFORE clearing — lets the response (and the frontend's
+    // messaging) distinguish "this was a brand-new account's first
+    // activation" (Institute Trainer/Student/Employer Recruiter onboarding
+    // via UserIdentityService.createUserAwaitingActivation) from a genuine
+    // password reset on an already-usable account. Never changes the
+    // security posture below — every session is still revoked and a fresh
+    // explicit login is still required either way.
+    const wasFirstActivation = user.pendingPasswordActivation === true;
+
     user.password = req.body.password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpire = undefined;
-    // Whatever path created this account (e.g. Institute Trainer/Student
-    // onboarding, UserIdentityService.createUserAwaitingActivation), the
-    // real owner has now set a real password through this token — clear
-    // the flag unconditionally so it can never get stuck true for an
-    // account that already has a usable password of its own.
     user.pendingPasswordActivation = false;
     await user.save();
 
@@ -305,7 +309,10 @@ export const resetPassword = catchAsync(
     await authSessionService.revokeAllSessions(user._id.toString(), 'password_reset');
     await authSecurityEventService.record('password_reset', { userId: user._id, userAgent: req.headers['user-agent'] });
 
-    res.status(200).json(successResponse('Password reset successfully. Please sign in with your new password.'));
+    const message = wasFirstActivation
+      ? 'Your account is now active. Please sign in with your new password.'
+      : 'Password reset successfully. Please sign in with your new password.';
+    res.status(200).json(successResponse(message, { wasFirstActivation }));
   }
 );
 

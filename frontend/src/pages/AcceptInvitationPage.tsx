@@ -15,20 +15,22 @@ const MIN_ACTIVATION_PASSWORD_LENGTH = 8;
  * app today, so they're asked to return to this same link afterward rather
  * than inventing new auth-flow plumbing.
  *
- * D2 exception: an OWNER-role invitation (Super Admin B2B provisioning) may
- * belong to a brand-new account with an unknown, never-disclosed password —
- * an unauthenticated visitor on an `owner` invite is ALSO offered a
- * "set your password" form here, which calls the public activation
- * endpoint and logs them straight in. The backend is the real security
- * gate: if this invitation actually belongs to an EXISTING owner (D3, who
- * already has a real password), activation is refused with a clear message
- * pointing them at login instead — this page never has to know in advance
- * which case it is.
+ * D2/PR-PEOPLE-1-3 exception: ANY invitation role (Owner, Trainer,
+ * Recruiter — any org-scoped role a brand-new account might be invited
+ * with) may belong to a brand-new account with an unknown,
+ * never-disclosed password — an unauthenticated visitor on ANY invite is
+ * offered a "set your password" form here, which calls the public
+ * activation endpoint and logs them straight in. The backend's
+ * `pendingPasswordActivation` flag is the real, ONLY security gate (never
+ * this page's own role check): if this invitation actually belongs to an
+ * EXISTING account that already has a real password, activation is
+ * refused with a clear message pointing them at login instead — this page
+ * never has to know in advance which case it is, for any role.
  */
 const AcceptInvitationPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
-  const { isAuthenticated, loginWithToken } = useAuth();
+  const { isAuthenticated, user, logout, loginWithToken } = useAuth();
   const { setActiveOrganization, refreshOrganizations } = useOrganization();
 
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
@@ -75,11 +77,22 @@ const AcceptInvitationPage: React.FC = () => {
       setAccepted(true);
       setTimeout(() => navigate(`/organizations/${organization.id}/dashboard`), 1200);
     } catch (err: any) {
+      // The backend's own email-identity check ("This invitation was sent
+      // to a different email address") is the real, authoritative gate —
+      // §3's "require correct account identity" — this just surfaces a
+      // recovery action (switch account) rather than a dead-end error.
       setAcceptError(err.message || 'Failed to accept invitation');
     } finally {
       setAccepting(false);
     }
   };
+
+  const handleSwitchAccount = async () => {
+    await logout();
+    setAcceptError(null);
+  };
+
+  const isWrongAccountError = !!acceptError && /different email address/i.test(acceptError);
 
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,7 +168,17 @@ const AcceptInvitationPage: React.FC = () => {
             {acceptError && (
               <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4 text-left">
                 <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
-                <p className="text-sm text-mentor-error">{acceptError}</p>
+                <div>
+                  <p className="text-sm text-mentor-error">{acceptError}</p>
+                  {isWrongAccountError && (
+                    <p className="text-xs text-mentor-text-muted mt-1">
+                      {user?.email ? `You're signed in as ${user.email}. ` : ''}
+                      <button type="button" onClick={handleSwitchAccount} className="text-primary-600 hover:underline">
+                        Log out and switch account
+                      </button>
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -163,11 +186,11 @@ const AcceptInvitationPage: React.FC = () => {
               <button onClick={handleAccept} disabled={accepting} className="btn btn-primary w-full justify-center">
                 {accepting ? 'Accepting...' : 'Accept Invitation'}
               </button>
-            ) : preview.role === 'owner' ? (
+            ) : (
               <form onSubmit={handleActivate} className="space-y-3 text-left">
                 <div className="flex items-center gap-2 text-xs text-mentor-text-muted mb-1">
                   <KeyRound size={14} />
-                  <span>New here? Set a password to activate your owner account.</span>
+                  <span>New here? Set a password to activate your account.</span>
                 </div>
 
                 {activationError && (
@@ -202,27 +225,13 @@ const AcceptInvitationPage: React.FC = () => {
                 </button>
 
                 <p className="text-xs text-mentor-text-muted text-center pt-2">
-                  Already have an account?{' '}
+                  Already have an account with this email?{' '}
                   <Link to="/login" className="text-primary-600 hover:underline">
                     Log in
                   </Link>{' '}
                   and return to this link.
                 </p>
               </form>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-xs text-mentor-text-muted">
-                  Log in or create an account with the invited email, then return to this link to accept.
-                </p>
-                <div className="flex gap-3">
-                  <Link to="/login" className="btn btn-primary flex-1 justify-center">
-                    Log In
-                  </Link>
-                  <Link to="/register" className="btn btn-secondary flex-1 justify-center">
-                    Register
-                  </Link>
-                </div>
-              </div>
             )}
           </>
         )}
