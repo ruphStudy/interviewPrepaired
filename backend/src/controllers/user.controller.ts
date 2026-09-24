@@ -6,6 +6,7 @@ import { successResponse } from '../utils/ApiResponse';
 import { catchAsync } from '../utils/catchAsync';
 import { AuthRequest } from '../middleware/auth';
 import { accountDeletionService } from '../services/AccountDeletionService';
+import { emailVerificationService } from '../services/EmailVerificationService';
 
 export const getUsers = catchAsync(async (req: AuthRequest, res: Response) => {
   const page = parseInt(req.query.page as string) || 1;
@@ -46,27 +47,45 @@ export const updateUser = catchAsync(async (req: AuthRequest, res: Response) => 
     throw new ApiError(403, 'Not authorized to update this user');
   }
 
-  const fieldsToUpdate: any = {};
-
-  if (req.body.name) fieldsToUpdate.name = req.body.name;
-  if (req.body.email) fieldsToUpdate.email = req.body.email;
-  if (req.body.avatar) fieldsToUpdate.avatar = req.body.avatar;
-  if (req.body.preferences) fieldsToUpdate.preferences = req.body.preferences;
-
-  if (req.user!.role === 'admin') {
-    if (req.body.role) fieldsToUpdate.role = req.body.role;
-    if (typeof req.body.isActive !== 'undefined') fieldsToUpdate.isActive = req.body.isActive;
-  }
-
-  const user = await User.findByIdAndUpdate(req.params.id, fieldsToUpdate, {
-    new: true,
-    runValidators: true,
-  }).select('-password');
-
+  const user = await User.findById(req.params.id);
   if (!user) {
     throw new ApiError(404, 'User not found');
   }
 
+  if (req.body.name) user.name = req.body.name;
+  if (req.body.avatar) user.avatar = req.body.avatar;
+  if (req.body.preferences) user.preferences = req.body.preferences;
+
+  // Changing the email must never leave the NEW address falsely marked
+  // verified — reset the verification challenge and send a fresh one to
+  // the new address, mirroring /auth/profile's own email-change handling.
+  const nextEmail = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : undefined;
+  const emailChanged = nextEmail !== undefined && nextEmail !== user.email;
+  if (emailChanged) {
+    user.email = nextEmail as string;
+    user.isVerified = false;
+    user.emailVerifiedAt = undefined;
+    user.emailVerificationTokenHash = undefined;
+    user.emailVerificationExpire = undefined;
+    user.emailVerificationCodeHash = undefined;
+    user.emailVerificationCodeExpire = undefined;
+    user.emailVerificationCodeAttempts = 0;
+  }
+
+  if (req.user!.role === 'admin') {
+    if (req.body.role) user.role = req.body.role;
+    if (typeof req.body.isActive !== 'undefined') user.isActive = req.body.isActive;
+  }
+
+  await user.save();
+
+  if (emailChanged) {
+    await emailVerificationService.sendVerificationEmail(user);
+    user.emailVerificationTokenHash = undefined as any;
+    user.emailVerificationCodeHash = undefined as any;
+  }
+
+  user.password = undefined as any;
   res.status(200).json(successResponse('User updated successfully', user));
 });
 

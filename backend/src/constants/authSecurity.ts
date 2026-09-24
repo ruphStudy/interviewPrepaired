@@ -12,6 +12,13 @@ export const PASSWORD_MAX_LENGTH = 128;
 export const EMAIL_VERIFICATION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const EMAIL_VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000; // 1 minute between resends
 
+// ---- Email verification — 6-digit code (dual verification, PR-EMAILVERIFY-2) ----
+// Deliberately shorter than the link's own 24h expiry — a manually-typed
+// code is meant to be used right away, and a short window limits the
+// brute-force guessing surface even before EMAIL_VERIFICATION_CODE_MAX_ATTEMPTS.
+export const EMAIL_VERIFICATION_CODE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+export const EMAIL_VERIFICATION_CODE_MAX_ATTEMPTS = 5;
+
 /**
  * Deterministic backward-compatibility cutoff for the email-verification
  * rollout — any account created before this instant is lazily backfilled

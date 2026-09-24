@@ -16,6 +16,7 @@ import { normalizeUploadedQuestions } from './QuestionFileParserService';
 import { MAX_UPLOADED_QUESTIONS } from '../constants/interview';
 import { InterviewService } from './InterviewService';
 import { organizationInterviewCreditService } from './OrganizationInterviewCreditService';
+import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 
 // Matches InterviewController's convention: import the class, instantiate once here.
 const interviewService = new InterviewService();
@@ -70,11 +71,13 @@ export class InstituteStudentInterviewAssignmentService {
    * the others. `assignedByMembershipId` is trusted input (the caller's own
    * membership id from organizationContext), never re-derived here.
    */
+  /** `actorUserId` optional so existing call sites keep compiling; audit is skipped (not failed) if omitted. One summary audit row per call — this method already natively handles both a single studentId and a bulk list, so no separate per-row audit is needed. */
   async assignInterview(
     organizationId: string,
     actingRole: OrganizationMemberRole,
     assignedByMembershipId: Types.ObjectId,
-    fields: AssignInterviewFields
+    fields: AssignInterviewFields,
+    actorUserId?: string
   ): Promise<AssignInterviewResult> {
     this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
 
@@ -149,6 +152,14 @@ export class InstituteStudentInterviewAssignmentService {
         results.push({ studentId, status: 'failed', error: message });
         failed += 1;
       }
+    }
+
+    if (assigned > 0) {
+      await organizationProvisioningAuditService.record('bulk_assignment_created', {
+        actorUserId,
+        organizationId,
+        metadata: { templateId: fields.templateId, total: uniqueStudentIds.length, assigned, failed },
+      });
     }
 
     return { total: uniqueStudentIds.length, assigned, failed, results };

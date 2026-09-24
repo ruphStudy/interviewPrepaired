@@ -45,9 +45,15 @@ const MAIN_NAV_ITEMS = [
   { to: '/history', label: 'History', icon: History },
 ];
 
-// Always visible to any authenticated user — a student's linked institute
-// record is independent of OrganizationContext/OrganizationMember RBAC, so
-// this section never depends on an active organization or on hasPermission().
+// PR-NAV-1 fix: this was previously "always visible to any authenticated
+// user" — a real gap (a B2C user, or an Employer Recruiter with no Student
+// relationship anywhere, saw a Student Portal section they had no access
+// to). A Student relationship is independent of OrganizationContext/
+// OrganizationMember RBAC (never an org membership), so it still can't be
+// derived from activeOrganization/hasPermission() — it's gated on
+// `hasStudentContext` instead (see OrganizationContext, which resolves it
+// via the same StudentPortalService check the Student Dashboard page
+// itself already relies on).
 const STUDENT_NAV_ITEMS = [
   { to: '/student', label: 'Student Dashboard', icon: GraduationCap },
   { to: '/student/assignments', label: 'My Assignments', icon: ListChecks },
@@ -79,7 +85,7 @@ const getInitials = (name: string) =>
 const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   const location = useLocation();
   const { user, isAdmin } = useAuth();
-  const { activeOrganization, activeOrganizationId, activeRole, hasPermission } = useOrganization();
+  const { activeOrganization, activeOrganizationId, activeRole, hasPermission, hasStudentContext } = useOrganization();
 
   // Employer notification bell badge (24C) — in-app only, no delivery. A
   // lightweight unread-count fetch (limit=1) whenever a company org is
@@ -260,10 +266,14 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
       <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-1">
         {MAIN_NAV_ITEMS.map(renderNavLink)}
 
-        <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
-          Student Portal
-        </p>
-        {STUDENT_NAV_ITEMS.map(renderNavLink)}
+        {hasStudentContext && (
+          <>
+            <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
+              Student Portal
+            </p>
+            {STUDENT_NAV_ITEMS.map(renderNavLink)}
+          </>
+        )}
 
         {orgNavItems.length > 0 && (
           <>

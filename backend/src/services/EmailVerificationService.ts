@@ -4,11 +4,26 @@ import { transactionalEmailService } from './TransactionalEmailService';
 import { authSecurityEventService } from './AuthSecurityEventService';
 import { renderEmailVerificationEmail } from '../emails/templates';
 import { EmailTemplateCode } from '../constants/email';
-import { EMAIL_VERIFICATION_EXPIRY_MS, EMAIL_VERIFICATION_RESEND_COOLDOWN_MS, EMAIL_VERIFICATION_ROLLOUT_AT } from '../constants/authSecurity';
+import {
+  EMAIL_VERIFICATION_EXPIRY_MS,
+  EMAIL_VERIFICATION_RESEND_COOLDOWN_MS,
+  EMAIL_VERIFICATION_ROLLOUT_AT,
+  EMAIL_VERIFICATION_CODE_EXPIRY_MS,
+  EMAIL_VERIFICATION_CODE_MAX_ATTEMPTS,
+} from '../constants/authSecurity';
 import { env } from '../config/environment';
 import { ApiError } from '../utils/ApiError';
 
 export type VerifyEmailOutcome = 'verified' | 'already_verified';
+
+/** Zero-padded 6-digit code, e.g. "007421" — always exactly 6 characters, leading zeroes allowed. */
+function generateVerificationCode(): string {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+function hashVerificationCode(rawCode: string): string {
+  return crypto.createHash('sha256').update(rawCode).digest('hex');
+}
 
 /**
  * Email verification lifecycle (PR-AUTH-1), built entirely on PR-COMM's
@@ -17,15 +32,26 @@ export type VerifyEmailOutcome = 'verified' | 'already_verified';
  * exists in memory only long enough to build the email link.
  */
 class EmailVerificationService {
-  /** Best-effort — a delivery/queueing failure must never fail registration or block the caller. */
+  /**
+   * Best-effort — a delivery/queueing failure must never fail registration
+   * or block the caller. Generates BOTH the link token and the 6-digit
+   * code for this single challenge and sends them in ONE email — never
+   * two separate sends. Only the SHA-256 hashes are ever persisted; both
+   * raw secrets exist in memory only long enough to build the email.
+   */
   async sendVerificationEmail(user: IUser): Promise<void> {
     try {
       const rawToken = crypto.randomBytes(32).toString('hex');
       const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const rawCode = generateVerificationCode();
+      const codeHash = hashVerificationCode(rawCode);
 
       user.emailVerificationTokenHash = tokenHash;
       user.emailVerificationExpire = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
       user.emailVerificationSentAt = new Date();
+      user.emailVerificationCodeHash = codeHash;
+      user.emailVerificationCodeExpire = new Date(Date.now() + EMAIL_VERIFICATION_CODE_EXPIRY_MS);
+      user.emailVerificationCodeAttempts = 0;
       await user.save({ validateBeforeSave: false });
 
       const verifyUrl = `${env.frontendUrl.replace(/\/$/, '')}/verify-email/${rawToken}`;
@@ -33,6 +59,8 @@ class EmailVerificationService {
         name: user.name,
         verifyUrl,
         expiryHours: EMAIL_VERIFICATION_EXPIRY_MS / (60 * 60 * 1000),
+        code: rawCode,
+        codeExpiryMinutes: EMAIL_VERIFICATION_CODE_EXPIRY_MS / (60 * 1000),
       });
 
       await transactionalEmailService.sendTransactionalEmail({
@@ -82,9 +110,77 @@ class EmailVerificationService {
     user.emailVerifiedAt = new Date();
     user.emailVerificationTokenHash = undefined;
     user.emailVerificationExpire = undefined;
+    // Same challenge, other method — a link verification also retires the
+    // sibling 6-digit code so it can no longer be used (safe to clear here:
+    // verifyCode's lookup is session-based via req.user, not a hash lookup,
+    // so clearing these fields doesn't break its ability to find the user).
+    user.emailVerificationCodeHash = undefined;
+    user.emailVerificationCodeExpire = undefined;
+    user.emailVerificationCodeAttempts = 0;
     await user.save({ validateBeforeSave: false });
 
     await authSecurityEventService.record('email_verified', { userId: user._id });
+    return 'verified';
+  }
+
+  /**
+   * Authenticated code-entry path — the user is always resolved from the
+   * session (never from a request body email), so there is no enumeration
+   * surface. Deliberately checks `isVerified` FIRST: if the user already
+   * verified via the link, this short-circuits to `already_verified`
+   * without needing the code hash to still exist. NOTE: on success this
+   * only clears the CODE fields, never `emailVerificationTokenHash` — the
+   * link's own lookup is by hash, so leaving it in place while `isVerified`
+   * is already true means a stale link safely resolves to
+   * `already_verified` via verifyToken's own isVerified check, rather than
+   * failing to find the user at all.
+   */
+  async verifyCode(user: IUser, rawCode: string): Promise<VerifyEmailOutcome> {
+    if (user.isVerified) {
+      return 'already_verified';
+    }
+
+    if (!/^\d{6}$/.test(rawCode)) {
+      throw new ApiError(400, 'Enter the 6-digit verification code.', undefined, 'EMAIL_VERIFICATION_CODE_INVALID');
+    }
+
+    const userWithCode = await User.findById(user._id).select('+emailVerificationCodeHash');
+    if (!userWithCode) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    if (!userWithCode.emailVerificationCodeHash || !userWithCode.emailVerificationCodeExpire) {
+      throw new ApiError(400, 'No verification code is pending. Please request a new one.', undefined, 'EMAIL_VERIFICATION_CODE_INVALID');
+    }
+
+    if (userWithCode.emailVerificationCodeExpire.getTime() < Date.now()) {
+      throw new ApiError(400, 'This verification code has expired. Please request a new one.', undefined, 'EMAIL_VERIFICATION_CODE_EXPIRED');
+    }
+
+    if (userWithCode.emailVerificationCodeAttempts >= EMAIL_VERIFICATION_CODE_MAX_ATTEMPTS) {
+      throw new ApiError(429, 'Too many incorrect attempts. Please request a new verification code.', undefined, 'EMAIL_VERIFICATION_CODE_LOCKED');
+    }
+
+    const suppliedHash = hashVerificationCode(rawCode);
+    const suppliedBuf = Buffer.from(suppliedHash, 'hex');
+    const storedBuf = Buffer.from(userWithCode.emailVerificationCodeHash, 'hex');
+    const isMatch = suppliedBuf.length === storedBuf.length && crypto.timingSafeEqual(suppliedBuf, storedBuf);
+
+    if (!isMatch) {
+      userWithCode.emailVerificationCodeAttempts += 1;
+      await userWithCode.save({ validateBeforeSave: false });
+      await authSecurityEventService.record('email_verification_code_failure', { userId: userWithCode._id });
+      throw new ApiError(400, 'Incorrect verification code.', undefined, 'EMAIL_VERIFICATION_CODE_INVALID');
+    }
+
+    userWithCode.isVerified = true;
+    userWithCode.emailVerifiedAt = new Date();
+    userWithCode.emailVerificationCodeHash = undefined;
+    userWithCode.emailVerificationCodeExpire = undefined;
+    userWithCode.emailVerificationCodeAttempts = 0;
+    await userWithCode.save({ validateBeforeSave: false });
+
+    await authSecurityEventService.record('email_verification_code_success', { userId: userWithCode._id });
     return 'verified';
   }
 

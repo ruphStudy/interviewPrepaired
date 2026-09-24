@@ -22,6 +22,7 @@ import { OrganizationType, OrganizationStatus } from '../constants/organization'
 import { OrganizationMemberRole } from '../constants/organizationMember';
 import { OrganizationPermission, hasOrganizationPermission } from '../constants/organizationPermissions';
 import { employerIntegrationEventService } from './EmployerIntegrationEventService';
+import { organizationProvisioningAuditService } from './OrganizationProvisioningAuditService';
 import { transactionalEmailService } from './TransactionalEmailService';
 import { renderEmployerInterviewInvitationEmail } from '../emails/templates';
 import { EmailTemplateCode } from '../constants/email';
@@ -109,12 +110,14 @@ export class EmployerInterviewInvitationService {
    * `invitedEmail`/`invitedName` are ALWAYS derived from the candidate's
    * own record — never accepted from the request body.
    */
+  /** `actorUserId` optional so existing call sites keep compiling; audit is skipped (not failed) if omitted. Also covers `bulkCreateInvitations`, which loops this same method — no separate bulk-summary audit needed, each invitation gets its own row. */
   async createInvitation(
     organizationId: string,
     actingRole: OrganizationMemberRole,
     actorMembershipId: string,
     applicationId: string,
-    fields: CreateInvitationFields
+    fields: CreateInvitationFields,
+    actorUserId?: string
   ): Promise<{ invitation: Record<string, unknown>; token: string }> {
     this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
 
@@ -187,6 +190,13 @@ export class EmployerInterviewInvitationService {
 
       await this.sendInvitationEmail(organization, created, application.jobId, token);
 
+      await organizationProvisioningAuditService.record('bulk_assignment_created', {
+        actorUserId,
+        organizationId,
+        targetUserId: undefined,
+        metadata: { applicationId, candidateId: candidate._id.toString(), jobId: application.jobId.toString(), invitationId: created._id.toString() },
+      });
+
       return { invitation: this.toDetail(created.toObject()), token };
     } catch (error: any) {
       if (error?.code !== 11000) {
@@ -223,7 +233,8 @@ export class EmployerInterviewInvitationService {
     actingRole: OrganizationMemberRole,
     actorMembershipId: string,
     applicationIds: string[],
-    fields: CreateInvitationFields
+    fields: CreateInvitationFields,
+    actorUserId?: string
   ): Promise<{
     total: number;
     invited: number;
@@ -247,7 +258,7 @@ export class EmployerInterviewInvitationService {
 
     for (const applicationId of uniqueApplicationIds) {
       try {
-        const { invitation } = await this.createInvitation(organizationId, actingRole, actorMembershipId, applicationId, fields);
+        const { invitation } = await this.createInvitation(organizationId, actingRole, actorMembershipId, applicationId, fields, actorUserId);
         results.push({ applicationId, status: 'invited', invitationId: invitation.id as string });
         invited += 1;
       } catch (error: any) {

@@ -145,11 +145,12 @@ export class InstitutePeopleImportService {
           invited += 1;
         } else {
           const [firstName, ...rest] = row.name.split(/\s+/);
-          const outcome = await instituteStudentService.createStudentWithAccountLink(organizationId, actingRole, {
-            firstName: firstName || row.name,
-            lastName: rest.join(' ') || undefined,
-            email: row.email,
-          });
+          const outcome = await instituteStudentService.createStudentWithAccountLink(
+            organizationId,
+            actingRole,
+            { firstName: firstName || row.name, lastName: rest.join(' ') || undefined, email: row.email },
+            actorUserId
+          );
           if (outcome.accountLinkStatus === 'linked_new_user') {
             results.push({ index: row.index, email: row.email, userType: row.userType, outcome: 'created' });
             created += 1;

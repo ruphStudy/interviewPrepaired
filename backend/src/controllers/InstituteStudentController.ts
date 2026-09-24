@@ -59,6 +59,14 @@ export class InstituteStudentController {
    * POST /api/v1/organizations/:organizationId/students
    * Requires ORGANIZATION_UPDATE.
    */
+  /**
+   * PR-E2E-1 finding: this endpoint previously called the plain
+   * `createStudent` (roster row only) — `createStudentWithAccountLink`
+   * (resolve-or-create + link a User by email, PR-PEOPLE-1 §3) had been
+   * built but was only ever wired into the CSV/XLSX bulk-import path, never
+   * into this single-add endpoint. Fixed here so "Add Student" behaves the
+   * same way for one student as it already does for a whole file.
+   */
   public createStudent = catchAsync(async (req: OrganizationAuthRequest, res: Response, _next: NextFunction) => {
     const context = req.organizationContext;
     if (!context) {
@@ -67,19 +75,14 @@ export class InstituteStudentController {
 
     const { firstName, lastName, email, phone, enrollmentNumber, graduationYear, batchId, courseId, branchId } = req.body;
 
-    const student = await instituteStudentService.createStudent(context.organizationId, context.role, {
-      firstName,
-      lastName,
-      email,
-      phone,
-      enrollmentNumber,
-      graduationYear,
-      batchId,
-      courseId,
-      branchId,
-    });
+    const outcome = await instituteStudentService.createStudentWithAccountLink(
+      context.organizationId,
+      context.role,
+      { firstName, lastName, email, phone, enrollmentNumber, graduationYear, batchId, courseId, branchId },
+      req.user!.id
+    );
 
-    res.status(201).json(successResponse('Institute student created successfully', { student }));
+    res.status(201).json(successResponse('Institute student created successfully', { student: outcome.student, accountLinkStatus: outcome.accountLinkStatus }));
   });
 
   /**
@@ -95,7 +98,7 @@ export class InstituteStudentController {
     }
 
     const { students } = req.body;
-    const result = await instituteStudentService.bulkCreateStudents(context.organizationId, context.role, students);
+    const result = await instituteStudentService.bulkCreateStudents(context.organizationId, context.role, students, req.user!.id);
 
     res.status(200).json(successResponse('Bulk student import processed', result));
   });

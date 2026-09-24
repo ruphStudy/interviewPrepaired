@@ -159,10 +159,12 @@ export class InstituteStudentService {
     return this.toDetail(student);
   }
 
+  /** `actorUserId` optional so existing call sites keep compiling; audit (inside createStudentRow) is skipped, not failed, if omitted. */
   async createStudent(
     organizationId: string,
     actingRole: OrganizationMemberRole,
-    fields: StudentFields
+    fields: StudentFields,
+    actorUserId?: string
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
 
@@ -175,7 +177,7 @@ export class InstituteStudentService {
     this.assertIsInstitute(organization);
     this.assertOrganizationMutable(organization);
 
-    return this.createStudentRow(organization, fields);
+    return this.createStudentRow(organization, fields, undefined, actorUserId);
   }
 
   /**
@@ -193,9 +195,10 @@ export class InstituteStudentService {
   async createStudentWithAccountLink(
     organizationId: string,
     actingRole: OrganizationMemberRole,
-    fields: StudentFields
+    fields: StudentFields,
+    actorUserId?: string
   ): Promise<{ student: Record<string, unknown>; accountLinkStatus: 'linked_new_user' | 'linked_existing_user' | 'not_linked' | 'link_failed'; linkError?: string }> {
-    const student = await this.createStudent(organizationId, actingRole, fields);
+    const student = await this.createStudent(organizationId, actingRole, fields, actorUserId);
 
     const email = fields.email?.trim();
     if (!email) {
@@ -273,7 +276,8 @@ export class InstituteStudentService {
   async bulkCreateStudents(
     organizationId: string,
     actingRole: OrganizationMemberRole,
-    rows: StudentFields[]
+    rows: StudentFields[],
+    actorUserId?: string
   ): Promise<BulkCreateStudentsResult> {
     this.assertHasPermission(actingRole, OrganizationPermission.ORGANIZATION_UPDATE);
 
@@ -308,7 +312,7 @@ export class InstituteStudentService {
           throw new ApiError(409, 'Duplicate enrollmentNumber within this request');
         }
 
-        const student = await this.createStudentRow(organization, row, cache);
+        const student = await this.createStudentRow(organization, row, cache, actorUserId);
         if (enrollmentNumber) seenEnrollmentNumbers.add(enrollmentNumber);
         results.push({ index, status: 'created', studentId: student.id as string });
         created += 1;
@@ -326,7 +330,8 @@ export class InstituteStudentService {
   private async createStudentRow(
     organization: IOrganization,
     fields: StudentFields,
-    cache?: RelationshipCache
+    cache?: RelationshipCache,
+    actorUserId?: string
   ): Promise<Record<string, unknown>> {
     const firstName = fields.firstName?.trim();
     if (!firstName) {
@@ -357,6 +362,13 @@ export class InstituteStudentService {
         graduationYear: fields.graduationYear,
         status: InstituteStudentStatus.ACTIVE,
       });
+
+      await organizationProvisioningAuditService.record('student_added', {
+        actorUserId,
+        organizationId: organization._id.toString(),
+        metadata: { studentId: student._id.toString() },
+      });
+
       return this.toDetail(student.toObject());
     } catch (error: any) {
       if (error?.code === 11000) {

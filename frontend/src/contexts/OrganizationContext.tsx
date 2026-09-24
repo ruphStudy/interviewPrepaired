@@ -6,6 +6,7 @@ import organizationApi, {
   OrganizationPermission,
   OrganizationType,
 } from '../api/organizationApi';
+import studentPortalApi from '../api/studentPortalApi';
 
 const ACTIVE_ORG_STORAGE_KEY = 'activeOrganizationId';
 
@@ -29,6 +30,16 @@ interface OrganizationContextType {
   activeMembershipId: string | null;
   activeRole: OrganizationMemberRole | null;
   activePermissions: OrganizationPermission[];
+  /**
+   * PARTICIPANT-level signal (section 1's third access dimension, alongside
+   * GLOBAL and ORGANIZATION) — independent of `activeOrganization`/`activeRole`:
+   * a Student relationship is never an OrganizationMember row, so it can't
+   * be derived from org RBAC. True only when the caller has at least one
+   * ACTIVE linked InstituteStudent record anywhere — reuses the exact same
+   * `StudentPortalService.getActiveLinkedStudents` check the Student Dashboard
+   * page itself already relies on (never a second, parallel access check).
+   */
+  hasStudentContext: boolean;
   loading: boolean;
   error: string | null;
   /** Pass null to switch to Personal/B2C mode. */
@@ -77,6 +88,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
   const [activeMembershipId, setActiveMembershipId] = useState<string | null>(null);
   const [activeRole, setActiveRole] = useState<OrganizationMemberRole | null>(null);
   const [activePermissions, setActivePermissions] = useState<OrganizationPermission[]>([]);
+  const [hasStudentContext, setHasStudentContext] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -115,11 +127,21 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     return response.data.organizations.map((org) => ({ id: org.id, name: org.name, slug: org.slug, type: org.type }));
   }, []);
 
+  /** Never throws — a non-student (or a transient failure) both correctly/safely resolve to no Student nav, never an error state that blocks the rest of the app shell from loading. */
+  const refreshStudentContext = useCallback(async () => {
+    try {
+      const response = await studentPortalApi.getDashboard();
+      setHasStudentContext(response.data.dashboards.length > 0);
+    } catch {
+      setHasStudentContext(false);
+    }
+  }, []);
+
   const initialize = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const accessible = await fetchAccessibleOrganizations();
+      const [accessible] = await Promise.all([fetchAccessibleOrganizations(), refreshStudentContext()]);
       setOrganizations(accessible);
 
       const storedId = localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
@@ -137,7 +159,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     } finally {
       setLoading(false);
     }
-  }, [fetchAccessibleOrganizations, loadActiveOrganization, clearActive]);
+  }, [fetchAccessibleOrganizations, loadActiveOrganization, clearActive, refreshStudentContext]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -147,6 +169,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
       // organization endpoints while unauthenticated.
       setOrganizations([]);
       clearActive();
+      setHasStudentContext(false);
       setLoading(false);
       setError(null);
     }
@@ -192,6 +215,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     activeMembershipId,
     activeRole,
     activePermissions,
+    hasStudentContext,
     loading,
     error,
     setActiveOrganization,

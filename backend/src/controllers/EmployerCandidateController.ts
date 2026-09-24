@@ -111,7 +111,8 @@ export class EmployerCandidateController {
         source,
         notes,
         tags,
-      }
+      },
+      req.user!.id
     );
 
     // Optional, best-effort: append ONE source-attribution record for the

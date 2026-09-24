@@ -117,11 +117,13 @@ export class EmployerCandidateService {
     return this.toDetail(candidate);
   }
 
+  /** `actorUserId` optional so existing call sites keep compiling; audit is skipped (not failed) if omitted. */
   async createCandidate(
     organizationId: string,
     actingRole: OrganizationMemberRole,
     creatorMembershipId: string,
-    fields: CandidateFields
+    fields: CandidateFields,
+    actorUserId?: string
   ): Promise<Record<string, unknown>> {
     this.assertHasPermission(actingRole, OrganizationPermission.INTERVIEWS_MANAGE);
 
@@ -166,6 +168,13 @@ export class EmployerCandidateService {
         tags: this.cleanTags(fields.tags),
         createdByMembershipId: new Types.ObjectId(creatorMembershipId),
       });
+
+      await organizationProvisioningAuditService.record('candidate_added', {
+        actorUserId,
+        organizationId,
+        metadata: { candidateId: candidate._id.toString() },
+      });
+
       return this.toDetail(candidate.toObject());
     } catch (error: any) {
       if (error?.code === 11000) {

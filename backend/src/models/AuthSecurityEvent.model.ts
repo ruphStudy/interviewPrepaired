@@ -10,6 +10,8 @@ export type AuthSecurityEventType =
   | 'password_reset'
   | 'email_verified'
   | 'verification_resent'
+  | 'email_verification_code_success'
+  | 'email_verification_code_failure'
   | 'session_revoked';
 
 /**
@@ -47,6 +49,8 @@ const authSecurityEventSchema = new Schema<IAuthSecurityEvent>(
         'password_reset',
         'email_verified',
         'verification_resent',
+        'email_verification_code_success',
+        'email_verification_code_failure',
         'session_revoked',
       ],
       required: true,

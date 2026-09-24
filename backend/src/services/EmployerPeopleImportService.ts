@@ -138,11 +138,13 @@ export class EmployerPeopleImportService {
         } else {
           const [firstName, ...rest] = row.name.split(/\s+/);
           const lastName = rest.join(' ');
-          await employerCandidateService.createCandidate(organizationId, actingRole, creatorMembershipId, {
-            firstName,
-            lastName,
-            email: row.email,
-          });
+          await employerCandidateService.createCandidate(
+            organizationId,
+            actingRole,
+            creatorMembershipId,
+            { firstName, lastName, email: row.email },
+            actorUserId
+          );
           results.push({ index: row.index, email: row.email, userType: row.userType, outcome: 'created' });
           created += 1;
         }

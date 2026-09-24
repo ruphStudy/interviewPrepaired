@@ -25,7 +25,8 @@ export class InstituteStudentInterviewAssignmentController {
       context.organizationId,
       context.role,
       context.member._id,
-      { templateId, studentIds, dueAt, instructions }
+      { templateId, studentIds, dueAt, instructions },
+      req.user!.id
     );
 
     res.status(200).json(successResponse('Interview assignment processed', result));

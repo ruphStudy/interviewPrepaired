@@ -13,6 +13,7 @@ import {
   resetPassword,
   verifyEmail,
   resendVerification,
+  verifyEmailCode,
 } from '../controllers/auth.controller';
 import { validate } from '../middleware/validation';
 import { protect } from '../middleware/auth';
@@ -69,6 +70,10 @@ const resetPasswordValidation = [passwordValidation('password', 'Password')];
 
 const verifyEmailValidation = [param('token').isString().trim().isLength({ min: 10, max: 512 }).withMessage('Invalid token')];
 
+const verifyEmailCodeValidation = [
+  body('code').isString().trim().matches(/^\d{6}$/).withMessage('Enter the 6-digit verification code'),
+];
+
 // Focused abuse protection per sensitive route — never rely on the global
 // `/api` limiter alone. Every limiter here returns a generic message that
 // never hints at account existence.
@@ -112,6 +117,14 @@ const resendVerificationLimiter = rateLimit({
   message: { success: false, message: 'Too many verification email requests. Please try again later.' },
 });
 
+const verifyEmailCodeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many verification attempts. Please try again later.' },
+});
+
 const resetPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -137,5 +150,6 @@ router.post('/forgot-password', forgotPasswordLimiter, ...forgotPasswordValidati
 router.put('/reset-password/:token', resetPasswordLimiter, resetPasswordValidation, validate, resetPassword);
 router.get('/verify-email/:token', verifyEmailLimiter, verifyEmailValidation, validate, verifyEmail);
 router.post('/resend-verification', resendVerificationLimiter, protect, resendVerification);
+router.post('/verify-email-code', verifyEmailCodeLimiter, protect, ...verifyEmailCodeValidation, validate, verifyEmailCode);
 
 export default router;

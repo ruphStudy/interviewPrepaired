@@ -29,6 +29,11 @@ export interface IUser extends Document {
   emailVerificationTokenHash?: string;
   emailVerificationExpire?: Date;
   emailVerificationSentAt?: Date;
+  /** Dual verification (PR-EMAILVERIFY-2) — same challenge as the link above, SHA-256 hash only, the raw 6-digit code is never persisted. */
+  emailVerificationCodeHash?: string;
+  emailVerificationCodeExpire?: Date;
+  /** Reset to 0 on every new challenge; incremented only on a wrong-code attempt (never on already_verified/expired/malformed). */
+  emailVerificationCodeAttempts: number;
   resetPasswordToken?: string;
   resetPasswordExpire?: Date;
   /**
@@ -140,6 +145,13 @@ const userSchema = new Schema<IUser>(
     emailVerificationTokenHash: { type: String, select: false },
     emailVerificationExpire: { type: Date },
     emailVerificationSentAt: { type: Date },
+    emailVerificationCodeHash: { type: String, select: false },
+    emailVerificationCodeExpire: { type: Date },
+    emailVerificationCodeAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpire: Date,
     pendingPasswordActivation: {

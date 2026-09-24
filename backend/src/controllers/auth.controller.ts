@@ -71,13 +71,14 @@ export const register = catchAsync(async (req: AuthRequest, res: Response) => {
   await emailVerificationService.sendVerificationEmail(user);
 
   // `sendVerificationEmail` mutates this same in-memory document with the
-  // verification token's hash/expiry — `select: false` on the schema only
+  // verification token/code hashes — `select: false` on the schema only
   // suppresses these fields from future queries, not from a document
   // instance already held in memory, so they must be stripped explicitly
   // before the response is serialized (same reason `password` is stripped
   // below).
   user.password = undefined as any;
   user.emailVerificationTokenHash = undefined as any;
+  user.emailVerificationCodeHash = undefined as any;
   await sendTokenResponse(user, 201, res, req.headers['user-agent']);
 });
 
@@ -167,20 +168,37 @@ export const getMe = catchAsync(async (_req: AuthRequest, res: Response) => {
 });
 
 export const updateProfile = catchAsync(async (req: AuthRequest, res: Response) => {
-  const fieldsToUpdate = {
-    name: req.body.name,
-    email: req.body.email,
-    avatar: req.body.avatar,
-    preferences: req.body.preferences,
-  };
-
-  const user = await User.findByIdAndUpdate(req.user!.id, fieldsToUpdate, {
-    new: true,
-    runValidators: true,
-  });
-
+  const user = await User.findById(req.user!.id);
   if (!user) {
     throw new ApiError(404, 'User not found');
+  }
+
+  if (req.body.name !== undefined) user.name = req.body.name;
+  if (req.body.avatar !== undefined) user.avatar = req.body.avatar;
+  if (req.body.preferences !== undefined) user.preferences = req.body.preferences;
+
+  // Changing the email must never leave the NEW address falsely marked
+  // verified — reset the challenge and send a fresh one to the new
+  // address, mirroring what registration itself does.
+  const nextEmail = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : undefined;
+  const emailChanged = nextEmail !== undefined && nextEmail !== user.email;
+  if (emailChanged) {
+    user.email = nextEmail as string;
+    user.isVerified = false;
+    user.emailVerifiedAt = undefined;
+    user.emailVerificationTokenHash = undefined;
+    user.emailVerificationExpire = undefined;
+    user.emailVerificationCodeHash = undefined;
+    user.emailVerificationCodeExpire = undefined;
+    user.emailVerificationCodeAttempts = 0;
+  }
+
+  await user.save();
+
+  if (emailChanged) {
+    await emailVerificationService.sendVerificationEmail(user);
+    user.emailVerificationTokenHash = undefined as any;
+    user.emailVerificationCodeHash = undefined as any;
   }
 
   res.status(200).json(successResponse('Profile updated successfully', user));
@@ -337,4 +355,21 @@ export const resendVerification = catchAsync(async (req: AuthRequest, res: Respo
     cooldown: 'A verification email was just sent — please check your inbox before requesting another.',
   };
   res.status(200).json(successResponse(messages[outcome], { status: outcome }));
+});
+
+/**
+ * POST /auth/verify-email-code — authenticated only, so the user is always
+ * resolved from the session rather than an email in the request body; this
+ * gives it the same no-enumeration property as /auth/resend-verification.
+ * Never echoes the submitted code back in the response.
+ */
+export const verifyEmailCode = catchAsync(async (req: AuthRequest, res: Response) => {
+  const user = await User.findById(req.user!.id);
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  const outcome = await emailVerificationService.verifyCode(user, String(req.body.code).trim());
+  const message = outcome === 'already_verified' ? 'This email is already verified.' : 'Email verified successfully.';
+  res.status(200).json(successResponse(message, { status: outcome }));
 });

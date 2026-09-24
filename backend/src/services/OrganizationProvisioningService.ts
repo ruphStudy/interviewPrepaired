@@ -147,6 +147,17 @@ export class OrganizationProvisioningService {
         normalizedEmail
       );
 
+      // Distinct from the 'organization_created' row finalized below — that
+      // one is the request's primary idempotency defense (fires once per
+      // idempotencyKey); this one is the specific "Owner linked/invited"
+      // checkpoint section 28 calls out separately.
+      await organizationProvisioningAuditService.record('owner_invitation_created', {
+        actorUserId,
+        organizationId: organization.id,
+        targetUserId: (ownerUser._id as Types.ObjectId).toString(),
+        metadata: { isNewOwner, invitationId: (invitation as any).id },
+      });
+
       await this.applyPlanIfRequested(organization.id, params.planCode);
 
       auditRow.status = 'success';

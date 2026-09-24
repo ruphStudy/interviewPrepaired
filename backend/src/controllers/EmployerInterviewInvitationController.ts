@@ -27,7 +27,8 @@ export class EmployerInterviewInvitationController {
       context.role,
       context.member._id.toString(),
       applicationId,
-      { expiresInDays, message }
+      { expiresInDays, message },
+      req.user!.id
     );
 
     res.status(201).json(successResponse('Interview invitation created successfully', this.hideTokenInProduction(result)));
@@ -54,7 +55,8 @@ export class EmployerInterviewInvitationController {
       context.role,
       context.member._id.toString(),
       applicationIds,
-      { expiresInDays, message }
+      { expiresInDays, message },
+      req.user!.id
     );
 
     res.status(200).json(successResponse('Bulk interview invitations processed', result));
