@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-interface Environment {
+export interface Environment {
   nodeEnv: string;
   port: number;
   mongodbUri: string;
@@ -49,7 +49,15 @@ interface Environment {
   /** Consent version labels (PR-PRIVACY-4) — just labels, never fabricated legal text. Bump when the actual Terms/Privacy Policy document changes. */
   termsVersion: string;
   privacyPolicyVersion: string;
-  /** Real legal document URLs — MUST stay blank unless genuinely configured; never fabricated. The frontend renders "not yet configured" rather than a broken/placeholder link when blank. */
+  /**
+   * Real legal document URLs. Default to this product's OWN real, routable
+   * `/terms` and `/privacy` pages (TermsOfServicePage.tsx/PrivacyPolicyPage.tsx
+   * — clearly marked placeholder content pending final legal review, never
+   * fabricated legal text) rather than staying blank — a real, working link
+   * to a real page, just with content still pending legal sign-off. An
+   * operator may still override either via TERMS_URL/PRIVACY_POLICY_URL
+   * once real externally-hosted legal documents exist.
+   */
   termsUrl: string;
   privacyPolicyUrl: string;
   /** Hours a completed privacy data-export archive remains downloadable before the cleanup sweep deletes it (PR-PRIVACY-2). */
@@ -117,12 +125,14 @@ export const env: Environment = {
   trustProxy: process.env.TRUST_PROXY || '',
   runJobsInProcess: process.env.RUN_JOBS_IN_PROCESS !== 'false',
   // Consent/privacy foundation (PR-PRIVACY-4) — versions are just labels
-  // (default '1.0' is fine, it is not legal text); URLs are left blank
-  // unless a real, non-fabricated value is configured.
+  // (default '1.0' is fine, it is not legal text). URLs default to this
+  // product's own real /terms and /privacy pages (see the Environment
+  // interface's doc comment above) rather than an external placeholder.
   termsVersion: process.env.TERMS_VERSION || '1.0',
   privacyPolicyVersion: process.env.PRIVACY_POLICY_VERSION || '1.0',
-  termsUrl: process.env.TERMS_URL || '',
-  privacyPolicyUrl: process.env.PRIVACY_POLICY_URL || '',
+  termsUrl: process.env.TERMS_URL || `${(process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000').replace(/\/$/, '')}/terms`,
+  privacyPolicyUrl:
+    process.env.PRIVACY_POLICY_URL || `${(process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000').replace(/\/$/, '')}/privacy`,
   privacyExportRetentionHours: parseInt(process.env.PRIVACY_EXPORT_RETENTION_HOURS || '48', 10),
 };
 

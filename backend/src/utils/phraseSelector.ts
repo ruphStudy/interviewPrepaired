@@ -17,8 +17,9 @@
  * so multiplying their (non-existent, in that array) weight does nothing.
  */
 
-import { HumanizerInterviewMode, PHRASE_LIBRARY, Phrase, PhraseCategory } from '../constants/phraseLibrary';
+import { HumanizerInterviewMode, PHRASE_LIBRARY, Phrase, PhraseCategory, resolvePhraseText } from '../constants/phraseLibrary';
 import { DEFAULT_INTERVIEW_PERSONALITY, InterviewerNeutrality, InterviewPersonality } from '../constants/interviewModePolicy';
+import { DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
 
 export interface SelectedPhrase {
   phraseId: string;
@@ -175,6 +176,13 @@ function adjustSilenceWeight(
  * tables are empty) apply ONLY as a weight adjustment on top of the
  * already mode-filtered `eligible` array above — mode safety always wins,
  * personality can never widen eligibility.
+ *
+ * `languageCode` (multilingual hardening, additive/optional, defaults to
+ * 'en-IN' — every pre-existing call site keeps calling this with 6 args and
+ * gets IDENTICAL behavior) affects ONLY the final `text` resolution via
+ * `resolvePhraseText` — it never changes WHICH phrase is eligible/selected
+ * (category/mode/cooldown/weight are entirely language-independent), so
+ * selection determinism-given-`rng` is unaffected by language.
  */
 export function selectPhrase(
   category: PhraseCategory,
@@ -182,7 +190,8 @@ export function selectPhrase(
   recentPhraseHistory: string[],
   rng: () => number = Math.random,
   personality: InterviewPersonality = DEFAULT_INTERVIEW_PERSONALITY,
-  neutrality: InterviewerNeutrality = 'relaxed'
+  neutrality: InterviewerNeutrality = 'relaxed',
+  languageCode: SupportedLanguageCode = DEFAULT_LANGUAGE_CODE
 ): SelectedPhrase | null {
   const candidates = PHRASE_LIBRARY.filter((p) => p.category === category && p.allowedModes.includes(mode));
   const eligible = candidates.filter((p) => !isOnCooldown(p, recentPhraseHistory));
@@ -203,7 +212,7 @@ export function selectPhrase(
   for (const phrase of weighted) {
     const weight = Math.max(0, phrase.weight);
     if (roll < weight) {
-      return { phraseId: phrase.id, text: phrase.text, avatarStateHint: phrase.avatarStateHint };
+      return { phraseId: phrase.id, text: resolvePhraseText(phrase, languageCode), avatarStateHint: phrase.avatarStateHint };
     }
     roll -= weight;
   }
@@ -212,5 +221,5 @@ export function selectPhrase(
   // fall back to the last eligible phrase rather than silence, since the
   // roll already committed to the "real phrase" portion of the pool above.
   const last = weighted[weighted.length - 1];
-  return { phraseId: last.id, text: last.text, avatarStateHint: last.avatarStateHint };
+  return { phraseId: last.id, text: resolvePhraseText(last, languageCode), avatarStateHint: last.avatarStateHint };
 }

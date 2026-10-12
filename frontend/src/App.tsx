@@ -4,6 +4,8 @@ import { OrganizationProvider } from './contexts/OrganizationContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import TermsOfServicePage from './pages/TermsOfServicePage';
+import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
@@ -72,6 +74,7 @@ import StudentAssignmentDetailPage from './pages/student/StudentAssignmentDetail
 import StudentAssignmentResultPage from './pages/student/StudentAssignmentResultPage';
 import StudentHistoryPage from './pages/student/StudentHistoryPage';
 import StudentReadinessPage from './pages/student/StudentReadinessPage';
+import CandidatePortalPage from './pages/CandidatePortalPage';
 
 function App() {
   return (
@@ -82,6 +85,8 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/terms" element={<TermsOfServicePage />} />
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
           <Route path="/verify-email/:token" element={<VerifyEmailPage />} />
@@ -557,6 +562,18 @@ function App() {
             element={
               <ProtectedRoute>
                 <TrainerBatchReadinessPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Candidate Portal — based on the caller's own EmployerCandidate
+              records (matched by email), never on OrganizationContext/RBAC;
+              a candidate is never an OrganizationMember. */}
+          <Route
+            path="/candidate-portal"
+            element={
+              <ProtectedRoute>
+                <CandidatePortalPage />
               </ProtectedRoute>
             }
           />

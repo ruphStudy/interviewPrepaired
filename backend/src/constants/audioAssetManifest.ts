@@ -17,16 +17,22 @@
  * entry, a disabled entry, or a locale with zero coverage — as "asset
  * unavailable, fall through to the next routing tier", never as an error.
  *
- * Locale scope: only `'en-IN'`, because `PHRASE_LIBRARY` itself is
- * English-only (see `InterviewService.buildPresentationPlanSafely`, which
- * already skips humanization entirely for hi-IN/mr-IN). Fabricating
- * untranslated hi-IN/mr-IN manifest entries would misrepresent locale
- * coverage that doesn't exist — `getManifestEntry` for those locales
- * returns `undefined` cleanly, proven by this file's test.
+ * Locale scope: `'en-IN'`, `'hi-IN'`, `'mr-IN'` — `PHRASE_LIBRARY` now
+ * carries a hand-authored Hindi/Marathi `translations` entry for every
+ * phrase (multilingual hardening), so a manifest row genuinely exists for
+ * all three; `textHash` is computed from `resolvePhraseText(phrase, locale)`
+ * so each locale's row honestly hashes the TEXT that locale would actually
+ * speak (its own translation, or the English fallback for the rare phrase
+ * without one yet) — never a hash that silently ignores locale. Every row
+ * is still `enabled: false` with no `audioUrl`/`assetPath`: no prerecorded
+ * audio or TTS provider exists for ANY locale yet (see file intro above) —
+ * this only catalogs that translated TEXT is ready for a future TTS
+ * provider, never wires one up.
  */
 
 import * as crypto from 'crypto';
-import { PHRASE_LIBRARY, Phrase, PhraseCategory } from './phraseLibrary';
+import { PHRASE_LIBRARY, Phrase, PhraseCategory, resolvePhraseText } from './phraseLibrary';
+import { SupportedLanguageCode } from '../config/languages';
 
 export interface ManifestEntry {
   phraseId: string;
@@ -42,8 +48,8 @@ export interface ManifestEntry {
   enabled: boolean;
 }
 
-/** The only locale `PHRASE_LIBRARY` covers today — see file header. Adding a translated phrase library later (a future phase's job) is the only thing that should ever grow this list. */
-const MANIFEST_LOCALES = ['en-IN'] as const;
+/** Every locale `PHRASE_LIBRARY` covers today — see file header. Grows automatically if a future language is added to `SUPPORTED_LANGUAGES`. */
+const MANIFEST_LOCALES: readonly SupportedLanguageCode[] = ['en-IN', 'hi-IN', 'mr-IN'];
 
 /**
  * Normalization matching `InterviewAnswerOrchestratorService.normalizeAnswer`'s
@@ -65,7 +71,7 @@ export function computePhraseTextHash(text: string): string {
   return crypto.createHash('sha256').update(normalizePhraseTextForHash(text)).digest('hex');
 }
 
-function buildManifestEntry(phrase: Phrase, locale: string): ManifestEntry {
+function buildManifestEntry(phrase: Phrase, locale: SupportedLanguageCode): ManifestEntry {
   return {
     phraseId: phrase.id,
     category: phrase.category,
@@ -79,7 +85,11 @@ function buildManifestEntry(phrase: Phrase, locale: string): ManifestEntry {
     audioUrl: undefined,
     assetPath: undefined,
     durationMs: undefined,
-    textHash: computePhraseTextHash(phrase.text),
+    // The TEXT this locale would actually speak — its own translation, or
+    // the English fallback (resolvePhraseText's own safety contract) — so
+    // a future TTS provider always generates audio matching what the
+    // humanizer actually produces for that language.
+    textHash: computePhraseTextHash(resolvePhraseText(phrase, locale)),
     version: 1,
     enabled: false,
   };
@@ -96,10 +106,11 @@ for (const entry of AUDIO_ASSET_MANIFEST) {
 
 /**
  * Clean lookup for ROUTING use — returns `undefined` (never throws, never
- * fabricates a placeholder) for: an unknown phraseId, a locale with no
- * manifest coverage (hi-IN/mr-IN today), or an entry that exists but is
- * `enabled: false`. `AudioRoutingService` must treat `undefined` as "fall
- * through to the next routing tier", never as an error.
+ * fabricates a placeholder) for: an unknown phraseId, an uncovered locale,
+ * or an entry that exists but is `enabled: false` (every entry, for every
+ * locale, is `enabled: false` today — see file header). `AudioRoutingService`
+ * must treat `undefined` as "fall through to the next routing tier", never
+ * as an error.
  */
 export function getManifestEntry(phraseId: string, locale: string): ManifestEntry | undefined {
   const entry = manifestIndex.get(`${phraseId}::${locale}`);
@@ -140,14 +151,14 @@ export function validateManifestStructure(manifest: ManifestEntry[] = AUDIO_ASSE
   return issues;
 }
 
-/** Detects drift: a manifest entry's stored `textHash` no longer matches a FRESH hash of `PHRASE_LIBRARY`'s current text for that `phraseId`. This is what makes a future wording edit automatically detectable rather than silently stale. */
+/** Detects drift: a manifest entry's stored `textHash` no longer matches a FRESH hash of `PHRASE_LIBRARY`'s current text (via `resolvePhraseText`, so each locale's own translation is what's actually compared) for that `phraseId`+`locale`. This is what makes a future wording OR translation edit automatically detectable rather than silently stale. */
 export function findTextHashMismatches(manifest: ManifestEntry[] = AUDIO_ASSET_MANIFEST): ManifestValidationIssue[] {
   const byId = new Map(PHRASE_LIBRARY.map((p) => [p.id, p] as const));
   const issues: ManifestValidationIssue[] = [];
   for (const entry of manifest) {
     const phrase = byId.get(entry.phraseId);
     if (!phrase) continue; // already reported by validateManifestStructure
-    const freshHash = computePhraseTextHash(phrase.text);
+    const freshHash = computePhraseTextHash(resolvePhraseText(phrase, entry.locale as SupportedLanguageCode));
     if (freshHash !== entry.textHash) {
       issues.push({ phraseId: entry.phraseId, locale: entry.locale, reason: 'textHash does not match current PHRASE_LIBRARY text' });
     }

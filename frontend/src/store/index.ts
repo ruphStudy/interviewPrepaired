@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Interview, Question, Answer, Evaluation, InterviewReport } from '../types';
+import { Interview, Question, Answer, Evaluation } from '../types';
 
 interface InterviewState {
   // Current interview session

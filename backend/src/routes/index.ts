@@ -9,6 +9,7 @@ import questionSetRoutes from './questionSet.routes';
 import organizationRoutes from './organization.routes';
 import organizationInvitationRoutes from './organizationInvitation.routes';
 import studentPortalRoutes from './studentPortal.routes';
+import candidatePortalRoutes from './candidatePortal.routes';
 import publicEmployerInterviewInvitationRoutes from './publicEmployerInterviewInvitation.routes';
 import emailWebhookRoutes from './emailWebhook.routes';
 import devStorageRoutes from './devStorage.routes';
@@ -26,6 +27,7 @@ router.use('/question-sets', questionSetRoutes);
 router.use('/organizations', organizationRoutes);
 router.use('/organization-invitations', organizationInvitationRoutes);
 router.use('/student-portal', studentPortalRoutes);
+router.use('/candidate-portal', candidatePortalRoutes);
 // Fully public (no `protect`, no organization RBAC) — 20D candidate interview invitation access/acceptance.
 router.use('/public/employer-interview-invitations', publicEmployerInterviewInvitationRoutes);
 router.use('/webhooks/email', emailWebhookRoutes);

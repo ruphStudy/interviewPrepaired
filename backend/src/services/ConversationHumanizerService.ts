@@ -26,6 +26,7 @@ import { HumanizerInterviewMode, PhraseCategory } from '../constants/phraseLibra
 import { DEFAULT_INTERVIEW_PERSONALITY, InterviewerNeutrality, InterviewPersonality } from '../constants/interviewModePolicy';
 import { selectPhrase, SelectedPhrase } from '../utils/phraseSelector';
 import { rewriteToSpokenForm } from '../utils/spokenQuestionRewriter';
+import { DEFAULT_LANGUAGE_CODE, SupportedLanguageCode } from '../config/languages';
 
 export interface BuildPresentationPlanParams {
   move: INextInterviewMove;
@@ -40,6 +41,8 @@ export interface BuildPresentationPlanParams {
   personality?: InterviewPersonality;
   /** Phase 12B — additive/optional, defaults to 'relaxed'. Callers should pass `resolveInterviewModePolicy(interview).interviewerNeutrality`. */
   interviewerNeutrality?: InterviewerNeutrality;
+  /** Multilingual hardening — additive/optional, defaults to 'en-IN' (byte-identical to pre-existing behavior). Callers should pass `interview.interviewLanguage`. */
+  languageCode?: SupportedLanguageCode;
 }
 
 // A move type's transition-family phrase category, if it has one at all.
@@ -153,16 +156,17 @@ function buildPlanInternal(params: BuildPresentationPlanParams): ConversationPre
     rng = Math.random,
     personality = DEFAULT_INTERVIEW_PERSONALITY,
     interviewerNeutrality = 'relaxed',
+    languageCode = DEFAULT_LANGUAGE_CODE,
   } = params;
   const canonicalText = question?.text ?? '';
   if (!canonicalText.trim()) return safeFallbackPlan(canonicalText);
 
   const ackCategory = pickAckCategory(answerSignal, move);
-  const ack: SelectedPhrase | null = selectPhrase(ackCategory, interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality);
+  const ack: SelectedPhrase | null = selectPhrase(ackCategory, interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality, languageCode);
 
   const transitionCategory = TRANSITION_CATEGORY_BY_MOVE[move.moveType];
   const transition: SelectedPhrase | null = transitionCategory
-    ? selectPhrase(transitionCategory, interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality)
+    ? selectPhrase(transitionCategory, interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality, languageCode)
     : null;
 
   const spokenQuestionText = rewriteToSpokenForm(
@@ -249,12 +253,20 @@ function buildWelcomePlanInternal(params: {
   rng?: () => number;
   personality?: InterviewPersonality;
   interviewerNeutrality?: InterviewerNeutrality;
+  languageCode?: SupportedLanguageCode;
 }): ConversationPresentationPlan {
-  const { questionText, interviewMode, rng = Math.random, personality = DEFAULT_INTERVIEW_PERSONALITY, interviewerNeutrality = 'relaxed' } = params;
+  const {
+    questionText,
+    interviewMode,
+    rng = Math.random,
+    personality = DEFAULT_INTERVIEW_PERSONALITY,
+    interviewerNeutrality = 'relaxed',
+    languageCode = DEFAULT_LANGUAGE_CODE,
+  } = params;
   const canonicalText = questionText ?? '';
   if (!canonicalText.trim()) return safeFallbackPlan(canonicalText);
 
-  const greeting = selectPhrase('WELCOME', interviewMode, [], rng, personality, interviewerNeutrality);
+  const greeting = selectPhrase('WELCOME', interviewMode, [], rng, personality, interviewerNeutrality, languageCode);
   if (!greeting) return safeFallbackPlan(canonicalText);
 
   return {
@@ -285,6 +297,7 @@ function buildClosingPlanInternal(params: {
   rng?: () => number;
   personality?: InterviewPersonality;
   interviewerNeutrality?: InterviewerNeutrality;
+  languageCode?: SupportedLanguageCode;
 }): ConversationPresentationPlan {
   const {
     interviewMode,
@@ -292,8 +305,9 @@ function buildClosingPlanInternal(params: {
     rng = Math.random,
     personality = DEFAULT_INTERVIEW_PERSONALITY,
     interviewerNeutrality = 'relaxed',
+    languageCode = DEFAULT_LANGUAGE_CODE,
   } = params;
-  const closing = selectPhrase('CLOSING', interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality);
+  const closing = selectPhrase('CLOSING', interviewMode, recentPhraseHistory, rng, personality, interviewerNeutrality, languageCode);
   if (!closing) return safeFallbackPlan('');
 
   return {
@@ -343,6 +357,7 @@ export class ConversationHumanizerService {
     rng?: () => number;
     personality?: InterviewPersonality;
     interviewerNeutrality?: InterviewerNeutrality;
+    languageCode?: SupportedLanguageCode;
   }): ConversationPresentationPlan {
     let canonicalTextForFallback = '';
     try {
@@ -365,6 +380,7 @@ export class ConversationHumanizerService {
     rng?: () => number;
     personality?: InterviewPersonality;
     interviewerNeutrality?: InterviewerNeutrality;
+    languageCode?: SupportedLanguageCode;
   }): ConversationPresentationPlan {
     try {
       return buildClosingPlanInternal(params);

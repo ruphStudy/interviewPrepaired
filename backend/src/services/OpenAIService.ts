@@ -3,6 +3,7 @@ import { normalizeScore, normalizeEvaluationDimensions } from '../utils/scoreNor
 import { recordAIUsage } from './AIUsageService';
 import { getLanguageInstruction, getMaxTokensForLanguage } from '../config/languages';
 import type { NextInterviewMoveType } from '../constants/nextQuestionDecision';
+import { AIProviderError, classifyOpenAIError } from '../ai/errorClassification';
 
 /** Optional per-call context for AI cost attribution — omit for calls with no specific interview (e.g. connectivity checks). */
 export interface AIUsageContext {
@@ -1165,7 +1166,8 @@ Performance by Question:\n`;
       return this.safeParseJSON(content);
     } catch (error: any) {
       console.error('[OpenAIService] Error:', error.message);
-      throw new Error(`OpenAI API error: ${error.message}`);
+      const code = classifyOpenAIError(error);
+      throw new AIProviderError(code, `OpenAI API error: ${error.message}`);
     }
   }
 
@@ -1218,7 +1220,8 @@ Performance by Question:\n`;
       return { embeddings, model: response.model || modelToUse, dimensions };
     } catch (error: any) {
       console.error('[OpenAIService] Embedding error:', error.message);
-      throw new Error(`OpenAI embedding API error: ${error.message}`);
+      const code = classifyOpenAIError(error);
+      throw new AIProviderError(code, `OpenAI embedding API error: ${error.message}`);
     }
   }
 

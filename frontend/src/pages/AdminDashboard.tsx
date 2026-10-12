@@ -84,6 +84,36 @@ interface OperationalJob {
   createdAt: string;
 }
 
+interface EmailDeliveryRow {
+  id: string;
+  recipientMasked: string;
+  templateCode: string;
+  status: string;
+  provider: string;
+  providerMessageId?: string;
+  subjectSnapshot: string;
+  relatedEntityType?: string;
+  relatedEntityId?: string;
+  attemptCount: number;
+  maxAttempts: number;
+  lastAttemptAt?: string;
+  nextAttemptAt?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  failedAt?: string;
+  bouncedAt?: string;
+  failureCode?: string;
+  failureMessage?: string;
+  createdAt: string;
+}
+
+interface StorageDiagnosticsResult {
+  providerAvailable: boolean;
+  sampledResumes: number;
+  sampledKnowledgeDocuments: number;
+  orphanedMetadata: Array<{ collection: string; id: string; objectKey: string }>;
+}
+
 interface PrivacyAuditEntry {
   action: string;
   actorUserId?: string;
@@ -98,7 +128,7 @@ const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { token, isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'users' | 'interviews' | 'analytics' | 'payments' | 'jobs' | 'privacy'
+    'dashboard' | 'users' | 'interviews' | 'analytics' | 'payments' | 'jobs' | 'privacy' | 'email' | 'storage'
   >('dashboard');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -140,6 +170,19 @@ const AdminDashboard: React.FC = () => {
   const [privacyPage, setPrivacyPage] = useState(1);
   const [privacyTotal, setPrivacyTotal] = useState(0);
 
+  // Email delivery diagnostics (PR-COMM-6) — masked recipient only, no raw body/secrets.
+  const [emailDeliveries, setEmailDeliveries] = useState<EmailDeliveryRow[]>([]);
+  const [emailPage, setEmailPage] = useState(1);
+  const [emailTotal, setEmailTotal] = useState(0);
+  const [emailStatus, setEmailStatus] = useState('');
+  const [emailTemplateCode, setEmailTemplateCode] = useState('');
+  const [expandedDeliveryId, setExpandedDeliveryId] = useState<string | null>(null);
+
+  // Storage orphan-metadata diagnostics (PR-STORAGE-5) — read-only, bounded sample scan, never deletes.
+  const [storageDiagnostics, setStorageDiagnostics] = useState<StorageDiagnosticsResult | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageError, setStorageError] = useState('');
+
   // Redirect if not admin
   useEffect(() => {
     if (!isAdmin) {
@@ -163,6 +206,10 @@ const AdminDashboard: React.FC = () => {
       fetchOperationalJobs();
     } else if (activeTab === 'privacy') {
       fetchPrivacyAudit();
+    } else if (activeTab === 'email') {
+      fetchEmailDeliveries();
+    } else if (activeTab === 'storage') {
+      fetchStorageDiagnostics();
     }
   }, [
     activeTab,
@@ -174,6 +221,9 @@ const AdminDashboard: React.FC = () => {
     jobsPage,
     jobsStatus,
     privacyPage,
+    emailPage,
+    emailStatus,
+    emailTemplateCode,
   ]);
 
   const fetchDashboard = async () => {
@@ -332,6 +382,39 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
+  const fetchEmailDeliveries = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(
+        `${API_BASE_URL}/admin/email-deliveries?page=${emailPage}&limit=10${
+          emailStatus ? `&status=${emailStatus}` : ''
+        }${emailTemplateCode ? `&templateCode=${emailTemplateCode}` : ''}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setEmailDeliveries(response.data.data.deliveries);
+      setEmailTotal(response.data.data.total);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load email deliveries');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchStorageDiagnostics = async () => {
+    setStorageLoading(true);
+    setStorageError('');
+    try {
+      const response = await axios.get(`${API_BASE_URL}/admin/storage/orphan-scan`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setStorageDiagnostics(response.data.data);
+    } catch (err: any) {
+      setStorageError(err.response?.data?.message || 'Failed to run storage diagnostics');
+    } finally {
+      setStorageLoading(false);
+    }
+  };
+
   const deleteUser = async (userId: string) => {
     if (
       !confirm(
@@ -393,7 +476,7 @@ const AdminDashboard: React.FC = () => {
         </div>
         <div className="border-b border-gray-200 mb-6">
           <nav className="-mb-px flex space-x-8">
-            {['dashboard', 'users', 'interviews', 'analytics', 'payments', 'jobs', 'privacy'].map((tab) => (
+            {['dashboard', 'users', 'interviews', 'analytics', 'payments', 'jobs', 'privacy', 'email', 'storage'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab as any)}
@@ -933,6 +1016,203 @@ const AdminDashboard: React.FC = () => {
                     Next
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Email Delivery Diagnostics (PR-COMM-6) — masked recipient only, no raw body/secrets/tokens */}
+            {activeTab === 'email' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-3 items-center">
+                  <select
+                    value={emailStatus}
+                    onChange={(e) => {
+                      setEmailPage(1);
+                      setEmailStatus(e.target.value);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="">All statuses</option>
+                    <option value="queued">queued</option>
+                    <option value="sent">sent</option>
+                    <option value="delivered">delivered</option>
+                    <option value="failed">failed</option>
+                    <option value="bounced">bounced</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Template code..."
+                    value={emailTemplateCode}
+                    onChange={(e) => {
+                      setEmailPage(1);
+                      setEmailTemplateCode(e.target.value);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <div className="text-sm text-gray-600 ml-auto">Total: {emailTotal}</div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Recipient</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Template</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Provider</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Attempts</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Detail</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {emailDeliveries.map((delivery) => (
+                        <React.Fragment key={delivery.id}>
+                          <tr>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{delivery.recipientMasked}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{delivery.templateCode}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{delivery.provider}</td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span
+                                className={`px-2 py-1 text-xs rounded-full ${
+                                  delivery.status === 'delivered' || delivery.status === 'sent'
+                                    ? 'bg-green-100 text-green-800'
+                                    : delivery.status === 'failed' || delivery.status === 'bounced'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-yellow-100 text-yellow-800'
+                                }`}
+                              >
+                                {delivery.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {delivery.attemptCount}/{delivery.maxAttempts}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {new Date(delivery.createdAt).toLocaleString()}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                              <button
+                                onClick={() => setExpandedDeliveryId((id) => (id === delivery.id ? null : delivery.id))}
+                                className="text-indigo-600 hover:text-indigo-900"
+                              >
+                                {expandedDeliveryId === delivery.id ? 'Hide' : 'View'}
+                              </button>
+                            </td>
+                          </tr>
+                          {expandedDeliveryId === delivery.id && (
+                            <tr>
+                              <td colSpan={7} className="px-6 py-4 bg-gray-50 text-sm text-gray-700">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                  <div><span className="text-gray-500">Subject: </span>{delivery.subjectSnapshot}</div>
+                                  <div><span className="text-gray-500">Provider message ID: </span>{delivery.providerMessageId || '—'}</div>
+                                  <div><span className="text-gray-500">Related entity: </span>{delivery.relatedEntityType ? `${delivery.relatedEntityType} (${delivery.relatedEntityId})` : '—'}</div>
+                                  <div><span className="text-gray-500">Sent: </span>{delivery.sentAt ? new Date(delivery.sentAt).toLocaleString() : '—'}</div>
+                                  <div><span className="text-gray-500">Delivered: </span>{delivery.deliveredAt ? new Date(delivery.deliveredAt).toLocaleString() : '—'}</div>
+                                  <div><span className="text-gray-500">Failed: </span>{delivery.failedAt ? new Date(delivery.failedAt).toLocaleString() : '—'}</div>
+                                  <div><span className="text-gray-500">Bounced: </span>{delivery.bouncedAt ? new Date(delivery.bouncedAt).toLocaleString() : '—'}</div>
+                                  <div><span className="text-gray-500">Next attempt: </span>{delivery.nextAttemptAt ? new Date(delivery.nextAttemptAt).toLocaleString() : '—'}</div>
+                                  <div><span className="text-gray-500">Failure code: </span>{delivery.failureCode || '—'}</div>
+                                  <div className="md:col-span-2"><span className="text-gray-500">Failure message: </span>{delivery.failureMessage || '—'}</div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      ))}
+                      {emailDeliveries.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="px-6 py-8 text-center text-sm text-gray-500">
+                            No email deliveries found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <button
+                    onClick={() => setEmailPage((p) => Math.max(1, p - 1))}
+                    disabled={emailPage === 1}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-gray-600">Page {emailPage} of {Math.max(1, Math.ceil(emailTotal / 10))}</span>
+                  <button
+                    onClick={() => setEmailPage((p) => p + 1)}
+                    disabled={emailPage >= Math.ceil(emailTotal / 10)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Storage Orphan-Metadata Diagnostics (PR-STORAGE-5) — read-only, bounded sample scan, never deletes */}
+            {activeTab === 'storage' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <p className="text-sm text-gray-600">
+                    Checks a bounded, recent sample of tracked object-storage rows for DB-metadata-without-object drift. Read-only — never deletes anything.
+                  </p>
+                  <button
+                    onClick={fetchStorageDiagnostics}
+                    disabled={storageLoading}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium disabled:opacity-50 shrink-0"
+                  >
+                    {storageLoading ? 'Scanning...' : 'Re-run Scan'}
+                  </button>
+                </div>
+
+                {storageError && <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">{storageError}</div>}
+
+                {storageLoading ? (
+                  <div className="flex justify-center items-center py-12">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                  </div>
+                ) : storageDiagnostics ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <StatCard
+                        title="Storage Provider"
+                        value={storageDiagnostics.providerAvailable ? 'Available' : 'Not configured'}
+                        icon={storageDiagnostics.providerAvailable ? '✅' : '⚠️'}
+                      />
+                      <StatCard title="Sampled Resumes" value={storageDiagnostics.sampledResumes} icon="📄" />
+                      <StatCard title="Sampled Knowledge Docs" value={storageDiagnostics.sampledKnowledgeDocuments} icon="📚" />
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Collection</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Record ID</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Object Key</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {storageDiagnostics.orphanedMetadata.map((orphan) => (
+                            <tr key={`${orphan.collection}-${orphan.id}`}>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{orphan.collection}</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{orphan.id}</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{orphan.objectKey}</td>
+                            </tr>
+                          ))}
+                          {storageDiagnostics.orphanedMetadata.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="px-6 py-8 text-center text-sm text-gray-500">
+                                No orphaned metadata found in the sampled rows.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
           </>

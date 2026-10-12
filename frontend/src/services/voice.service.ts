@@ -1,12 +1,22 @@
 export class VoiceService {
-  private synthesis: SpeechSynthesis;
+  // Genuinely undefined on any runtime without the Web Speech Synthesis API
+  // (e.g. very old/unsupported browsers) — never assumed present. This
+  // service is a module-level singleton constructed at import time, so a
+  // constructor that assumed `window.speechSynthesis` always exists would
+  // crash the ENTIRE app bundle on any such runtime, not just the interview
+  // page. Every method below checks this before touching it and degrades
+  // safely (a no-op / an immediately-resolved callback) rather than throwing.
+  private synthesis: SpeechSynthesis | undefined;
   private recognition: any; // SpeechRecognition
   private voices: SpeechSynthesisVoice[] = [];
-  private voicesLoaded: boolean = false;
 
   constructor() {
-    this.synthesis = window.speechSynthesis;
-    this.initializeVoices();
+    this.synthesis = typeof window !== 'undefined' && 'speechSynthesis' in window ? window.speechSynthesis : undefined;
+    if (this.synthesis) {
+      this.initializeVoices();
+    } else {
+      console.warn('⚠️ speechSynthesis is not available in this browser — voice output will be skipped, text remains the authoritative fallback.');
+    }
 
     // Initialize Speech Recognition
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -20,19 +30,20 @@ export class VoiceService {
   }
 
   private initializeVoices() {
+    if (!this.synthesis) return;
+    const synthesis = this.synthesis;
+
     // Try to load voices immediately
-    this.voices = this.synthesis.getVoices();
-    
+    this.voices = synthesis.getVoices();
+
     if (this.voices.length > 0) {
-      this.voicesLoaded = true;
       console.log('✅ Voices loaded immediately:', this.voices.length);
       this.logAvailableVoices();
     } else {
       // Wait for voices to be loaded
       console.log('⏳ Waiting for voices to load...');
-      this.synthesis.addEventListener('voiceschanged', () => {
-        this.voices = this.synthesis.getVoices();
-        this.voicesLoaded = true;
+      synthesis.addEventListener('voiceschanged', () => {
+        this.voices = synthesis.getVoices();
         console.log('✅ Voices loaded:', this.voices.length);
         this.logAvailableVoices();
       });
@@ -65,7 +76,7 @@ export class VoiceService {
    */
   private selectBestVoice(targetLang: string = 'en-IN'): SpeechSynthesisVoice | null {
     // Ensure voices are loaded
-    if (this.voices.length === 0) {
+    if (this.voices.length === 0 && this.synthesis) {
       this.voices = this.synthesis.getVoices();
       if (this.voices.length > 0) {
         console.log('🔄 Voices loaded on-demand:', this.voices.length);
@@ -146,8 +157,17 @@ export class VoiceService {
   // per-segment-category presets in config/voiceDynamics.ts) ever passes
   // `options` explicitly.
   speak(text: string, onEnd?: () => void, lang: string = 'en-IN', options?: { rate?: number; pitch?: number }): void {
+    // No speechSynthesis in this runtime — text is already the authoritative
+    // fallback (it's on screen regardless), so just resolve the caller's
+    // callback immediately rather than attempting/throwing.
+    if (!this.synthesis) {
+      if (onEnd) onEnd();
+      return;
+    }
+    const synthesis = this.synthesis;
+
     // Cancel any ongoing speech
-    this.synthesis.cancel();
+    synthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = lang;
@@ -196,15 +216,15 @@ export class VoiceService {
       }, estimatedDuration);
     }
 
-    this.synthesis.speak(utterance);
+    synthesis.speak(utterance);
   }
 
   stopSpeaking(): void {
-    this.synthesis.cancel();
+    this.synthesis?.cancel();
   }
 
   isSpeaking(): boolean {
-    return this.synthesis.speaking;
+    return this.synthesis?.speaking ?? false;
   }
 
   // Speech to Text
@@ -273,7 +293,7 @@ export class VoiceService {
     console.log('🗣️  ALL AVAILABLE VOICES');
     console.log('='.repeat(80));
     
-    if (this.voices.length === 0) {
+    if (this.voices.length === 0 && this.synthesis) {
       this.voices = this.synthesis.getVoices();
     }
 

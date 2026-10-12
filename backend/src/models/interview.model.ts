@@ -165,9 +165,11 @@ export interface IQuestion {
   };
   // Phase 8 (Conversation Humanizer) — additive, optional, no default,
   // absent on every question that predates this feature and on any turn
-  // where the humanizer didn't run (uploaded-mode text-only rewrite,
-  // non-English interview language, or a best-effort failure — see
-  // ConversationHumanizerService). Set by
+  // where the humanizer didn't run (uploaded-mode text-only rewrite, or a
+  // best-effort failure — see ConversationHumanizerService). Runs for
+  // en-IN/hi-IN/mr-IN alike (multilingual hardening — phraseLibrary.ts
+  // carries Hindi/Marathi translations with a safe English-text fallback).
+  // Set by
   // conversationHumanizerService.buildPresentationPlan, called from
   // InterviewService.submitAnswer and
   // InterviewAnswerOrchestratorService.generateRecoveryQuestion right after

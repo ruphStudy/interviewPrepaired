@@ -251,19 +251,19 @@ export class DatabaseService {
       const question = interview.questions.find(q => q._id?.toString() === answerId);
       if (!question || !question.evaluation) return null;
 
-      const eval = question.evaluation;
+      const evaluationData = question.evaluation;
       return {
         id: answerId,
         answerId: answerId,
-        technical: eval.technicalScore,
-        communication: eval.communicationScore,
-        leadership: eval.leadershipScore,
-        problemSolving: eval.problemSolvingScore,
-        confidence: eval.confidenceScore,
-        strengths: eval.strengths,
-        weaknesses: eval.weaknesses,
+        technical: evaluationData.technicalScore ?? 0,
+        communication: evaluationData.communicationScore ?? 0,
+        leadership: evaluationData.leadershipScore ?? 0,
+        problemSolving: evaluationData.problemSolvingScore ?? 0,
+        confidence: evaluationData.confidenceScore ?? 0,
+        strengths: evaluationData.strengths,
+        weaknesses: evaluationData.weaknesses,
         missingPoints: [],
-        improvements: eval.suggestions,
+        improvements: evaluationData.suggestions,
         createdAt: new Date().toISOString(),
       };
     } catch (error) {
@@ -289,27 +289,27 @@ export class DatabaseService {
           questionId: q._id?.toString() || '',
           answerText: q.answerText,
           createdAt: q.answeredAt?.toISOString() || new Date().toISOString(),
-        } : null,
+        } : undefined,
         evaluation: q.evaluation ? {
           id: q._id?.toString() || '',
           answerId: q._id?.toString() || '',
-          technical: q.evaluation.technicalScore,
-          communication: q.evaluation.communicationScore,
-          leadership: q.evaluation.leadershipScore,
-          problemSolving: q.evaluation.problemSolvingScore,
-          confidence: q.evaluation.confidenceScore,
+          technical: q.evaluation.technicalScore ?? 0,
+          communication: q.evaluation.communicationScore ?? 0,
+          leadership: q.evaluation.leadershipScore ?? 0,
+          problemSolving: q.evaluation.problemSolvingScore ?? 0,
+          confidence: q.evaluation.confidenceScore ?? 0,
           strengths: q.evaluation.strengths,
           weaknesses: q.evaluation.weaknesses,
           missingPoints: [],
           improvements: q.evaluation.suggestions,
           createdAt: new Date().toISOString(),
-        } : null,
+        } : undefined,
       }));
 
       // Calculate average scores
       const evaluations = questions
         .map(q => q.evaluation)
-        .filter(e => e !== null) as Evaluation[];
+        .filter((e) => e !== undefined) as Evaluation[];
 
       const averageScores = {
         technical: 0,

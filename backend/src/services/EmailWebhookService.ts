@@ -4,6 +4,8 @@ import { EmailProviderEvent, IEmailProviderEvent } from '../models/EmailProvider
 import { EmailSuppression } from '../models/EmailSuppression.model';
 import { EmailSuppressionReason } from '../constants/email';
 import { env } from '../config/environment';
+import { logError } from '../middleware/logger';
+import { captureException } from '../config/monitoring';
 
 export interface WebhookProcessingOutcome {
   httpStatus: number;
@@ -95,7 +97,11 @@ class EmailWebhookService {
       eventDoc.processingStatus = 'failed';
       eventDoc.failureReason = String(error?.message || error).slice(0, 500);
       await eventDoc.save();
-      console.error('[EmailWebhookService] Event processing failed', { eventType, error });
+      // Same alert-ready-signal discipline as RazorpayWebhookService — durably
+      // recorded above, and also surfaced to structured logs + Sentry.
+      const normalizedError = error instanceof Error ? error : new Error(String(error?.message || error));
+      logError('[EmailWebhookService] Event processing failed', { eventType, error: normalizedError.message });
+      captureException(normalizedError, { eventType, webhookEventId: eventDoc._id.toString() });
     }
 
     return { httpStatus: 200, body: { success: true, message: 'Webhook received' } };

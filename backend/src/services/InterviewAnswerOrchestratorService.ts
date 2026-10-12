@@ -5,6 +5,7 @@ import InstituteStudentInterviewAssignment from '../models/InstituteStudentInter
 import { InstituteStudentInterviewAssignmentStatus } from '../constants/instituteStudentInterviewAssignment';
 import { InterviewStatus, InterviewPhase } from '../constants/interview';
 import { ApiError } from '../utils/ApiError';
+import { toAIAwareApiError } from '../ai/errorClassification';
 import { getAIService } from '../ai';
 import {
   DifficultyLevel,
@@ -62,9 +63,9 @@ interface SubmitAnswerResult {
   evaluation: DynamicEvaluationResponse;
   nextQuestion?: QuestionResponse;
   isCompleted: boolean;
-  // Phase 8 — additive, optional; absent for uploaded/legacy/non-English/
-  // failure cases or when there is no next question (see
-  // ConversationHumanizerService / InterviewService.submitAnswer).
+  // Phase 8 — additive, optional; absent for uploaded/legacy/failure cases
+  // or when there is no next question (see ConversationHumanizerService /
+  // InterviewService.submitAnswer).
   presentation?: ConversationPresentationPlan;
 }
 
@@ -148,7 +149,11 @@ export class InterviewAnswerOrchestratorService {
             },
           }
         ).catch(() => undefined);
-        throw error;
+        // `this.core.submitAnswer` already runs its own errors through the
+        // same AI-aware mapping, so this is a no-op for an already-shaped
+        // ApiError and only converts a raw AIProviderError that somehow
+        // escaped that inner try/catch.
+        throw toAIAwareApiError(error, 'Failed to submit answer');
       }
     }
 
@@ -179,13 +184,13 @@ export class InterviewAnswerOrchestratorService {
 
   /**
    * Phase 11 — mirrors InterviewService's own private
-   * `buildClosingPresentationPlanSafely` exactly (same English-only gate,
-   * same non-critical try/catch discipline) so a retry-recovered completion
-   * gets an indistinguishable closing plan from the happy path's.
+   * `buildClosingPresentationPlanSafely` exactly (same non-critical
+   * try/catch discipline, same multilingual languageCode pass-through) so a
+   * retry-recovered completion gets an indistinguishable closing plan from
+   * the happy path's.
    */
   private buildClosingPresentationPlanSafely(interview: IInterview): ConversationPresentationPlan | undefined {
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
-    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
       const policy = resolveInterviewModePolicy(interview);
       const personality = resolveInterviewPersonality(interview);
@@ -195,6 +200,7 @@ export class InterviewAnswerOrchestratorService {
         recentPhraseHistory,
         personality,
         interviewerNeutrality: policy.interviewerNeutrality,
+        languageCode: language,
       });
     } catch (humanizerError) {
       console.error('[InterviewAnswerRecovery] Closing presentation plan failed (non-critical):', humanizerError);
@@ -324,7 +330,11 @@ export class InterviewAnswerOrchestratorService {
             },
           }
         ).catch(() => undefined);
-        throw error;
+        // `evaluatePersistedAnswer` calls the AI service directly (no inner
+        // try/catch of its own), so a raw AIProviderError reaches here and
+        // must be converted before propagating — an already-shaped ApiError
+        // passes through unchanged.
+        throw toAIAwareApiError(error, 'Failed to recover answer evaluation');
       }
     }
 
@@ -432,7 +442,18 @@ export class InterviewAnswerOrchestratorService {
     // the EXACT SAME history generateRecoveryQuestion's own decideNextMove
     // call just read.
     const historyBeforeRecoveryMove = freshInterview.questions.slice();
-    const { question: nextQuestion, tagging: recoveryTagging, interviewPhase: recoveredPhase, finalMove: recoveredMove, previousPhase: previousPhaseRecovery, answerSignal: recoveredAnswerSignal } = await this.generateRecoveryQuestion(freshInterview);
+    let recoveryQuestionResult: Awaited<ReturnType<InterviewAnswerOrchestratorService['generateRecoveryQuestion']>>;
+    try {
+      recoveryQuestionResult = await this.generateRecoveryQuestion(freshInterview);
+    } catch (error) {
+      // generateRecoveryQuestion already throws a proper ApiError for its
+      // own malformed-response check; this only converts a raw
+      // AIProviderError from the underlying AI call itself (timeout/rate
+      // limit/quota/5xx) before it would otherwise reach the controller
+      // unclassified.
+      throw toAIAwareApiError(error, 'The next question could not be generated');
+    }
+    const { question: nextQuestion, tagging: recoveryTagging, interviewPhase: recoveredPhase, finalMove: recoveredMove, previousPhase: previousPhaseRecovery, answerSignal: recoveredAnswerSignal } = recoveryQuestionResult;
     await Interview.updateOne(
       {
         _id: freshInterview._id,
@@ -610,28 +631,27 @@ export class InterviewAnswerOrchestratorService {
     // Phase 8 — built from the SAME finalMove/answerSignal/interview
     // context already in scope here, mirroring InterviewService.
     // submitAnswer's normal-path integration exactly (same non-critical
-    // try/catch discipline, same English-only language gate, same
-    // repetition-history derivation) so a retry-recovered question's
+    // try/catch discipline, same multilingual languageCode pass-through,
+    // same repetition-history derivation) so a retry-recovered question's
     // presentation plan is indistinguishable from one generated on the
     // happy path.
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
-    if (language === DEFAULT_LANGUAGE_CODE) {
-      try {
-        const policy = resolveInterviewModePolicy(interview);
-        const personality = resolveInterviewPersonality(interview);
-        const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
-        tagging.presentation = conversationHumanizerService.buildPresentationPlan({
-          move: finalMove,
-          question: { text: response.question },
-          answerSignal: justAnsweredQuestion?.answerSignal,
-          interviewMode: policy.humanizerMode,
-          recentPhraseHistory,
-          personality,
-          interviewerNeutrality: policy.interviewerNeutrality,
-        });
-      } catch (humanizerError) {
-        console.error('[InterviewAnswerRecovery] Conversation humanizer failed (non-critical):', humanizerError);
-      }
+    try {
+      const policy = resolveInterviewModePolicy(interview);
+      const personality = resolveInterviewPersonality(interview);
+      const recentPhraseHistory = conversationHumanizerService.deriveRecentPhraseHistory(interview.questions);
+      tagging.presentation = conversationHumanizerService.buildPresentationPlan({
+        move: finalMove,
+        question: { text: response.question },
+        answerSignal: justAnsweredQuestion?.answerSignal,
+        interviewMode: policy.humanizerMode,
+        recentPhraseHistory,
+        personality,
+        interviewerNeutrality: policy.interviewerNeutrality,
+        languageCode: language,
+      });
+    } catch (humanizerError) {
+      console.error('[InterviewAnswerRecovery] Conversation humanizer failed (non-critical):', humanizerError);
     }
 
     // Close the loop on the specific claim/contradiction just probed (same

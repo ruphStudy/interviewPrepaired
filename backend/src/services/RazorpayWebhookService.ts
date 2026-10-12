@@ -3,6 +3,8 @@ import { PaymentOrder } from '../models/PaymentOrder.model';
 import { PaymentWebhookEvent, IPaymentWebhookEvent } from '../models/PaymentWebhookEvent.model';
 import { getPaymentProvider } from '../payments';
 import { billingSettlementService } from './BillingSettlementService';
+import { logError } from '../middleware/logger';
+import { captureException } from '../config/monitoring';
 
 export interface WebhookProcessingOutcome {
   httpStatus: number;
@@ -79,7 +81,13 @@ class RazorpayWebhookService {
       eventDoc.processingStatus = 'failed';
       eventDoc.failureReason = String(error?.message || error).slice(0, 500);
       await eventDoc.save();
-      console.error('[RazorpayWebhookService] Event processing failed', { eventType, error });
+      // Durably recorded above for admin/reconciliation visibility (PR-BILL-3);
+      // also surfaced to structured logs + Sentry so a repeated/systemic
+      // webhook-processing failure is an alert-ready signal, not just a
+      // record someone has to go looking for.
+      const normalizedError = error instanceof Error ? error : new Error(String(error?.message || error));
+      logError('[RazorpayWebhookService] Event processing failed', { eventType, error: normalizedError.message });
+      captureException(normalizedError, { eventType, webhookEventId: eventDoc._id.toString() });
     }
 
     // Always 200 once signature is valid and the delivery is durably

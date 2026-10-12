@@ -13,6 +13,7 @@ import { userSubscriptionService } from './UserSubscriptionService';
 import { interviewCreditService } from './InterviewCreditService';
 import { mapExperienceYearsToLevel, inferInterviewStyle } from './OpenAIAdapter';
 import { ApiError, InsufficientCreditsError } from '../utils/ApiError';
+import { toAIAwareApiError } from '../ai/errorClassification';
 import { InterviewStatus, InterviewPurpose, isAnswerableStatus, MAX_UPLOADED_QUESTIONS, QuestionSource, InterviewPhase } from '../constants/interview';
 import { blueprintService } from './BlueprintService';
 import { interviewMemoryService } from './InterviewMemoryService';
@@ -1147,15 +1148,16 @@ export class InterviewService {
    * difficulty/answerSignal above all follow the exact same shape) so a
    * humanizer failure can NEVER block/fail answer submission.
    *
-   * Deliberately skipped (returns undefined) for any interview whose
-   * `interviewLanguage` isn't the default English locale: the phrase
-   * library (constants/phraseLibrary.ts) is English-only today, and mixing
-   * English filler phrases into a Hindi/Marathi TTS session would sound
-   * exactly as broken as the mixed-language bug interviewPhrases.ts's own
-   * header comment already guards against for the welcome/transition
-   * phrases. The frontend's existing fallback (speak the plain question
-   * text, Phase 7's pre-Phase-8 behavior) applies automatically whenever
-   * `presentation` is absent, so this is a safe, non-breaking scope limit.
+   * Multilingual hardening — `interview.interviewLanguage` is passed through
+   * as `languageCode` so hi-IN/mr-IN interviews get natural, hand-authored
+   * Hindi/Marathi filler phrases (constants/phraseLibrary.ts's own
+   * `translations`) instead of being skipped entirely. `resolvePhraseText`
+   * falls back to the English phrase text for any language/phrase
+   * combination without a translation yet — never a broken/mixed-language
+   * string, and never a reason to skip the humanizer altogether. The
+   * frontend's existing fallback (speak the plain question text, Phase 7's
+   * pre-Phase-8 behavior) still applies automatically whenever `presentation`
+   * is absent (e.g. a genuine humanizer failure below).
    */
   private buildPresentationPlanSafely(params: {
     interview: IInterview;
@@ -1165,7 +1167,6 @@ export class InterviewService {
   }): ConversationPresentationPlan | undefined {
     const { interview, move, questionText, answerSignal } = params;
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
-    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
       const policy = resolveInterviewModePolicy(interview);
       const personality = resolveInterviewPersonality(interview);
@@ -1178,6 +1179,7 @@ export class InterviewService {
         recentPhraseHistory,
         personality,
         interviewerNeutrality: policy.interviewerNeutrality,
+        languageCode: language,
       });
     } catch (humanizerError) {
       console.error('[InterviewService] Conversation humanizer failed (non-critical):', humanizerError);
@@ -1189,13 +1191,12 @@ export class InterviewService {
    * Phase 11 — attached onto the FIRST question's own `presentation` field
    * at interview creation (startInterview/startUploadedInterview/
    * createInstituteUploadedInterview), mirroring `buildPresentationPlanSafely`'s
-   * exact same English-only gate and non-critical try/catch discipline. A
-   * humanizer failure here must never fail interview creation.
+   * non-critical try/catch discipline and multilingual languageCode
+   * pass-through. A humanizer failure here must never fail interview creation.
    */
   private buildWelcomePresentationPlanSafely(params: { interview: IInterview; questionText: string }): ConversationPresentationPlan | undefined {
     const { interview, questionText } = params;
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
-    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
       const policy = resolveInterviewModePolicy(interview);
       const personality = resolveInterviewPersonality(interview);
@@ -1204,6 +1205,7 @@ export class InterviewService {
         interviewMode: policy.humanizerMode,
         personality,
         interviewerNeutrality: policy.interviewerNeutrality,
+        languageCode: language,
       });
     } catch (humanizerError) {
       console.error('[InterviewService] Welcome presentation plan failed (non-critical):', humanizerError);
@@ -1214,13 +1216,12 @@ export class InterviewService {
   /**
    * Phase 11 — built on the SAME turn that carries `isCompleted: true`
    * (there is no next question for this presentation to attach to). Same
-   * English-only gate/non-critical discipline as every other presentation
-   * builder in this file; a failure here must never fail answer submission
-   * or block navigation to the report.
+   * non-critical discipline/multilingual languageCode pass-through as every
+   * other presentation builder in this file; a failure here must never fail
+   * answer submission or block navigation to the report.
    */
   private buildClosingPresentationPlanSafely(interview: IInterview): ConversationPresentationPlan | undefined {
     const language = interview.interviewLanguage || DEFAULT_LANGUAGE_CODE;
-    if (language !== DEFAULT_LANGUAGE_CODE) return undefined;
     try {
       const policy = resolveInterviewModePolicy(interview);
       const personality = resolveInterviewPersonality(interview);
@@ -1230,6 +1231,7 @@ export class InterviewService {
         recentPhraseHistory,
         personality,
         interviewerNeutrality: policy.interviewerNeutrality,
+        languageCode: language,
       });
     } catch (humanizerError) {
       console.error('[InterviewService] Closing presentation plan failed (non-critical):', humanizerError);
@@ -1246,9 +1248,9 @@ export class InterviewService {
     nextQuestion?: QuestionResponse;
     isCompleted: boolean;
     // Phase 8 — additive, optional; absent whenever the humanizer didn't
-    // run (uploaded/legacy/non-English/failure) or there is no next
-    // question at all (interview completed). See
-    // ConversationHumanizerService for the safe-fallback contract.
+    // run (uploaded/legacy/failure) or there is no next question at all
+    // (interview completed). See ConversationHumanizerService for the
+    // safe-fallback contract.
     presentation?: ConversationPresentationPlan;
   }> {
     const { interviewId, userId, answer, duration } = params;
@@ -1826,8 +1828,11 @@ export class InterviewService {
       };
     } catch (error) {
       console.error('[InterviewService] Error in submitAnswer:', error);
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new ApiError(500, `Failed to submit answer: ${message}`);
+      // A transient AI provider failure (timeout/rate-limit/quota/5xx/
+      // malformed response) becomes a retryable 503 with a machine-readable
+      // code and a safe user-facing message; anything else keeps the exact
+      // pre-existing 500 + message behavior.
+      throw toAIAwareApiError(error, 'Failed to submit answer');
     }
   }
 
@@ -1997,8 +2002,11 @@ export class InterviewService {
       console.log('[InterviewService] Final report saved, status should be evaluated');
     } catch (error) {
       console.error('[InterviewService] Error in generateFinalReport:', error);
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new ApiError(500, `Failed to generate final report: ${message}`);
+      // Same AI-aware mapping as submitAnswer — and note `interview.status`
+      // is never touched above on this path, so a failed generation here
+      // never leaves the interview looking EVALUATED (see the idempotency
+      // guard at the top of this method, which is what a safe retry relies on).
+      throw toAIAwareApiError(error, 'Failed to generate final report');
     }
   }
 

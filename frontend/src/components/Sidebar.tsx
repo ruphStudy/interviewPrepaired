@@ -61,6 +61,13 @@ const STUDENT_NAV_ITEMS = [
   { to: '/student/readiness', label: 'Readiness', icon: Gauge },
 ];
 
+// Same rationale/pattern as STUDENT_NAV_ITEMS above: a Candidate relationship
+// (an EmployerCandidate row matched by email) is independent of
+// OrganizationContext/OrganizationMember RBAC — never shown to a B2C user,
+// Student, Recruiter, or any other unrelated authenticated user — gated on
+// `hasCandidateContext` (see OrganizationContext).
+const CANDIDATE_NAV_ITEMS = [{ to: '/candidate-portal', label: 'Candidate Portal', icon: ClipboardList }];
+
 const ACCOUNT_NAV_ITEMS = [
   { to: '/profile', label: 'Profile', icon: UserRound },
   { to: '/account', label: 'Billing', icon: Wallet },
@@ -85,7 +92,7 @@ const getInitials = (name: string) =>
 const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
   const location = useLocation();
   const { user, isAdmin } = useAuth();
-  const { activeOrganization, activeOrganizationId, activeRole, hasPermission, hasStudentContext } = useOrganization();
+  const { activeOrganization, activeOrganizationId, activeRole, hasPermission, hasStudentContext, hasCandidateContext } = useOrganization();
 
   // Employer notification bell badge (24C) — in-app only, no delivery. A
   // lightweight unread-count fetch (limit=1) whenever a company org is
@@ -272,6 +279,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onClose }) => {
               Student Portal
             </p>
             {STUDENT_NAV_ITEMS.map(renderNavLink)}
+          </>
+        )}
+
+        {hasCandidateContext && (
+          <>
+            <p className="px-3 pt-4 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-mentor-text-muted dark:text-slate-500">
+              Candidate Portal
+            </p>
+            {CANDIDATE_NAV_ITEMS.map(renderNavLink)}
           </>
         )}
 

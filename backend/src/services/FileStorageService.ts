@@ -4,6 +4,8 @@ import { getObjectStorageProvider, getLocalObjectStorageProvider, ObjectStorageP
 import { StoredFileCategory, MAX_SIGNED_URL_TTL_SECONDS } from '../constants/storage';
 import { env } from '../config/environment';
 import { ApiError } from '../utils/ApiError';
+import { logError } from '../middleware/logger';
+import { captureException } from '../config/monitoring';
 
 export interface UploadFileParams {
   category: StoredFileCategory;
@@ -51,7 +53,10 @@ class FileStorageService {
         contentLength: params.buffer.length,
       });
     } catch (error) {
-      console.error('[FileStorageService] Upload failed', { objectKey, provider: provider.name, error });
+      // Logged here (structured, redacted) for immediate context; the
+      // thrown 502 ApiError is also captured by the global error handler
+      // once it reaches a controller, so this is not a dead-end failure.
+      logError('[FileStorageService] Upload failed', { objectKey, provider: provider.name, error: error instanceof Error ? error.message : String(error) });
       throw new ApiError(502, 'Failed to store the uploaded file. Please try again.', undefined, 'FILE_UPLOAD_FAILED');
     }
 
@@ -64,7 +69,7 @@ class FileStorageService {
     try {
       await provider.deleteObject(objectKey);
     } catch (error) {
-      console.error('[FileStorageService] Delete failed', { objectKey, provider: provider.name, error });
+      logError('[FileStorageService] Delete failed', { objectKey, provider: provider.name, error: error instanceof Error ? error.message : String(error) });
       throw new ApiError(502, 'Failed to delete the stored file. Please try again.', undefined, 'FILE_DELETE_FAILED');
     }
   }
@@ -82,10 +87,15 @@ class FileStorageService {
     try {
       await this.deleteFile(objectKey);
     } catch (error) {
-      console.error('[FileStorageService] Best-effort delete failed (leaves storage metadata inconsistent — safe for later cleanup)', {
+      // This path never rethrows (best-effort), so unlike upload/delete
+      // above, the global error handler never sees this failure — this is
+      // the ONLY signal, so it must be both logged AND captured directly.
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      logError('[FileStorageService] Best-effort delete failed (leaves storage metadata inconsistent — safe for later cleanup)', {
         objectKey,
         context,
       });
+      captureException(normalizedError, { objectKey, context, scope: 'deleteFileBestEffort' });
       try {
         // Lazy import to avoid a hard circular dependency at module-load
         // time (OperationalJobService's STORAGE_DELETE_RETRY handler calls
@@ -98,10 +108,12 @@ class FileStorageService {
           idempotencyKey: `storage-delete-retry:${objectKey}`,
         });
       } catch (enqueueError) {
-        console.error('[FileStorageService] Failed to enqueue STORAGE_DELETE_RETRY job — orphaned object may require manual cleanup', {
+        const normalizedEnqueueError = enqueueError instanceof Error ? enqueueError : new Error(String(enqueueError));
+        logError('[FileStorageService] Failed to enqueue STORAGE_DELETE_RETRY job — orphaned object may require manual cleanup', {
           objectKey,
-          error: enqueueError instanceof Error ? enqueueError.message : String(enqueueError),
+          error: normalizedEnqueueError.message,
         });
+        captureException(normalizedEnqueueError, { objectKey, scope: 'deleteFileBestEffort.enqueueRetry' });
       }
     }
   }
@@ -113,7 +125,7 @@ class FileStorageService {
       const url = await provider.getSignedReadUrl(objectKey, ttl);
       return { url, expiresAt: new Date(Date.now() + ttl * 1000) };
     } catch (error) {
-      console.error('[FileStorageService] Signed URL generation failed', { objectKey, provider: provider.name, error });
+      logError('[FileStorageService] Signed URL generation failed', { objectKey, provider: provider.name, error: error instanceof Error ? error.message : String(error) });
       throw new ApiError(502, 'Failed to generate file access. Please try again.', undefined, 'FILE_NOT_AVAILABLE');
     }
   }
@@ -145,7 +157,7 @@ class FileStorageService {
       try {
         return await fs.promises.readFile(localProvider.resolveAbsolutePath(objectKey));
       } catch (error) {
-        console.error('[FileStorageService] Local downloadFile failed', { objectKey, error: error instanceof Error ? error.message : String(error) });
+        logError('[FileStorageService] Local downloadFile failed', { objectKey, error: error instanceof Error ? error.message : String(error) });
         throw new ApiError(502, 'Failed to retrieve the stored file', undefined, 'FILE_NOT_AVAILABLE');
       }
     }
@@ -153,7 +165,7 @@ class FileStorageService {
     const { url } = await this.getSignedReadUrl(objectKey, 60);
     const response = await fetch(url);
     if (!response.ok) {
-      console.error('[FileStorageService] downloadFile received a non-OK response', { objectKey, status: response.status, statusText: response.statusText });
+      logError('[FileStorageService] downloadFile received a non-OK response', { objectKey, status: response.status, statusText: response.statusText });
       throw new ApiError(502, 'Failed to retrieve the stored file', undefined, 'FILE_NOT_AVAILABLE');
     }
     const arrayBuffer = await response.arrayBuffer();

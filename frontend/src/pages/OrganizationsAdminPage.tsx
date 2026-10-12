@@ -39,6 +39,48 @@ interface OrganizationDetail extends OrganizationRow {
   subscription: { planCode: string; status: string; currentPeriodEnd?: string } | null;
 }
 
+type ContractStatus = 'draft' | 'active' | 'expired' | 'cancelled';
+
+interface ContractRow {
+  id: string;
+  organizationId: string;
+  contractCode: string;
+  status: ContractStatus;
+  startDate: string;
+  endDate?: string;
+  billingModel: string;
+  planCode?: string;
+  contractValueInrPaise?: number;
+  creditAllowance?: number;
+  renewalTerms?: string;
+  externalReference?: string;
+  activatedAt?: string;
+  expiredAt?: string;
+  cancelledAt?: string;
+  createdAt: string;
+}
+
+interface ManualPaymentRow {
+  id: string;
+  organizationId: string;
+  method: string;
+  amountPaise: number;
+  currency: string;
+  referenceNote?: string;
+  paymentDate: string;
+  source: string;
+  contractId?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+function contractStatusBadgeClass(status: ContractStatus): string {
+  if (status === 'active') return 'bg-green-100 text-green-800';
+  if (status === 'draft') return 'bg-gray-100 text-gray-800';
+  if (status === 'expired') return 'bg-yellow-100 text-yellow-800';
+  return 'bg-red-100 text-red-800';
+}
+
 function authHeaders(token: string | null) {
   return { headers: { Authorization: `Bearer ${token}` } };
 }
@@ -87,6 +129,38 @@ const OrganizationsAdminPage: React.FC = () => {
   const [changeOwnerEmail, setChangeOwnerEmail] = useState('');
   const [showChangeOwnerForm, setShowChangeOwnerForm] = useState(false);
 
+  // Enterprise contracts (PR-B2B-BILL-5) — organization-scoped, Super Admin only.
+  const [contracts, setContracts] = useState<ContractRow[]>([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [contractsError, setContractsError] = useState('');
+  const [showCreateContractForm, setShowCreateContractForm] = useState(false);
+  const [creatingContract, setCreatingContract] = useState(false);
+  const [contractForm, setContractForm] = useState({
+    startDate: '',
+    endDate: '',
+    billingModel: 'prepaid' as 'prepaid' | 'monthly' | 'annual' | 'custom',
+    planCode: '',
+    contractValueInrPaise: '',
+    creditAllowance: '',
+    renewalTerms: '',
+    externalReference: '',
+  });
+
+  // Manual B2B payments — recorded against a contract or standalone.
+  const [manualPayments, setManualPayments] = useState<ManualPaymentRow[]>([]);
+  const [manualPaymentsLoading, setManualPaymentsLoading] = useState(false);
+  const [manualPaymentsError, setManualPaymentsError] = useState('');
+  const [showRecordPaymentForm, setShowRecordPaymentForm] = useState(false);
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({
+    method: 'bank_transfer' as 'bank_transfer' | 'invoice' | 'offline' | 'other',
+    amountRupees: '',
+    referenceNote: '',
+    paymentDate: '',
+    contractId: '',
+    notes: '',
+  });
+
   const fetchOrganizations = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -126,15 +200,59 @@ const OrganizationsAdminPage: React.FC = () => {
     [token]
   );
 
+  const fetchContracts = useCallback(
+    async (organizationId: string) => {
+      setContractsLoading(true);
+      setContractsError('');
+      try {
+        const response = await axios.get(`${API_BASE_URL}/admin/organizations/${organizationId}/contracts`, {
+          ...authHeaders(token),
+          params: { limit: 50 },
+        });
+        setContracts(response.data.data.contracts);
+      } catch (err: any) {
+        setContractsError(err.response?.data?.message || 'Failed to load contracts');
+      } finally {
+        setContractsLoading(false);
+      }
+    },
+    [token]
+  );
+
+  const fetchManualPayments = useCallback(
+    async (organizationId: string) => {
+      setManualPaymentsLoading(true);
+      setManualPaymentsError('');
+      try {
+        const response = await axios.get(`${API_BASE_URL}/admin/organizations/${organizationId}/manual-payments`, {
+          ...authHeaders(token),
+          params: { limit: 50 },
+        });
+        setManualPayments(response.data.data.payments);
+      } catch (err: any) {
+        setManualPaymentsError(err.response?.data?.message || 'Failed to load manual payments');
+      } finally {
+        setManualPaymentsLoading(false);
+      }
+    },
+    [token]
+  );
+
   useEffect(() => {
     if (selectedOrgId) {
       fetchDetail(selectedOrgId);
+      fetchContracts(selectedOrgId);
+      fetchManualPayments(selectedOrgId);
       setShowChangeOwnerForm(false);
       setChangeOwnerEmail('');
+      setShowCreateContractForm(false);
+      setShowRecordPaymentForm(false);
     } else {
       setSelectedOrg(null);
+      setContracts([]);
+      setManualPayments([]);
     }
-  }, [selectedOrgId, fetchDetail]);
+  }, [selectedOrgId, fetchDetail, fetchContracts, fetchManualPayments]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,6 +341,99 @@ const OrganizationsAdminPage: React.FC = () => {
       setShowChangeOwnerForm(false);
       setChangeOwnerEmail('');
     });
+  };
+
+  const handleCreateContract = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedOrgId) return;
+    setContractsError('');
+    if (!contractForm.startDate) {
+      setContractsError('Start date is required.');
+      return;
+    }
+    setCreatingContract(true);
+    try {
+      await axios.post(
+        `${API_BASE_URL}/admin/organizations/${selectedOrgId}/contracts`,
+        {
+          startDate: contractForm.startDate,
+          endDate: contractForm.endDate || undefined,
+          billingModel: contractForm.billingModel,
+          planCode: contractForm.planCode.trim() || undefined,
+          contractValueInrPaise: contractForm.contractValueInrPaise ? Math.round(Number(contractForm.contractValueInrPaise) * 100) : undefined,
+          creditAllowance: contractForm.creditAllowance ? Number(contractForm.creditAllowance) : undefined,
+          renewalTerms: contractForm.renewalTerms.trim() || undefined,
+          externalReference: contractForm.externalReference.trim() || undefined,
+        },
+        authHeaders(token)
+      );
+      setContractForm({
+        startDate: '',
+        endDate: '',
+        billingModel: 'prepaid',
+        planCode: '',
+        contractValueInrPaise: '',
+        creditAllowance: '',
+        renewalTerms: '',
+        externalReference: '',
+      });
+      setShowCreateContractForm(false);
+      await fetchContracts(selectedOrgId);
+    } catch (err: any) {
+      setContractsError(err.response?.data?.message || 'Failed to create contract');
+    } finally {
+      setCreatingContract(false);
+    }
+  };
+
+  const handleContractLifecycleAction = async (contractId: string, action: 'activate' | 'expire' | 'cancel', confirmMessage?: string) => {
+    if (!selectedOrgId) return;
+    if (confirmMessage && !confirm(confirmMessage)) return;
+    setContractsError('');
+    try {
+      await axios.post(`${API_BASE_URL}/admin/organizations/${selectedOrgId}/contracts/${contractId}/${action}`, {}, authHeaders(token));
+      await fetchContracts(selectedOrgId);
+      await fetchDetail(selectedOrgId);
+    } catch (err: any) {
+      setContractsError(err.response?.data?.message || `Failed to ${action} contract`);
+    }
+  };
+
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedOrgId) return;
+    setManualPaymentsError('');
+    const amountPaise = Math.round(Number(paymentForm.amountRupees) * 100);
+    if (!amountPaise || amountPaise <= 0) {
+      setManualPaymentsError('A positive payment amount is required.');
+      return;
+    }
+    if (!paymentForm.paymentDate) {
+      setManualPaymentsError('Payment date is required.');
+      return;
+    }
+    setRecordingPayment(true);
+    try {
+      await axios.post(
+        `${API_BASE_URL}/admin/organizations/${selectedOrgId}/manual-payments`,
+        {
+          method: paymentForm.method,
+          amountPaise,
+          referenceNote: paymentForm.referenceNote.trim() || undefined,
+          paymentDate: paymentForm.paymentDate,
+          contractId: paymentForm.contractId || undefined,
+          notes: paymentForm.notes.trim() || undefined,
+        },
+        authHeaders(token)
+      );
+      setPaymentForm({ method: 'bank_transfer', amountRupees: '', referenceNote: '', paymentDate: '', contractId: '', notes: '' });
+      setShowRecordPaymentForm(false);
+      await fetchManualPayments(selectedOrgId);
+    } catch (err: any) {
+      setManualPaymentsError(err.response?.data?.message || 'Failed to record manual payment');
+    } finally {
+      setRecordingPayment(false);
+    }
   };
 
   const totalPages = Math.max(1, Math.ceil(total / 10));
@@ -524,6 +735,317 @@ const OrganizationsAdminPage: React.FC = () => {
                     </button>
                   </form>
                 )}
+
+                {/* Enterprise Contracts (PR-B2B-BILL-5) — organization-scoped, Super Admin only */}
+                <div className="pt-4 border-t border-gray-100 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-medium text-gray-900">Enterprise Contracts</h3>
+                    <button
+                      onClick={() => setShowCreateContractForm((v) => !v)}
+                      className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                    >
+                      {showCreateContractForm ? 'Cancel' : '+ New Contract'}
+                    </button>
+                  </div>
+
+                  {contractsError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">{contractsError}</div>}
+
+                  {showCreateContractForm && (
+                    <form onSubmit={handleCreateContract} className="bg-gray-50 rounded-lg p-4 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+                          <input
+                            type="date"
+                            value={contractForm.startDate}
+                            onChange={(e) => setContractForm((f) => ({ ...f, startDate: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">End Date (optional)</label>
+                          <input
+                            type="date"
+                            value={contractForm.endDate}
+                            onChange={(e) => setContractForm((f) => ({ ...f, endDate: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Billing Model</label>
+                          <select
+                            value={contractForm.billingModel}
+                            onChange={(e) => setContractForm((f) => ({ ...f, billingModel: e.target.value as any }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          >
+                            <option value="prepaid">Prepaid</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="annual">Annual</option>
+                            <option value="custom">Custom</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Plan Code (optional)</label>
+                          <input
+                            type="text"
+                            value={contractForm.planCode}
+                            onChange={(e) => setContractForm((f) => ({ ...f, planCode: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Contract Value (₹, optional)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={contractForm.contractValueInrPaise}
+                            onChange={(e) => setContractForm((f) => ({ ...f, contractValueInrPaise: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Credit Allowance (optional)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={contractForm.creditAllowance}
+                            onChange={(e) => setContractForm((f) => ({ ...f, creditAllowance: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Renewal Terms (optional)</label>
+                          <input
+                            type="text"
+                            value={contractForm.renewalTerms}
+                            onChange={(e) => setContractForm((f) => ({ ...f, renewalTerms: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">External Reference (optional)</label>
+                          <input
+                            type="text"
+                            value={contractForm.externalReference}
+                            onChange={(e) => setContractForm((f) => ({ ...f, externalReference: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={creatingContract}
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium disabled:opacity-50"
+                      >
+                        {creatingContract ? 'Creating...' : 'Create Contract (draft)'}
+                      </button>
+                    </form>
+                  )}
+
+                  {contractsLoading ? (
+                    <div className="text-sm text-gray-500">Loading contracts...</div>
+                  ) : contracts.length === 0 ? (
+                    <p className="text-sm text-gray-500">No contracts yet.</p>
+                  ) : (
+                    <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Billing</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Term</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {contracts.map((contract) => (
+                            <tr key={contract.id}>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{contract.contractCode}</td>
+                              <td className="px-4 py-2 whitespace-nowrap">
+                                <span className={`px-2 py-0.5 text-xs rounded-full capitalize ${contractStatusBadgeClass(contract.status)}`}>
+                                  {contract.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500 capitalize">{contract.billingModel}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                                {contract.contractValueInrPaise ? `₹${(contract.contractValueInrPaise / 100).toFixed(2)}` : '—'}
+                              </td>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                                {new Date(contract.startDate).toLocaleDateString()}
+                                {contract.endDate ? ` – ${new Date(contract.endDate).toLocaleDateString()}` : ''}
+                              </td>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm space-x-2">
+                                {contract.status === 'draft' && (
+                                  <button
+                                    onClick={() => handleContractLifecycleAction(contract.id, 'activate')}
+                                    className="text-green-600 hover:text-green-900"
+                                  >
+                                    Activate
+                                  </button>
+                                )}
+                                {contract.status === 'active' && (
+                                  <>
+                                    <button
+                                      onClick={() =>
+                                        handleContractLifecycleAction(contract.id, 'expire', 'Mark this contract as expired?')
+                                      }
+                                      className="text-yellow-600 hover:text-yellow-900"
+                                    >
+                                      Expire
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleContractLifecycleAction(contract.id, 'cancel', 'Cancel this contract?')
+                                      }
+                                      className="text-red-600 hover:text-red-900"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Manual B2B Payments — reuses the existing backend recordManualPayment/listManualPayments APIs; never fabricates a payment success client-side. */}
+                <div className="pt-4 border-t border-gray-100 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-medium text-gray-900">Manual B2B Payments</h3>
+                    <button
+                      onClick={() => setShowRecordPaymentForm((v) => !v)}
+                      className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                    >
+                      {showRecordPaymentForm ? 'Cancel' : '+ Record Payment'}
+                    </button>
+                  </div>
+
+                  {manualPaymentsError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">{manualPaymentsError}</div>
+                  )}
+
+                  {showRecordPaymentForm && (
+                    <form onSubmit={handleRecordPayment} className="bg-gray-50 rounded-lg p-4 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Method</label>
+                          <select
+                            value={paymentForm.method}
+                            onChange={(e) => setPaymentForm((f) => ({ ...f, method: e.target.value as any }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          >
+                            <option value="bank_transfer">Bank Transfer</option>
+                            <option value="invoice">Invoice</option>
+                            <option value="offline">Offline</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₹)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={paymentForm.amountRupees}
+                            onChange={(e) => setPaymentForm((f) => ({ ...f, amountRupees: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Payment Date</label>
+                          <input
+                            type="date"
+                            value={paymentForm.paymentDate}
+                            onChange={(e) => setPaymentForm((f) => ({ ...f, paymentDate: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Contract (optional)</label>
+                          <select
+                            value={paymentForm.contractId}
+                            onChange={(e) => setPaymentForm((f) => ({ ...f, contractId: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          >
+                            <option value="">None</option>
+                            {contracts.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.contractCode}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Reference Note (optional)</label>
+                          <input
+                            type="text"
+                            value={paymentForm.referenceNote}
+                            onChange={(e) => setPaymentForm((f) => ({ ...f, referenceNote: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Notes (optional)</label>
+                          <input
+                            type="text"
+                            value={paymentForm.notes}
+                            onChange={(e) => setPaymentForm((f) => ({ ...f, notes: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={recordingPayment}
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium disabled:opacity-50"
+                      >
+                        {recordingPayment ? 'Recording...' : 'Record Payment'}
+                      </button>
+                    </form>
+                  )}
+
+                  {manualPaymentsLoading ? (
+                    <div className="text-sm text-gray-500">Loading payments...</div>
+                  ) : manualPayments.length === 0 ? (
+                    <p className="text-sm text-gray-500">No manual payments recorded yet.</p>
+                  ) : (
+                    <div className="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Reference</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {manualPayments.map((payment) => (
+                            <tr key={payment.id}>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 capitalize">{payment.method.replace('_', ' ')}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                                {(payment.amountPaise / 100).toFixed(2)} {payment.currency}
+                              </td>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{payment.referenceNote || '—'}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                                {new Date(payment.paymentDate).toLocaleDateString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

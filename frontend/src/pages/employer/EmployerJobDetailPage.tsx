@@ -34,6 +34,7 @@ import employerApi, {
   EmployerHiringWorkflowConditionField,
   EmployerHiringWorkflowConditionOperator,
   EmployerHiringWorkflowActionType,
+  BulkCreateInterviewInvitationsResult,
 } from '../../api/employerApi';
 import { EMPTY_JOB_FORM, JobFormState, jobFormToPayload, jobToFormState } from './jobFormUtils';
 import {
@@ -59,6 +60,7 @@ import {
   LayoutGrid,
   BarChart3,
   Activity,
+  Send,
 } from 'lucide-react';
 
 const APPLICATIONS_PAGE_LIMIT = 20;
@@ -258,6 +260,16 @@ const EmployerJobDetailPage: React.FC = () => {
   const [applicationsLoading, setApplicationsLoading] = useState(true);
   const [applicationsError, setApplicationsError] = useState<string | null>(null);
 
+  // Bulk assessment assignment (smallest safe addition — reuses the
+  // existing employerApi.bulkCreateInterviewInvitations, which itself just
+  // loops the same single-create precondition/logic used elsewhere on this
+  // page). Only SHORTLISTED applications are selectable, matching the
+  // single-invite precondition exactly.
+  const [selectedApplicationIds, setSelectedApplicationIds] = useState<Set<string>>(new Set());
+  const [bulkInviteSubmitting, setBulkInviteSubmitting] = useState(false);
+  const [bulkInviteResult, setBulkInviteResult] = useState<BulkCreateInterviewInvitationsResult | null>(null);
+  const [bulkInviteError, setBulkInviteError] = useState<string | null>(null);
+
   const [ranking, setRanking] = useState<JobRanking | null>(null);
   const [rankingLoading, setRankingLoading] = useState(true);
   const [rankingError, setRankingError] = useState<string | null>(null);
@@ -444,6 +456,8 @@ const EmployerJobDetailPage: React.FC = () => {
       const response = await employerApi.listApplications(organizationId, { jobId, page: applicationsPage, limit: APPLICATIONS_PAGE_LIMIT });
       setApplications(response.data.applications);
       setApplicationsTotal(response.data.pagination.total);
+      // A fresh page of rows invalidates any prior cross-page selection.
+      setSelectedApplicationIds(new Set());
     } catch (err: any) {
       setApplicationsError(err.message || 'Failed to load applications');
     } finally {
@@ -748,6 +762,52 @@ const EmployerJobDetailPage: React.FC = () => {
   const canAddCandidate =
     canManage && !!job && job.status !== 'archived' && job.status !== 'closed';
   const canShortlist = canManage && job?.status !== 'archived';
+
+  // Eligibility mirrors the single-invite precondition exactly (application
+  // detail page: invitations can only be created for a SHORTLISTED
+  // application) — never a separate/looser rule for the bulk path.
+  const shortlistedOnPage = applications.filter((a) => a.status === 'shortlisted');
+  const canBulkInvite = canManage && job?.status !== 'archived';
+
+  const toggleApplicationSelected = (applicationId: string) => {
+    setSelectedApplicationIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(applicationId)) next.delete(applicationId);
+      else next.add(applicationId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllShortlisted = () => {
+    setSelectedApplicationIds((prev) => {
+      const allSelected = shortlistedOnPage.length > 0 && shortlistedOnPage.every((a) => prev.has(a.id));
+      if (allSelected) return new Set();
+      return new Set(shortlistedOnPage.map((a) => a.id));
+    });
+  };
+
+  const handleBulkInvite = async () => {
+    if (!organizationId || selectedApplicationIds.size === 0) return;
+    const count = selectedApplicationIds.size;
+    if (!window.confirm(`Send an assessment invitation to ${count} selected candidate${count === 1 ? '' : 's'}?`)) return;
+
+    setBulkInviteError(null);
+    setBulkInviteResult(null);
+    setBulkInviteSubmitting(true);
+    try {
+      const response = await employerApi.bulkCreateInterviewInvitations(organizationId, {
+        applicationIds: Array.from(selectedApplicationIds),
+      });
+      setBulkInviteResult(response.data);
+      setSelectedApplicationIds(new Set());
+      // Refresh so status/derived state (e.g. any future invitation badges) reflects the just-created invitations.
+      await fetchApplications();
+    } catch (err: any) {
+      setBulkInviteError(err.message || 'Failed to send bulk invitations');
+    } finally {
+      setBulkInviteSubmitting(false);
+    }
+  };
 
   const handleOpenAddCandidate = () => {
     setShowAddCandidate(true);
@@ -1621,6 +1681,66 @@ const EmployerJobDetailPage: React.FC = () => {
                 <p className="text-xs text-mentor-text-muted mb-4">This job is closed — no new candidates can be added.</p>
               )}
 
+              {canBulkInvite && shortlistedOnPage.length > 0 && (
+                <div className="surface-muted flex flex-wrap items-center gap-3 p-3 mb-4">
+                  <label className="flex items-center gap-2 text-xs text-mentor-text-secondary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={shortlistedOnPage.length > 0 && shortlistedOnPage.every((a) => selectedApplicationIds.has(a.id))}
+                      onChange={toggleSelectAllShortlisted}
+                      aria-label="Select all shortlisted candidates on this page"
+                    />
+                    Select all shortlisted ({shortlistedOnPage.length})
+                  </label>
+                  <span className="text-xs text-mentor-text-muted">
+                    {selectedApplicationIds.size} selected
+                  </span>
+                  <button
+                    onClick={handleBulkInvite}
+                    disabled={selectedApplicationIds.size === 0 || bulkInviteSubmitting}
+                    className="btn btn-primary ml-auto"
+                  >
+                    <Send size={16} />
+                    {bulkInviteSubmitting ? 'Sending...' : `Invite ${selectedApplicationIds.size || ''} to Assessment`.trim()}
+                  </button>
+                </div>
+              )}
+
+              {bulkInviteError && (
+                <div className="flex items-start gap-2 bg-red-50 dark:bg-future-error/10 border border-red-200 dark:border-future-error/20 rounded-lg p-3 mb-4">
+                  <AlertCircle size={16} className="text-mentor-error mt-0.5 shrink-0" />
+                  <p className="text-sm text-mentor-error">{bulkInviteError}</p>
+                </div>
+              )}
+
+              {bulkInviteResult && (
+                <div className="surface-muted p-3 mb-4 text-xs">
+                  <p className="text-mentor-text mb-1">
+                    {bulkInviteResult.invited} of {bulkInviteResult.total} invitation{bulkInviteResult.total === 1 ? '' : 's'} sent
+                    {bulkInviteResult.failed > 0 ? `, ${bulkInviteResult.failed} failed` : ''}.
+                  </p>
+                  {bulkInviteResult.failed > 0 && (
+                    <ul className="list-disc list-inside text-mentor-text-muted space-y-0.5">
+                      {bulkInviteResult.results
+                        .filter((r) => r.status === 'failed')
+                        .map((r) => (
+                          <li key={r.applicationId}>
+                            {applications.find((a) => a.id === r.applicationId)?.candidate
+                              ? `${applications.find((a) => a.id === r.applicationId)!.candidate!.firstName} ${
+                                  applications.find((a) => a.id === r.applicationId)!.candidate!.lastName
+                                }`
+                              : r.applicationId}
+                            : {r.error}
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                  <button onClick={() => setBulkInviteResult(null)} className="text-mentor-text-muted underline mt-1">
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
               {showAddCandidate && (
                 <div className="surface-muted p-4 mb-4">
                   <div className="flex items-center justify-between mb-3">
@@ -1703,6 +1823,16 @@ const EmployerJobDetailPage: React.FC = () => {
                       onClick={() => navigate(`/organizations/${organizationId}/employer/applications/${application.id}`)}
                       className="flex flex-col sm:flex-row sm:items-center gap-2 py-3 cursor-pointer hover:bg-mentor-surface transition-colors"
                     >
+                      {canBulkInvite && application.status === 'shortlisted' && (
+                        <input
+                          type="checkbox"
+                          checked={selectedApplicationIds.has(application.id)}
+                          onChange={() => toggleApplicationSelected(application.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select ${application.candidate ? `${application.candidate.firstName} ${application.candidate.lastName}` : 'candidate'} for bulk assessment invitation`}
+                          className="shrink-0"
+                        />
+                      )}
                       <div className="flex-1 min-w-0">
                         <Link
                           to={`/organizations/${organizationId}/employer/candidates/${application.candidateId}`}

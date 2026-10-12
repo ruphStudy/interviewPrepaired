@@ -86,8 +86,10 @@ export const getConsent = catchAsync(async (req: AuthRequest, res: Response) => 
 });
 
 /**
- * GET /api/v1/privacy/policy-config — fully public. URLs are omitted
- * (never a fabricated/placeholder link) when not genuinely configured.
+ * GET /api/v1/privacy/policy-config — fully public. URLs always point to a
+ * real, working page (this product's own /terms and /privacy by default,
+ * or an operator-configured external URL) — never a broken/fabricated
+ * placeholder link.
  */
 export const getPolicyConfig = catchAsync(async (_req: AuthRequest, res: Response) => {
   res.status(200).json(

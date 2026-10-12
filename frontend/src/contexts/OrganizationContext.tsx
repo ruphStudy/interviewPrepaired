@@ -7,6 +7,7 @@ import organizationApi, {
   OrganizationType,
 } from '../api/organizationApi';
 import studentPortalApi from '../api/studentPortalApi';
+import candidatePortalApi from '../api/candidatePortalApi';
 
 const ACTIVE_ORG_STORAGE_KEY = 'activeOrganizationId';
 
@@ -40,6 +41,13 @@ interface OrganizationContextType {
    * page itself already relies on (never a second, parallel access check).
    */
   hasStudentContext: boolean;
+  /**
+   * PARTICIPANT-level signal, same family as `hasStudentContext` — true
+   * only when the caller has at least one ACTIVE EmployerCandidate record
+   * (matched by email) anywhere. Reuses the exact same check the Candidate
+   * Portal page itself relies on, never a second, parallel access check.
+   */
+  hasCandidateContext: boolean;
   loading: boolean;
   error: string | null;
   /** Pass null to switch to Personal/B2C mode. */
@@ -89,6 +97,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
   const [activeRole, setActiveRole] = useState<OrganizationMemberRole | null>(null);
   const [activePermissions, setActivePermissions] = useState<OrganizationPermission[]>([]);
   const [hasStudentContext, setHasStudentContext] = useState(false);
+  const [hasCandidateContext, setHasCandidateContext] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,11 +146,25 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     }
   }, []);
 
+  /** Same never-throws contract as refreshStudentContext — a non-candidate (or a transient failure) resolves to no Candidate nav, never a blocking error. */
+  const refreshCandidateContext = useCallback(async () => {
+    try {
+      const response = await candidatePortalApi.getDashboard();
+      setHasCandidateContext(response.data.dashboards.length > 0);
+    } catch {
+      setHasCandidateContext(false);
+    }
+  }, []);
+
   const initialize = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [accessible] = await Promise.all([fetchAccessibleOrganizations(), refreshStudentContext()]);
+      const [accessible] = await Promise.all([
+        fetchAccessibleOrganizations(),
+        refreshStudentContext(),
+        refreshCandidateContext(),
+      ]);
       setOrganizations(accessible);
 
       const storedId = localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
@@ -159,7 +182,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     } finally {
       setLoading(false);
     }
-  }, [fetchAccessibleOrganizations, loadActiveOrganization, clearActive, refreshStudentContext]);
+  }, [fetchAccessibleOrganizations, loadActiveOrganization, clearActive, refreshStudentContext, refreshCandidateContext]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -170,6 +193,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
       setOrganizations([]);
       clearActive();
       setHasStudentContext(false);
+      setHasCandidateContext(false);
       setLoading(false);
       setError(null);
     }
@@ -216,6 +240,7 @@ export const OrganizationProvider: React.FC<OrganizationProviderProps> = ({ chil
     activeRole,
     activePermissions,
     hasStudentContext,
+    hasCandidateContext,
     loading,
     error,
     setActiveOrganization,

@@ -135,8 +135,9 @@ export class InterviewController {
           // server-authoritative label persisted on the interview
           // (`WELCOME` for every freshly-started interview); `presentation`
           // is the welcome greeting attached to this very first question
-          // (absent for non-English/failure cases, same fallback contract
-          // as submitAnswer's own `presentation` field below).
+          // (absent only on a genuine humanizer failure — see
+          // ConversationHumanizerService — same fallback contract as
+          // submitAnswer's own `presentation` field below).
           interviewPhase: interview.interviewPhase,
           presentation: currentQuestionObj.presentation,
           warmUpPrompt,
@@ -187,8 +188,8 @@ export class InterviewController {
         },
         evaluation: result.evaluation,
         nextQuestion: result.nextQuestion,
-        // Phase 8 — additive, optional; absent for uploaded/legacy/
-        // non-English/failure cases (see ConversationHumanizerService).
+        // Phase 8 — additive, optional; absent for uploaded/legacy/failure
+        // cases (see ConversationHumanizerService).
         // The frontend already falls back to speaking `nextQuestion.question`
         // plain (Phase 7's pre-Phase-8 behavior) whenever this is absent.
         presentation: result.presentation,

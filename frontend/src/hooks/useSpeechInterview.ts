@@ -59,11 +59,19 @@ export const useSpeechInterview = ({ onAnswerComplete, onQuestionSpoken, languag
         const error = event?.error;
         let message = 'We could not capture your answer. Please try the microphone again or type your answer.';
         if (error === 'not-allowed' || error === 'service-not-allowed') {
-          message = 'Microphone permission is blocked. Allow microphone access or type your answer instead.';
+          message = 'Microphone permission is blocked or was dismissed. Allow microphone access or type your answer instead.';
+        } else if (error === 'audio-capture') {
+          message = 'No microphone was found, or it is being used by another app. Check your microphone or type your answer instead.';
         } else if (error === 'no-speech') {
           message = 'No speech was detected. Please try again or type your answer.';
         } else if (error === 'network') {
           message = 'Speech recognition is temporarily unavailable. You can type your answer instead.';
+        } else if (error === 'aborted') {
+          // Fired by our own stop()/cleanup in some browsers — not a real
+          // failure, so no error banner; state is still reset below.
+          setIsListening(false);
+          setAvatarState(AvatarState.IDLE);
+          return;
         }
         setSpeechError(message);
         setIsListening(false);
