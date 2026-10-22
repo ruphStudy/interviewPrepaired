@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { InterviewAvatar } from '../components/InterviewAvatar/InterviewAvatar';
+import { InterviewerAvatar } from '../components/InterviewerAvatar';
 import { useSpeechInterview } from '../hooks/useSpeechInterview';
 import { useAudioPlaybackQueue } from '../hooks/useAudioPlaybackQueue';
 import { interviewApi, ConversationPresentationPlan } from '../api/interviewApi';
@@ -11,6 +11,7 @@ import {
   type LegacyInterviewPhase as InterviewPhase,
 } from '../hooks/useInterviewPresentationState';
 import { useAvatarPresentationController } from '../hooks/useAvatarPresentationController';
+import { useAvatarReactionManager } from '../features/interview/avatar/avatarReactionManager';
 import {
   derivePredictiveBranches,
   matchPreparedBranch,
@@ -163,6 +164,18 @@ export const InterviewScreen: React.FC = () => {
     isActivelyListening: isListening,
     sessionGeneration,
     currentPresentationType,
+  });
+
+  // Reusable interviewer-avatar video selection — visual only, derived from
+  // the SAME existing signals as useAvatarPresentationController above
+  // (never a second/competing state machine). Google/browser TTS above
+  // remains the only interviewer audio; every avatar clip plays muted.
+  const avatarVideo = useAvatarReactionManager({
+    presentationState,
+    isActivelyListening: isListening,
+    currentPresentationType,
+    currentMicroBehavior,
+    sessionGeneration,
   });
 
   // Phase 13 (13B) — batched, fire-and-forget client telemetry. `record`
@@ -748,9 +761,8 @@ export const InterviewScreen: React.FC = () => {
       <div className="flex-1 w-full max-w-[1440px] mx-auto px-4 md:px-7 py-5 md:py-6 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-5 md:gap-6 min-h-0">
         <div className="card p-0 overflow-hidden flex flex-col min-h-[380px] sm:min-h-[440px] lg:min-h-0">
           <div className="flex-1 min-h-0">
-            <InterviewAvatar
-              currentState={avatarState}
-              currentMicroBehavior={currentMicroBehavior}
+            <InterviewerAvatar
+              video={avatarVideo}
               onTelemetryEvent={(eventType, data) =>
                 telemetry.record(eventType as any, { questionNumber: currentQuestionNumber || undefined, data })
               }

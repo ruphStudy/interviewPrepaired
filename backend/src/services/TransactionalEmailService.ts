@@ -140,6 +140,12 @@ class TransactionalEmailService {
       delivery.nextAttemptAt = undefined;
       delivery.pendingContent = undefined;
       await delivery.save();
+      console.log('[TransactionalEmailService] Email sent', {
+        deliveryId: delivery._id.toString(),
+        templateCode: delivery.templateCode,
+        recipient: delivery.recipient,
+        provider: provider.name,
+      });
       return delivery;
     }
 
@@ -167,6 +173,14 @@ class TransactionalEmailService {
     }
 
     await delivery.save();
+    console.error('[TransactionalEmailService] Email send attempt failed', {
+      deliveryId: delivery._id.toString(),
+      templateCode: delivery.templateCode,
+      recipient: delivery.recipient,
+      failureCode: delivery.failureCode,
+      attemptCount: delivery.attemptCount,
+      willRetry: delivery.status === 'queued',
+    });
     return delivery;
   }
 

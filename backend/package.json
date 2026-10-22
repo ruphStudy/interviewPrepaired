@@ -4,7 +4,7 @@
   "description": "Backend API for AI Voice Interview Coach",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/server.ts",
+    "dev": "nodemon --exec ts-node --files src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "worker": "node dist/worker.js",
